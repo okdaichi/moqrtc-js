@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>@okudai/video-nodes Demo</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 2rem;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 2rem;
+      }
+
+      h1 {
+        color: white;
+        font-size: 3rem;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        margin-bottom: 0.5rem;
+      }
+
+      .subtitle {
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 1.2rem;
+      }
+
+      .version-banner {
+        background: rgba(255, 255, 255, 0.15);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 8px;
+        padding: 0.75rem 1.5rem;
+        margin: 1rem auto;
+        max-width: 800px;
+        color: white;
+        font-family: "Courier New", monospace;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .version-banner .commit-hash {
+        background: rgba(255, 255, 255, 0.2);
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-weight: bold;
+      }
+
+      .version-banner .message {
+        flex: 1;
+      }
+
+      .demo-section {
+        background: white;
+        border-radius: 16px;
+        padding: 2rem;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        margin-bottom: 2rem;
+      }
+
+      h2 {
+        color: #667eea;
+        margin-bottom: 1.5rem;
+        font-size: 1.8rem;
+        border-bottom: 2px solid #667eea;
+        padding-bottom: 0.5rem;
+      }
+
+      .pipeline {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        margin: 2rem 0;
+        flex-wrap: wrap;
+      }
+
+      .node {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1rem 2rem;
+        border-radius: 12px;
+        font-weight: bold;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+      }
+
+      .arrow {
+        color: #667eea;
+        font-size: 2rem;
+        font-weight: bold;
+      }
+
+      .canvas-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 2rem;
+        margin: 2rem 0;
+      }
+
+      .canvas-wrapper {
+        background: #f5f5f5;
+        border-radius: 12px;
+        padding: 1rem;
+      }
+
+      .canvas-label {
+        font-weight: bold;
+        color: #333;
+        margin-bottom: 0.5rem;
+        font-size: 1.1rem;
+      }
+
+      canvas {
+        width: 100%;
+        height: auto;
+        border-radius: 8px;
+        background: #000;
+        display: block;
+        object-fit: contain;
+        aspect-ratio: 16 / 9;
+      }
+
+      .controls {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 2rem;
+        flex-wrap: wrap;
+      }
+
+      button {
+        background: #667eea;
+        color: white;
+        border: none;
+        padding: 1rem 2rem;
+        border-radius: 8px;
+        font-size: 1rem;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        flex: 1;
+        min-width: 200px;
+      }
+
+      button:hover:not(:disabled) {
+        background: #5568d3;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+      }
+
+      button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .status {
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+        text-align: center;
+        font-weight: bold;
+        font-size: 1.1rem;
+      }
+
+      .status.info {
+        background: #d1ecf1;
+        color: #0c5460;
+      }
+
+      .status.success {
+        background: #d4edda;
+        color: #155724;
+      }
+
+      .status.error {
+        background: #f8d7da;
+        color: #721c24;
+      }
+
+      .metrics {
+        background: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 8px;
+        margin-top: 1rem;
+      }
+
+      .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+      }
+
+      .metric-item {
+        background: white;
+        padding: 1rem;
+        border-radius: 6px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        /* Force GPU compositing layer for real-time updates during video rendering */
+        will-change: contents;
+        transform: translateZ(0);
+        backface-visibility: hidden;
+      }
+
+      .metric-label {
+        color: #666;
+        font-size: 0.9rem;
+        margin-bottom: 0.25rem;
+      }
+
+      .metric-value {
+        color: #667eea;
+        font-size: 1.5rem;
+        font-weight: bold;
+        font-family: "Courier New", monospace;
+        font-variant-numeric: tabular-nums;
+        font-feature-settings: "tnum";
+      }
+
+      .codec-config {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        font-family: "Courier New", monospace;
+        font-size: 0.9rem;
+        margin-top: 1rem;
+      }
+
+      .codec-config pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+
+      .analysis-section {
+        margin-top: 2rem;
+      }
+
+      .analysis-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .analysis-item {
+        background: white;
+        padding: 1rem;
+        border-radius: 6px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+
+      .analysis-label {
+        color: #666;
+        font-size: 0.9rem;
+        margin-bottom: 0.25rem;
+      }
+
+      .analysis-value {
+        color: #667eea;
+        font-size: 1.5rem;
+        font-weight: bold;
+        font-family: "Courier New", monospace;
+      }
+
+      .dominant-color-box {
+        width: 100%;
+        height: 60px;
+        border-radius: 6px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        border: 2px solid #e0e0e0;
+      }
+
+      .color-bar {
+        display: flex;
+        gap: 0.25rem;
+        margin-top: 0.5rem;
+      }
+
+      .color-block {
+        flex: 1;
+        height: 30px;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      }
+
+      footer {
+        text-align: center;
+        color: white;
+        margin-top: 2rem;
+        font-size: 0.9rem;
+      }
+
+      footer a {
+        color: white;
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>🎥 @okudai/video-nodes</h1>
+        <p class="subtitle">WebCodecs-based Video Processing Pipeline Demo</p>
+      </header>
+
+      <div class="version-banner">
+        <span class="commit-hash">v2.1.1</span>
+        <span class="message"
+        >fix: Make canvas overlay reactive (compute metrics during draw)</span>
+      </div>
+
+      <div class="demo-section">
+        <h2>Video Processing Pipeline</h2>
+
+        <div class="pipeline">
+          <div class="node">📹 Video Source</div>
+          <div class="arrow">→</div>
+          <div class="node">� Analyser</div>
+        </div>
+        <div class="pipeline">
+          <div class="node">📹 Video Source</div>
+          <div class="arrow">→</div>
+          <div class="node">�🔧 Encode</div>
+          <div class="arrow">→</div>
+          <div class="node">📦 Decode</div>
+          <div class="arrow">→</div>
+          <div class="node">🖼️ Destination</div>
+        </div>
+
+        <div id="status" class="status info">
+          Select input source and click start
+        </div>
+
+        <div class="controls">
+          <button id="startCameraBtn">📷 Start with Camera</button>
+          <button id="startScreenBtn">🖥️ Start with Screen</button>
+          <button id="stopBtn" disabled>⏹️ Stop Pipeline</button>
+        </div>
+
+        <div class="canvas-grid">
+          <div class="canvas-wrapper">
+            <div class="canvas-label">📹 Original Input</div>
+            <canvas id="sourceCanvas" width="1280" height="720"></canvas>
+          </div>
+
+          <div class="canvas-wrapper">
+            <div class="canvas-label">🖼️ Decoded Output</div>
+            <canvas id="outputCanvas" width="1280" height="720"></canvas>
+          </div>
+        </div>
+
+        <div class="metrics">
+          <h3 style="margin-bottom: 1rem; color: #333">📊 Pipeline Metrics</h3>
+          <div class="metrics-grid">
+            <div class="metric-item">
+              <div class="metric-label">Frames Encoded</div>
+              <div class="metric-value" id="encodedFrames">0</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">Frames Decoded</div>
+              <div class="metric-value" id="decodedFrames">0</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">Encode Queue</div>
+              <div class="metric-value" id="encodeQueue">0</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">Decode Queue</div>
+              <div class="metric-value" id="decodeQueue">0</div>
+            </div>
+          </div>
+
+          <div class="analysis-section">
+            <h3 style="margin-bottom: 1rem; color: #333">🎨 Video Analysis</h3>
+            <div class="analysis-grid">
+              <div class="analysis-item">
+                <div class="analysis-label">Brightness</div>
+                <div class="analysis-value" id="brightness">0.00</div>
+              </div>
+              <div class="analysis-item">
+                <div class="analysis-label">Contrast</div>
+                <div class="analysis-value" id="contrast">0.00</div>
+              </div>
+              <div class="analysis-item">
+                <div class="analysis-label">Saturation</div>
+                <div class="analysis-value" id="saturation">0.00</div>
+              </div>
+              <div class="analysis-item">
+                <div class="analysis-label">Dominant Color</div>
+                <div id="dominantColor" class="dominant-color-box"></div>
+              </div>
+            </div>
+            <div class="analysis-item">
+              <div class="analysis-label">Top 5 Colors</div>
+              <div id="colorBar" class="color-bar"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="codec-config">
+          <h3 style="margin-bottom: 0.5rem; color: #333">
+            ⚙️ Codec Configuration
+          </h3>
+          <pre id="codecConfig">Loading...</pre>
+        </div>
+      </div>
+
+      <footer>
+        <p>
+          Built with WebCodecs API | <a
+            href="https://jsr.io/@okudai/video-nodes"
+            target="_blank"
+          >Documentation</a>
+        </p>
+      </footer>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

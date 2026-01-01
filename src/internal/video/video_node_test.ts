@@ -577,6 +577,50 @@ Deno.test("VideoDestinationNode", async (t) => {
 		globalThis.requestAnimationFrame = originalRequestAnimationFrame;
 	});
 
+	await t.step("should close pending frame when replaced before rAF runs", () => {
+		context = new VideoContext();
+		canvas = new MockHTMLCanvasElement();
+
+		// Mock global functions so rAF callback never runs (we only test pending replacement)
+		const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+		const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+
+		let nextId = 1;
+		globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+			// Intentionally do not invoke cb
+			void cb;
+			return nextId++;
+		}) as any;
+		globalThis.cancelAnimationFrame = (() => {}) as any;
+
+		try {
+			const destinationNode = new VideoDestinationNode(context, canvas as any);
+
+			let closed = 0;
+			const frame1 = new MockVideoFrame(640, 480);
+			frame1.clone = () => {
+				const f = new MockVideoFrame(640, 480);
+				f.close = () => {
+					closed++;
+				};
+				return f;
+			};
+
+			const frame2 = new MockVideoFrame(640, 480);
+			frame2.clone = () => new MockVideoFrame(640, 480);
+
+			destinationNode.process(frame1);
+			// Second process call replaces the pending frame; the previous pending clone MUST be closed
+			destinationNode.process(frame2);
+
+			assertEquals(closed, 1);
+		} finally {
+			// Restore globals
+			globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+			globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+		}
+	});
+
 	await t.step("should handle frames with zero dimensions", () => {
 		context = new VideoContext();
 		canvas = new MockHTMLCanvasElement();

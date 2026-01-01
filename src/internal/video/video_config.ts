@@ -1,4 +1,4 @@
-import { isFirefox } from "../support.ts";
+import { isFirefox } from "./support.ts";
 
 // Export codec lists so callers can reuse and avoid reallocation.
 export const VIDEO_HARDWARE_CODECS = [
@@ -64,10 +64,16 @@ export async function videoEncoderConfig(
 
 	if (tryHardware && !isFirefox) {
 		for (const codec of hardwareCodecs) {
-			const config = upgradeEncoderConfig(baseConfig, codec, bitrate, true);
-			const { supported, config: hardwareConfig } = await VideoEncoder.isConfigSupported(
-				config,
+			const config = upgradeEncoderConfig(
+				baseConfig,
+				codec,
+				bitrate,
+				true,
 			);
+			const { supported, config: hardwareConfig } = await VideoEncoder
+				.isConfigSupported(
+					config,
+				);
 			if (supported && hardwareConfig) {
 				console.debug("using hardware encoding: ", hardwareConfig);
 				return hardwareConfig;
@@ -79,7 +85,8 @@ export async function videoEncoderConfig(
 
 	for (const codec of softwareCodecs) {
 		const config = upgradeEncoderConfig(baseConfig, codec, bitrate, false);
-		const { supported, config: softwareConfig } = await VideoEncoder.isConfigSupported(config);
+		const { supported, config: softwareConfig } = await VideoEncoder
+			.isConfigSupported(config);
 		if (supported && softwareConfig) {
 			console.debug("using software encoding: ", softwareConfig);
 			return softwareConfig;

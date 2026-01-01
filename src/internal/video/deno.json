@@ -1,0 +1,38 @@
+{
+	"name": "@okudai/video-nodes",
+	"version": "0.1.0",
+	"exports": {
+		".": "./mod.ts",
+		"./config": "./video_config.ts",
+		"./nodes": "./video_node.ts"
+	},
+	"license": "MIT",
+	"compilerOptions": {
+		"lib": ["ESNext", "DOM", "dom.iterable", "dom.asynciterable"],
+		"strict": true,
+		"noImplicitAny": true,
+		"strictNullChecks": true,
+		"noUncheckedIndexedAccess": true
+	},
+	"fmt": {
+		"options": {
+			"useTabs": true,
+			"lineWidth": 120,
+			"indentWidth": 4,
+			"singleQuote": false,
+			"semiColons": true
+		}
+	},
+	"exclude": [
+		"demo/",
+		"*_test.ts",
+		"mock_*.ts"
+	],
+	"publish": {
+		"exclude": [
+			"demo/",
+			"*_test.ts",
+			"mock_*.ts"
+		]
+	}
+}

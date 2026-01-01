@@ -1,0 +1,103 @@
+import type { VideoContext } from "./context.ts";
+import { VideoNode } from "./video_node.ts";
+
+export class VideoDecodeNode extends VideoNode {
+	readonly context: VideoContext;
+	#decoder: VideoDecoder;
+
+	constructor(context: VideoContext) {
+		super({ numberOfInputs: 1, numberOfOutputs: 1 });
+		this.context = context;
+		this.context._register(this);
+
+		this.#decoder = new VideoDecoder({
+			output: (frame) => {
+				// Pass decoded frame to next nodes
+				this.process(frame);
+
+				// Close the decoded frame after processing
+				frame.close();
+			},
+			error: (e) => {
+				console.error("[VideoDecodeNode] decoder error:", e);
+			},
+		});
+	}
+
+	get decoderState(): CodecState {
+		return this.#decoder.state;
+	}
+
+	get decodeQueueSize(): number {
+		try {
+			return this.#decoder.decodeQueueSize;
+		} catch (_) {
+			return 0;
+		}
+	}
+
+	configure(config: VideoDecoderConfig): void {
+		this.#decoder.configure(config);
+	}
+
+	async decodeFrom(stream: ReadableStream<EncodedVideoChunk>): Promise<void> {
+		let reader: ReadableStreamDefaultReader<EncodedVideoChunk> | undefined;
+		try {
+			reader = stream.getReader();
+			while (this.context.state === "running" && !this.disposed) {
+				const { done, value: chunk } = await reader.read();
+				if (done) break;
+				this.#decoder.decode(chunk);
+			}
+		} catch (e) {
+			console.error("[VideoDecodeNode] decodeFrom error:", e);
+		} finally {
+			reader?.releaseLock();
+		}
+	}
+
+	process(input: VideoFrame): void {
+		// Clone frame for each output (decoder produces frames, owns lifecycle)
+		for (const output of Array.from(this.outputs)) {
+			try {
+				// Clone for each output (lightweight reference clone)
+				void output.process(input);
+			} catch (e) {
+				// Handle closed frame or clone error
+				if (e instanceof DOMException && e.name === "InvalidStateError") {
+					console.warn("[VideoDecodeNode] Cannot clone closed frame");
+				} else {
+					console.error("[VideoDecodeNode] process error:", e);
+				}
+			}
+		}
+	}
+
+	async flush(): Promise<void> {
+		try {
+			await this.#decoder.flush();
+		} catch (e) {
+			console.error("[VideoDecodeNode] flush error:", e);
+		}
+	}
+
+	async close(): Promise<void> {
+		try {
+			await this.flush();
+			this.#decoder.close();
+		} catch (_) {
+			/* ignore */
+		}
+	}
+
+	override dispose(): void {
+		if (this.disposed) return;
+		try {
+			this.#decoder.close();
+		} catch (_) {
+			/* ignore */
+		}
+		this.context._unregister(this);
+		super.dispose();
+	}
+}
