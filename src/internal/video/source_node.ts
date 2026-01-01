@@ -2,94 +2,93 @@ import { VideoContext } from "./context.ts";
 import { VideoNode } from "./video_node.ts";
 
 export class VideoSourceNode extends VideoNode {
-    readonly context: VideoContext;
-    #stream: ReadableStream<VideoFrame>;
-    #running: boolean = false;
-    #reader?: ReadableStreamDefaultReader<VideoFrame>;
+	readonly context: VideoContext;
+	#stream: ReadableStream<VideoFrame>;
+	#running: boolean = false;
+	#reader?: ReadableStreamDefaultReader<VideoFrame>;
 
-    constructor(context: VideoContext, stream: ReadableStream<VideoFrame>) {
-        super({ numberOfInputs: 0, numberOfOutputs: 1 });
-        this.context = context;
-        this.#stream = stream;
-        this.context._register(this);
-    }
+	constructor(context: VideoContext, stream: ReadableStream<VideoFrame>) {
+		super({ numberOfInputs: 0, numberOfOutputs: 1 });
+		this.context = context;
+		this.#stream = stream;
+		this.context._register(this);
+	}
 
-    /** @internal Accessor for subclasses */
-    protected get _stream(): ReadableStream<VideoFrame> {
-        return this.#stream;
-    }
+	/** @internal Accessor for subclasses */
+	protected get _stream(): ReadableStream<VideoFrame> {
+		return this.#stream;
+	}
 
-    get running(): boolean {
-        return this.#running;
-    }
+	get running(): boolean {
+		return this.#running;
+	}
 
-    process(input: VideoFrame): void {
-        if (this.disposed) return;
+	process(input: VideoFrame): void {
+		if (this.disposed) return;
 
-        // Ownership: Caller owns input, outputs will clone if needed
-        for (const output of this.outputs) {
-            try {
-                output.process(input);
-            } catch (e) {
-                // Handle case where frame is already closed or clone fails
-                if (e instanceof DOMException && e.name === "InvalidStateError") {
-                    console.warn("[VideoSourceNode] Cannot clone closed frame");
-                } else {
-                    console.error("[VideoSourceNode] process error:", e);
-                }
-            }
-        }
-    }
+		// Ownership: Caller owns input, outputs will clone if needed
+		for (const output of this.outputs) {
+			try {
+				output.process(input);
+			} catch (e) {
+				// Handle case where frame is already closed or clone fails
+				if (e instanceof DOMException && e.name === "InvalidStateError") {
+					console.warn("[VideoSourceNode] Cannot clone closed frame");
+				} else {
+					console.error("[VideoSourceNode] process error:", e);
+				}
+			}
+		}
+	}
 
-    async start(): Promise<void> {
-        if (this.#running || this.disposed) return;
-        this.#running = true;
+	async start(): Promise<void> {
+		if (this.#running || this.disposed) return;
+		this.#running = true;
 
-        try {
-            this.#reader = this.#stream.getReader();
+		try {
+			this.#reader = this.#stream.getReader();
 
-            while (this.#running && this.context.state === "running") {
-                const { done, value: frame } = await this.#reader.read();
-                if (done) break;
-                
-                // Pass frame to outputs (they will clone if needed)
-                this.process(frame);
+			while (this.#running && this.context.state === "running") {
+				const { done, value: frame } = await this.#reader.read();
+				if (done) break;
 
-                // Ownership: We own the frame from stream, so we close it
-                frame.close();
-            }
-        } catch (e) {
-            console.error("[VideoSourceNode] read error:", e);
-        } finally {
-            this.#running = false;
-            this.#releaseReader();
-        }
-    }
+				// Pass frame to outputs (they will clone if needed)
+				this.process(frame);
 
-    stop(): void {
-        this.#running = false;
-    }
+				// Ownership: We own the frame from stream, so we close it
+				frame.close();
+			}
+		} catch (e) {
+			console.error("[VideoSourceNode] read error:", e);
+		} finally {
+			this.#running = false;
+			this.#releaseReader();
+		}
+	}
 
-    #releaseReader(): void {
-        if (this.#reader) {
-            try {
-                this.#reader.releaseLock();
-            } catch (_) {
-                /* ignore */
-            }
-            this.#reader = undefined;
-        }
-    }
+	stop(): void {
+		this.#running = false;
+	}
 
-    override dispose(): void {
-        if (this.disposed) return;
-        this.stop();
-        this.#releaseReader();
-        this.context._unregister(this);
-        super.dispose();
-    }
+	#releaseReader(): void {
+		if (this.#reader) {
+			try {
+				this.#reader.releaseLock();
+			} catch (_) {
+				/* ignore */
+			}
+			this.#reader = undefined;
+		}
+	}
+
+	override dispose(): void {
+		if (this.disposed) return;
+		this.stop();
+		this.#releaseReader();
+		this.context._unregister(this);
+		super.dispose();
+	}
 }
-
 
 export class MediaStreamVideoSourceNode extends VideoSourceNode {
 	readonly track: MediaStreamTrack;
@@ -163,5 +162,3 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 		super.dispose();
 	}
 }
-
-

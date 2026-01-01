@@ -68,28 +68,28 @@ export class VideoDestinationNode extends VideoNode {
 
 		// Only schedule ONE rAF at a time; it will render the latest pending frame.
 		if (this.#animateId) return;
-		
+
 		this.#animateId = requestAnimationFrame(() => {
 			this.#animateId = undefined;
-			
+
 			// Clear timeout since rAF fired
 			if (this.#timeoutId !== undefined) {
 				clearTimeout(this.#timeoutId);
 				this.#timeoutId = undefined;
 			}
-			
+
 			const frame = this.#pendingFrame;
 			this.#pendingFrame = undefined;
 			void this.#renderVideoFrame(frame);
 		});
-		
+
 		// Fallback: force cleanup after 1 second if rAF doesn't fire (e.g., tab backgrounded)
 		this.#timeoutId = setTimeout(() => {
 			if (this.#animateId) {
 				cancelAnimationFrame(this.#animateId);
 				this.#animateId = undefined;
 			}
-			
+
 			const frame = this.#pendingFrame;
 			this.#pendingFrame = undefined;
 			if (frame) {
@@ -99,7 +99,7 @@ export class VideoDestinationNode extends VideoNode {
 					console.error("[VideoDestinationNode] timeout cleanup error:", e);
 				}
 			}
-			
+
 			this.#timeoutId = undefined;
 		}, 1000);
 

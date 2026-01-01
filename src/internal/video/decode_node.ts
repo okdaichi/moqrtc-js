@@ -49,14 +49,14 @@ export class VideoDecodeNode extends VideoNode {
 			while (this.context.state === "running" && !this.disposed) {
 				const { done, value: chunk } = await reader.read();
 				if (done) break;
-				
+
 				// Backpressure: Wait if decoder queue is overloaded
 				if (this.decodeQueueSize > MAX_QUEUE_SIZE) {
 					console.warn(`[VideoDecodeNode] Decoder overloaded (queue: ${this.decodeQueueSize}), waiting...`);
-					await new Promise(resolve => setTimeout(resolve, 16)); // ~1 frame @ 60fps
+					await new Promise((resolve) => setTimeout(resolve, 16)); // ~1 frame @ 60fps
 					continue;
 				}
-				
+
 				this.#decoder.decode(chunk);
 			}
 		} catch (e) {

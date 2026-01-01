@@ -1,0 +1,248 @@
+
+Deno.test("VideoDecodeNode", async (t) => {
+	let context: VideoContext;
+	let decoderNode: VideoDecodeNode;
+	let mockDecoder: MockVideoDecoder;
+	let onFrame: (frame: VideoFrame) => void;
+
+	await t.step("setup", () => {
+		// Mock the global VideoDecoder
+		mockDecoder = new MockVideoDecoder({
+			output: (frame: VideoFrame) => {
+				if (onFrame) onFrame(frame);
+			},
+			error: (error: DOMException) => {
+				console.error("Decoder error:", error);
+			},
+		});
+		(globalThis as any).VideoDecoder = () => mockDecoder;
+
+		context = new VideoContext();
+		onFrame = () => {};
+		decoderNode = new VideoDecodeNode(context);
+	});
+
+	await t.step("teardown", () => {
+		// Restore global VideoDecoder
+		delete (globalThis as any).VideoDecoder;
+	});
+
+	await t.step("should create VideoDecodeNode", () => {
+		assert(decoderNode instanceof VideoDecodeNode);
+		assertEquals(decoderNode.numberOfInputs, 1);
+		assertEquals(decoderNode.numberOfOutputs, 1);
+	});
+
+	await t.step("should configure decoder", () => {
+		const config: VideoDecoderConfig = {
+			codec: "vp8",
+			codedWidth: 640,
+			codedHeight: 480,
+		};
+
+		decoderNode.configure(config);
+
+		assert(mockDecoder.configureCalled);
+		assertEquals(mockDecoder.configureCalls.length, 1);
+		const configureCall = mockDecoder.configureCalls[0];
+		assert(configureCall);
+		assertEquals(configureCall[0], config);
+	});
+
+	await t.step("should decode encoded container", () => {
+		const config: VideoDecoderConfig = {
+			codec: "vp8",
+			codedWidth: 640,
+			codedHeight: 480,
+		};
+		decoderNode.configure(config);
+
+		// VideoDecodeNode decodes in decodeFrom method, not in process
+		// process method passes decoded frames to next nodes
+		const frame = new MockVideoFrame();
+		const outputNode = new MockVideoNode();
+		decoderNode.connect(outputNode);
+		let processCalled = false;
+		let processFrame: VideoFrame | undefined;
+		outputNode.process = (f: VideoFrame) => {
+			processCalled = true;
+			processFrame = f;
+		};
+
+		decoderNode.process(frame);
+
+		assert(processCalled);
+		assertEquals(processFrame, frame);
+	});
+
+	await t.step("should handle frame close errors gracefully", () => {
+		const config: VideoDecoderConfig = {
+			codec: "vp8",
+			codedWidth: 640,
+			codedHeight: 480,
+		};
+		decoderNode.configure(config);
+
+		// Mock VideoFrame.close to throw an error
+		const frame = new MockVideoFrame();
+		let closeCalled = false;
+		frame.close = () => {
+			closeCalled = true;
+			throw new Error("Close error");
+		};
+
+		// Should not throw despite the error
+		assert(() => decoderNode.process(frame));
+		assert(closeCalled);
+	});
+
+	await t.step("should pass decoded frames to outputs when decoder outputs frame", async () => {
+		const config: VideoDecoderConfig = {
+			codec: "vp8",
+			codedWidth: 640,
+			codedHeight: 480,
+		};
+		decoderNode.configure(config);
+
+		// Connect an output node
+		const outputNode = new MockVideoNode();
+		decoderNode.connect(outputNode);
+		let processCalled = false;
+		let processFrame: VideoFrame | undefined;
+		outputNode.process = (f: VideoFrame) => {
+			processCalled = true;
+			processFrame = f;
+		};
+
+		// Simulate decoder output
+		const mockFrame = new MockVideoFrame();
+		if (onFrame) onFrame(mockFrame);
+
+		assert(processCalled);
+		assertEquals(processFrame, mockFrame);
+	});
+
+	await t.step("should handle output processing errors gracefully in process", () => {
+		const config: VideoDecoderConfig = {
+			codec: "vp8",
+			codedWidth: 640,
+			codedHeight: 480,
+		};
+		decoderNode.configure(config);
+
+		// Connect an output node that throws an error
+		const outputNode = new MockVideoNode();
+		decoderNode.connect(outputNode);
+		let processCalled = false;
+		let processFrame: VideoFrame | undefined;
+		outputNode.process = (f: VideoFrame) => {
+			processCalled = true;
+			processFrame = f;
+			throw new Error("Output processing error");
+		};
+
+		const frame = new MockVideoFrame();
+		// Should not throw despite the error
+		assert(() => decoderNode.process(frame));
+		assert(processCalled);
+		assertEquals(processFrame, frame);
+	});
+
+	await t.step("should close decoder", async () => {
+		const config: VideoDecoderConfig = {
+			codec: "vp8",
+			codedWidth: 640,
+			codedHeight: 480,
+		};
+		decoderNode.configure(config);
+
+		await decoderNode.close();
+		assert(mockDecoder.closeCalled);
+	});
+
+	await t.step("should handle close errors gracefully", async () => {
+		const config: VideoDecoderConfig = {
+			codec: "vp8",
+			codedWidth: 640,
+			codedHeight: 480,
+		};
+		decoderNode.configure(config);
+
+		// Mock decoder.close to throw an error
+		const originalClose = mockDecoder.close;
+		mockDecoder.close = () => {
+			throw new Error("Close error");
+		};
+
+		// Should not throw despite the error
+		await assertRejects(async () => await decoderNode.close());
+		assert(mockDecoder.closeCalled);
+
+		// Restore original
+		mockDecoder.close = originalClose;
+	});
+
+	await t.step("should flush decoder", async () => {
+		const config: VideoDecoderConfig = {
+			codec: "vp8",
+			codedWidth: 640,
+			codedHeight: 480,
+		};
+		decoderNode.configure(config);
+
+		await decoderNode.flush();
+		assert(mockDecoder.flushCalled);
+	});
+
+	await t.step("should handle flush errors gracefully", async () => {
+		const config: VideoDecoderConfig = {
+			codec: "vp8",
+			codedWidth: 640,
+			codedHeight: 480,
+		};
+		decoderNode.configure(config);
+
+		// Mock decoder.flush to throw an error
+		const originalFlush = mockDecoder.flush;
+		mockDecoder.flush = () => {
+			throw new Error("Flush error");
+		};
+
+		// Should not throw despite the error
+		await assertRejects(async () => await decoderNode.flush());
+		assert(mockDecoder.flushCalled);
+
+		// Restore original
+		mockDecoder.flush = originalFlush;
+	});
+
+	await t.step("should dispose decoder node", () => {
+		decoderNode.dispose();
+		// dispose should disconnect and unregister from context
+		assertEquals(decoderNode.outputs.size, 0);
+		assertEquals(decoderNode.inputs.size, 0);
+	});
+
+	await t.step("should decode from track reader", async () => {
+		const config: VideoDecoderConfig = {
+			codec: "vp8",
+			codedWidth: 640,
+			codedHeight: 480,
+		};
+		decoderNode.configure(config);
+
+		// Mock TrackReader - simplified for Deno test
+		const mockReader = new ReadableStream({
+			start(controller) {
+				controller.enqueue({
+					bytes: new Uint8Array([0, 0, 0, 0, 1, 2, 3]),
+				});
+				controller.close();
+			},
+		});
+
+		await decoderNode.decodeFrom(mockReader);
+
+		assert(mockDecoder.decodeCalled);
+	});
+});

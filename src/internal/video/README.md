@@ -154,17 +154,17 @@ source.connect(analyser);
 
 // Reactive callback approach
 analyser.onanalysis = (analysis) => {
-	console.log('Brightness:', analysis.lumaAverage);
-	console.log('Motion:', analysis.motionEnergy);
-	console.log('Complexity:', analysis.spatialComplexity);
+	console.log("Brightness:", analysis.lumaAverage);
+	console.log("Motion:", analysis.motionEnergy);
+	console.log("Complexity:", analysis.spatialComplexity);
 };
 
 // Polling approach
 const current = analyser.getFrameAnalysis();
 const history = analyser.getAnalysisHistory();
 const recent = analyser.getRecentAnalysis(30); // Last 30 frames
-const average = analyser.getAverageValue('motionEnergy');
-const peak = analyser.getPeakValue('edgeDensity');
+const average = analyser.getAverageValue("motionEnergy");
+const peak = analyser.getPeakValue("edgeDensity");
 ```
 
 **Available Metrics** (all normalized 0.0–1.0):

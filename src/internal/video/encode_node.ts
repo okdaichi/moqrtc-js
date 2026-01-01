@@ -7,12 +7,12 @@ const MAX_QUEUE_SIZE = 2;
 export class VideoEncodeNode extends VideoNode {
 	readonly context: VideoContext;
 	#encoder: VideoEncoder;
-	#isKey: () => boolean;
+	#isKey: IsKeyFunction;
 	#dests: Set<EncodeDestination> = new Set();
 
 	constructor(
 		context: VideoContext,
-		options?: { startSequence?: bigint; isKey?: () => boolean },
+		options?: { isKey?: IsKeyFunction },
 	) {
 		super({ numberOfInputs: 1, numberOfOutputs: 1 });
 		this.context = context;
@@ -20,7 +20,10 @@ export class VideoEncodeNode extends VideoNode {
 		this.context._register(this);
 
 		this.#encoder = new VideoEncoder({
-			output: async (chunk) => {
+			output: async (chunk, meta) => {
+				if (meta) {
+					console.log("[VideoEncodeNode] Encoded chunk metadata:", meta);
+				}
 				// Pass encoded chunk to all registered destinations
 				await Promise.allSettled(
 					Array.from(this.#dests, (dest) => dest.output(chunk)),
@@ -64,7 +67,7 @@ export class VideoEncodeNode extends VideoNode {
 
 		// Encode the frame
 		try {
-			this.#encoder.encode(clonedFrame, { keyFrame: this.#isKey() });
+			this.#encoder.encode(clonedFrame, { keyFrame: this.#isKey(input.timestamp, this.encodeQueueSize) });
 		} catch (e) {
 			console.error("[VideoEncodeNode] encode error:", e);
 		}
@@ -107,3 +110,5 @@ export class VideoEncodeNode extends VideoNode {
 		this.#dests.delete(dest);
 	}
 }
+
+type IsKeyFunction = (timestamp: number, count: number) => boolean;

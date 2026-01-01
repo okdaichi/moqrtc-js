@@ -13,13 +13,11 @@
 		"noUncheckedIndexedAccess": true
 	},
 	"fmt": {
-		"options": {
-			"useTabs": true,
-			"lineWidth": 120,
-			"indentWidth": 4,
-			"singleQuote": false,
-			"semiColons": true
-		}
+		"useTabs": true,
+		"lineWidth": 120,
+		"indentWidth": 4,
+		"singleQuote": false,
+		"semiColons": true
 	},
 	"exclude": [
 		"demo/",
