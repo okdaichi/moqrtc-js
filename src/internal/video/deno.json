@@ -1,10 +1,8 @@
 {
-	"name": "@okudai/video-nodes",
-	"version": "0.1.0",
+	"name": "@okdaichi/video-nodes",
+	"version": "0.2.0",
 	"exports": {
-		".": "./mod.ts",
-		"./config": "./video_config.ts",
-		"./nodes": "./video_node.ts"
+		".": "./mod.ts"
 	},
 	"license": "MIT",
 	"compilerOptions": {

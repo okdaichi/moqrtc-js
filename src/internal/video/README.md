@@ -6,7 +6,7 @@ WebCodecs-based video processing library with a node-graph architecture inspired
 
 - 🎥 **Video Node Graph**: Connect video sources, encoders, decoders, and destinations
 - 🔧 **Hardware Acceleration**: Leverage WebCodecs for efficient video encoding/decoding
-- 📊 **Video Analysis**: Real-time metrics (brightness, motion, edge detection)
+- 📊 **Video Analysis**: Real-time content metrics (10 normalized metrics: luma, chroma, motion, edges, complexity)
 - 🎬 **Flexible Pipeline**: Build custom video processing pipelines
 - 🖼️ **Multiple Render Modes**: Contain, cover, fill, scale-down
 - 🎯 **Type-Safe**: Full TypeScript support
@@ -88,7 +88,8 @@ deno task dev
 Open http://localhost:5173 to see:
 
 - Real-time camera encode/decode pipeline
-- Performance metrics
+- Video analysis metrics with live visualization
+- Performance monitoring
 - Codec configuration
 
 ## API
@@ -139,6 +140,39 @@ context.destination.canvas = myCanvas;
 context.destination.renderFunction = VideoRenderFunctions.cover;
 ```
 
+#### `VideoAnalyserNode`
+
+Analyze video content in real-time with AudioAnalyserNode-compatible API.
+
+```typescript
+const analyser = new VideoAnalyserNode(context, {
+	analysisInterval: 10, // Analyze every 10th frame
+	smoothingTimeConstant: 0.8, // Smooth values over time
+	historySize: 256, // Number of frames to keep in history
+});
+source.connect(analyser);
+
+// Reactive callback approach
+analyser.onanalysis = (analysis) => {
+	console.log('Brightness:', analysis.lumaAverage);
+	console.log('Motion:', analysis.motionEnergy);
+	console.log('Complexity:', analysis.spatialComplexity);
+};
+
+// Polling approach
+const current = analyser.getFrameAnalysis();
+const history = analyser.getAnalysisHistory();
+const recent = analyser.getRecentAnalysis(30); // Last 30 frames
+const average = analyser.getAverageValue('motionEnergy');
+const peak = analyser.getPeakValue('edgeDensity');
+```
+
+**Available Metrics** (all normalized 0.0–1.0):
+
+- **Intra-Frame**: `lumaAverage`, `lumaVariance`, `chromaVariance`, `frameEnergy`
+- **Inter-Frame**: `frameDelta`, `motionEnergy`, `activityLevel`
+- **Information Density**: `edgeDensity`, `highFrequencyRatio`, `spatialComplexity`
+
 ### Utilities
 
 #### `videoEncoderConfig()`
@@ -173,9 +207,9 @@ Pre-defined render modes: `contain`, `cover`, `fill`, `scaleDown`.
 Based on Web Audio API's node graph pattern:
 
 ```
-Source → [Processor] → [Encoder] → [Decoder] → Destination
-   ↓                                              ↓
- Camera                                        Canvas
+Source → [Analyser] → [Encoder] → [Decoder] → Destination
+   ↓         ↓                                    ↓
+ Camera   Analysis                             Canvas
 ```
 
 Each node can be connected to multiple outputs, creating flexible processing pipelines.
