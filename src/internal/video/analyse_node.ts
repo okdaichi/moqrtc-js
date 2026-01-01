@@ -11,21 +11,21 @@ export interface VideoFrameAnalysis {
 	readonly frameIndex: number; // Cumulative frame number
 	readonly presentationTime: number; // VideoFrame.timestamp (μs)
 
-	// Intra-Frame Statistics
-	readonly lumaAverage: number; // 0.0–1.0
-	readonly lumaVariance: number; // 0.0–1.0
-	readonly chromaVariance: number; // 0.0–1.0
-	readonly frameEnergy: number; // 0.0–1.0
+	// Intra-Frame Statistics (content metrics for single frame)
+	readonly lumaAverage: number; // 0.0–1.0 | Brightness (mean of grayscale values)
+	readonly lumaVariance: number; // 0.0–1.0 | Contrast (variance of grayscale values)
+	readonly chromaVariance: number; // 0.0–1.0 | Colorfulness (variance of color channels)
+	readonly frameEnergy: number; // 0.0–1.0 | Signal strength (RMS of pixel intensities)
 
-	// Inter-Frame Dynamics
-	readonly frameDelta: number; // 0.0–1.0
-	readonly motionEnergy: number; // 0.0–1.0
-	readonly activityLevel: number; // 0.0–1.0 (smoothed)
+	// Inter-Frame Dynamics (motion metrics between consecutive frames)
+	readonly frameDelta: number; // 0.0–1.0 | Pixel change rate (SAD normalized)
+	readonly motionEnergy: number; // 0.0–1.0 | Motion magnitude (RMS of pixel differences)
+	readonly activityLevel: number; // 0.0–1.0 | Smoothed motion (exponentially weighted moving average)
 
-	// Information Density
-	readonly edgeDensity: number; // 0.0–1.0
-	readonly highFrequencyRatio: number; // 0.0–1.0
-	readonly spatialComplexity: number; // 0.0–1.0
+	// Information Density (spatial frequency/complexity metrics)
+	readonly edgeDensity: number; // 0.0–1.0 | Edge pixel ratio (Sobel gradient magnitude)
+	readonly highFrequencyRatio: number; // 0.0–1.0 | Fine detail presence (edge-based estimate)
+	readonly spatialComplexity: number; // 0.0–1.0 | Entropy (histogram-based information measure)
 }
 
 /**
@@ -93,6 +93,7 @@ export class VideoAnalyserNode extends VideoNode {
 	#pixelBuffer?: Uint8Array;
 	#grayscaleBuffer?: Uint8Array;
 	#previousFrameBuffer?: Uint8Array;
+	#previousMotionEnergy = 0;
 
 	// Performance optimization
 	#canvas?: OffscreenCanvas;
@@ -222,6 +223,7 @@ export class VideoAnalyserNode extends VideoNode {
 			return;
 		}
 
+		// Ownership: Caller owns input, so we clone for our use
 		const clonedFrame = input.clone();
 
 		// Throttle analysis: only analyze every Nth frame
@@ -231,8 +233,8 @@ export class VideoAnalyserNode extends VideoNode {
 			this.#scheduleAnalysis(clonedFrame);
 		}
 
-		// Pass frame to outputs
-		for (const output of Array.from(this.outputs)) {
+		// Pass frame to outputs (they will clone if needed)
+		for (const output of this.outputs) {
 			try {
 				void output.process(clonedFrame);
 			} catch (e) {
@@ -240,7 +242,7 @@ export class VideoAnalyserNode extends VideoNode {
 			}
 		}
 
-		// Close the cloned frame (we own it)
+		// Ownership: We own the clone, so we close it
 		clonedFrame.close();
 	}
 
@@ -418,8 +420,8 @@ export class VideoAnalyserNode extends VideoNode {
 			sumChromaUSquared += u * u;
 			sumChromaVSquared += v * v;
 
-			// Energy (normalized pixel intensity)
-			sumEnergy += (r + g + b) / (3 * 255);
+			// Energy (RMS of pixel intensities)
+			sumEnergy += (r * r + g * g + b * b) / (3 * 255 * 255);
 		}
 
 		const lumaAverage = sumLuma / pixelCount;
@@ -476,8 +478,10 @@ export class VideoAnalyserNode extends VideoNode {
 		const frameDelta = sumAbsoluteDiff / (pixelCount * 3 * 255);
 		const motionEnergy = Math.sqrt(sumSquaredDiff / (pixelCount * 3)) / 255;
 
-		// Activity level (simple threshold-based classification)
-		const activityLevel = Math.min(1, motionEnergy * 5);
+		// Activity level (smoothed motion energy with emphasis on changes)
+		const alpha = 0.3; // Smoothing factor
+		const activityLevel = alpha * motionEnergy + (1 - alpha) * this.#previousMotionEnergy;
+		this.#previousMotionEnergy = activityLevel;
 
 		return {
 			frameDelta: Math.max(0, Math.min(1, frameDelta)),

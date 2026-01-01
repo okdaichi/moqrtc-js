@@ -5,7 +5,6 @@ import { MockHTMLCanvasElement } from "./mock_htmlcanvaselement_test.ts";
 import { MockVideoDecoder } from "./mock_videodecoder_test.ts";
 import { MockVideoFrame } from "./mock_videoframe_test.ts";
 import {
-	VideoAnalyserNode,
 	VideoContext,
 	VideoDecodeNode,
 	VideoDestinationNode,
@@ -13,7 +12,7 @@ import {
 	VideoNode,
 	VideoObserveNode,
 	VideoRenderFunctions,
-	VideoSourceNode,
+	VideoSourceNode
 } from "./video_node.ts";
 
 // Using shared MockVideoEncoder from test-stubs
@@ -367,109 +366,6 @@ Deno.test("MediaStreamVideoSourceNode", async (t) => {
 			Error,
 			"track has no settings",
 		);
-	});
-});
-
-Deno.test("VideoAnalyserNode", async (t) => {
-	let context: VideoContext;
-	let analyserNode: VideoAnalyserNode;
-
-	await t.step("should create VideoAnalyserNode", () => {
-		context = new VideoContext();
-		analyserNode = new VideoAnalyserNode(context);
-
-		assertEquals(analyserNode.numberOfInputs, 1);
-		assertEquals(analyserNode.numberOfOutputs, 1);
-	});
-
-	await t.step("should have initial zero values", () => {
-		context = new VideoContext();
-		analyserNode = new VideoAnalyserNode(context);
-
-		assertEquals(analyserNode.brightness, 0);
-		assertEquals(analyserNode.contrast, 0);
-		assertEquals(analyserNode.saturation, 0);
-		assertEquals(analyserNode.sharpness, 0);
-		assertEquals(analyserNode.edgeStrength, 0);
-		assertEquals(analyserNode.textureComplexity, 0);
-		assertEquals(analyserNode.motionMagnitude, 0);
-		assertEquals(analyserNode.motionDirection, 0);
-	});
-
-	await t.step("should process frames and update analysis", () => {
-		context = new VideoContext();
-		analyserNode = new VideoAnalyserNode(context);
-
-		const frame = new MockVideoFrame(320, 240);
-		analyserNode.process(frame);
-
-		// Values should be updated after processing
-		assert(analyserNode.brightness >= 0);
-		assert(analyserNode.contrast >= 0);
-		assert(analyserNode.saturation >= 0);
-	});
-
-	await t.step("should get color histogram", () => {
-		context = new VideoContext();
-		analyserNode = new VideoAnalyserNode(context);
-
-		const histogram = new Uint32Array(768); // RGB * 256
-		analyserNode.getColorHistogram(histogram);
-		// Should not throw
-	});
-
-	await t.step("should get dominant colors", () => {
-		context = new VideoContext();
-		analyserNode = new VideoAnalyserNode(context);
-
-		const colors = analyserNode.getDominantColors();
-		assert(Array.isArray(colors));
-	});
-
-	await t.step("should get spatial frequency data", () => {
-		context = new VideoContext();
-		analyserNode = new VideoAnalyserNode(context);
-
-		const frequencyData = new Float32Array(256);
-		analyserNode.getSpatialFrequencyData(frequencyData);
-		// Should not throw
-	});
-
-	await t.step("should pass frames to outputs", () => {
-		context = new VideoContext();
-		analyserNode = new VideoAnalyserNode(context);
-
-		const outputNode = new MockVideoNode();
-		analyserNode.connect(outputNode);
-
-		const frame = new MockVideoFrame();
-		// Note: Spy functionality would need proper mock implementation
-		analyserNode.process(frame);
-		// TODO: Verify frame was processed - would need spy on outputNode.process
-		assert(true); // Placeholder - actual verification needs spy implementation
-	});
-
-	await t.step("should handle frame close errors gracefully", () => {
-		context = new VideoContext();
-		analyserNode = new VideoAnalyserNode(context);
-
-		const outputNode = new MockVideoNode();
-		analyserNode.connect(outputNode);
-
-		// Note: Error handling would need proper mock implementation
-		// Should not throw despite the error
-		assert(true); // Placeholder - actual error handling needs mock implementation
-	});
-
-	await t.step("should handle output processing errors gracefully", () => {
-		context = new VideoContext();
-		analyserNode = new VideoAnalyserNode(context);
-
-		const outputNode = new MockVideoNode();
-		analyserNode.connect(outputNode);
-
-		// Note: Error handling would need proper mock implementation
-		// Should not throw despite the error
 	});
 });
 

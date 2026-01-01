@@ -191,62 +191,7 @@ function collectMetrics() {
 
 let analysisLoopRunning = false;
 
-function startAnalysisLoop() {
-  if (analysisLoopRunning) return;
-  analysisLoopRunning = true;
-  updateAnalysis();
-}
-
-function stopAnalysisLoop() {
-  analysisLoopRunning = false;
-}
-
-function updateAnalysis() {
-  if (!analysisLoopRunning || !pipeline.analyserNode) return;
-
-  try {
-    // Get analysis data
-    const brightness = pipeline.analyserNode.brightness;
-    const contrast = pipeline.analyserNode.contrast;
-    const saturation = pipeline.analyserNode.saturation;
-    const dominantColors = pipeline.analyserNode.getDominantColors();
-
-    // Update UI
-    const brightnessEl = elements.brightness();
-    if (brightnessEl) brightnessEl.textContent = brightness.toFixed(2);
-
-    const contrastEl = elements.contrast();
-    if (contrastEl) contrastEl.textContent = contrast.toFixed(2);
-
-    const saturationEl = elements.saturation();
-    if (saturationEl) saturationEl.textContent = saturation.toFixed(2);
-
-    // Update dominant color display
-    const dominantColorEl = elements.dominantColor();
-    if (dominantColorEl && dominantColors && dominantColors.length > 0) {
-      const color = dominantColors[0]!;
-      dominantColorEl.style.backgroundColor = `rgb(${color.r}, ${color.g}, ${color.b})`;
-    }
-
-    // Update color bar (show top 5 dominant colors)
-    const colorBarEl = elements.colorBar();
-    if (colorBarEl && dominantColors) {
-      colorBarEl.innerHTML = "";
-      for (let i = 0; i < Math.min(5, dominantColors.length); i++) {
-        const color = dominantColors[i]!;
-        const colorDiv = document.createElement("div");
-        colorDiv.className = "color-block";
-        colorDiv.style.backgroundColor = `rgb(${color.r}, ${color.g}, ${color.b})`;
-        colorBarEl.appendChild(colorDiv);
-      }
-    }
-  } catch (e) {
-    console.warn("Analysis update error:", e);
-  }
-
-  // Continue loop at ~2Hz (500ms) to avoid overhead
-  setTimeout(() => updateAnalysis(), 500);
-}
+// Analysis is now handled reactively via onanalysis callback
 
 // ============================================================================
 // Metrics Update Strategy
@@ -300,12 +245,58 @@ async function startPipeline(sourceType: "camera" | "screen") {
 
     // 2. Source → Analyser (analysis branch - no latency impact)
     pipeline.analyserNode = new VideoAnalyserNode(sourceContext, {
-      throttle: 10, // Analyze every 10th frame (~3fps at 30fps) to reduce CPU load
+      analysisInterval: 10, // Analyze every 10th frame (~3fps at 30fps) to reduce CPU load
+      smoothingTimeConstant: 0.8, // Smooth values over time
     });
     pipeline.sourceNode.connect(pipeline.analyserNode);
 
-    // Start analysis update loop
-    startAnalysisLoop();
+    // Set up reactive analysis callback
+    pipeline.analyserNode.onanalysis = (analysis) => {
+      try {
+        // Update UI with new metrics
+        const lumaEl = elements.brightness();
+        if (lumaEl) lumaEl.textContent = analysis.lumaAverage.toFixed(2);
+
+        const contrastEl = elements.contrast();
+        if (contrastEl) contrastEl.textContent = analysis.lumaVariance.toFixed(2);
+
+        const saturationEl = elements.saturation();
+        if (saturationEl) saturationEl.textContent = analysis.chromaVariance.toFixed(2);
+
+        // Update dominant color with frame energy visualization
+        const dominantColorEl = elements.dominantColor();
+        if (dominantColorEl) {
+          const energy = Math.floor(analysis.frameEnergy * 255);
+          dominantColorEl.style.backgroundColor = `rgb(${energy}, ${energy}, ${energy})`;
+        }
+
+        // Update color bar with motion/activity metrics
+        const colorBarEl = elements.colorBar();
+        if (colorBarEl) {
+          colorBarEl.innerHTML = "";
+          
+          // Show 5 metrics as colored blocks
+          const metrics = [
+            { value: analysis.motionEnergy, label: 'Motion' },
+            { value: analysis.activityLevel, label: 'Activity' },
+            { value: analysis.edgeDensity, label: 'Edges' },
+            { value: analysis.highFrequencyRatio, label: 'HF' },
+            { value: analysis.spatialComplexity, label: 'Complex' }
+          ];
+          
+          for (const metric of metrics) {
+            const intensity = Math.floor(metric.value * 255);
+            const colorDiv = document.createElement("div");
+            colorDiv.className = "color-block";
+            colorDiv.style.backgroundColor = `rgb(0, ${intensity}, ${255 - intensity})`;
+            colorDiv.title = `${metric.label}: ${metric.value.toFixed(2)}`;
+            colorBarEl.appendChild(colorDiv);
+          }
+        }
+      } catch (e) {
+        console.warn("Analysis callback error:", e);
+      }
+    };
 
     // Get encoder configuration
     const encoderConfig = await videoEncoderConfig({
@@ -436,7 +427,6 @@ async function startPipeline(sourceType: "camera" | "screen") {
 
 function stopPipeline() {
   pipeline.running = false;
-  stopAnalysisLoop();
   // Final UI update
   collectMetrics();
   renderMetrics();

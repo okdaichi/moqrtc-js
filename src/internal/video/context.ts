@@ -93,7 +93,7 @@ export class VideoContext {
 		this.#setState("closed");
 
 		// Dispose all registered nodes
-		for (const node of Array.from(this.#nodes)) {
+		for (const node of this.#nodes) {
 			try {
 				node.dispose();
 			} catch (_) {

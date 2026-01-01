@@ -9,6 +9,7 @@ export class VideoDestinationNode extends VideoNode {
 	#isVisible: boolean = true;
 	#renderFunction: VideoRenderFunction;
 	#delayFunc?: () => Promise<void>;
+	#timeoutId?: number;
 
 	constructor(
 		context: VideoContext,
@@ -50,6 +51,7 @@ export class VideoDestinationNode extends VideoNode {
 			return;
 		}
 
+		// Ownership: Caller owns input, so we clone for our use
 		const clonedFrame = input.clone();
 
 		// Replace any pending frame (not yet rendered) with the newest one.
@@ -66,12 +68,40 @@ export class VideoDestinationNode extends VideoNode {
 
 		// Only schedule ONE rAF at a time; it will render the latest pending frame.
 		if (this.#animateId) return;
+		
 		this.#animateId = requestAnimationFrame(() => {
 			this.#animateId = undefined;
+			
+			// Clear timeout since rAF fired
+			if (this.#timeoutId !== undefined) {
+				clearTimeout(this.#timeoutId);
+				this.#timeoutId = undefined;
+			}
+			
 			const frame = this.#pendingFrame;
 			this.#pendingFrame = undefined;
 			void this.#renderVideoFrame(frame);
 		});
+		
+		// Fallback: force cleanup after 1 second if rAF doesn't fire (e.g., tab backgrounded)
+		this.#timeoutId = setTimeout(() => {
+			if (this.#animateId) {
+				cancelAnimationFrame(this.#animateId);
+				this.#animateId = undefined;
+			}
+			
+			const frame = this.#pendingFrame;
+			this.#pendingFrame = undefined;
+			if (frame) {
+				try {
+					frame.close();
+				} catch (e) {
+					console.error("[VideoDestinationNode] timeout cleanup error:", e);
+				}
+			}
+			
+			this.#timeoutId = undefined;
+		}, 1000);
 
 		// We don't need to close the clonedFrame here, as it is either assigned
 		// to #pendingFrame (to be closed later) or closed in #renderVideoFrame.
@@ -140,6 +170,11 @@ export class VideoDestinationNode extends VideoNode {
 		if (this.#animateId) {
 			cancelAnimationFrame(this.#animateId);
 			this.#animateId = undefined;
+		}
+		// Cancel timeout
+		if (this.#timeoutId !== undefined) {
+			clearTimeout(this.#timeoutId);
+			this.#timeoutId = undefined;
 		}
 		if (this.#pendingFrame) {
 			try {

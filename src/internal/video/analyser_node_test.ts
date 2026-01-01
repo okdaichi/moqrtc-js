@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { VideoAnalyserNode } from "./analyse_node.ts";
 import type { VideoFrameAnalysis } from "./analyse_node.ts";
+import { VideoAnalyserNode } from "./analyse_node.ts";
 import { VideoContext } from "./context.ts";
 import { MockVideoFrame } from "./mock_videoframe_test.ts";
 import { VideoNode } from "./video_node.ts";

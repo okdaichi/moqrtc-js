@@ -48,7 +48,7 @@ export abstract class VideoNode {
 			this.#outputs.delete(destination);
 			destination.#inputs.delete(this);
 		} else {
-			for (const output of Array.from(this.#outputs)) {
+			for (const output of this.#outputs) {
 				this.#outputs.delete(output);
 				output.#inputs.delete(this);
 			}

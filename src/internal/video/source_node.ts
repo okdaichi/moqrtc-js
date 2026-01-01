@@ -26,8 +26,8 @@ export class VideoSourceNode extends VideoNode {
     process(input: VideoFrame): void {
         if (this.disposed) return;
 
-        // Pass the same cloned frame to all outputs (they will clone it themselves)
-        for (const output of Array.from(this.outputs)) {
+        // Ownership: Caller owns input, outputs will clone if needed
+        for (const output of this.outputs) {
             try {
                 output.process(input);
             } catch (e) {
@@ -51,8 +51,11 @@ export class VideoSourceNode extends VideoNode {
             while (this.#running && this.context.state === "running") {
                 const { done, value: frame } = await this.#reader.read();
                 if (done) break;
+                
+                // Pass frame to outputs (they will clone if needed)
                 this.process(frame);
 
+                // Ownership: We own the frame from stream, so we close it
                 frame.close();
             }
         } catch (e) {

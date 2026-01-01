@@ -2,6 +2,8 @@ import type { EncodeDestination } from "./container.ts";
 import type { VideoContext } from "./context.ts";
 import { VideoNode } from "./video_node.ts";
 
+const MAX_QUEUE_SIZE = 2;
+
 export class VideoEncodeNode extends VideoNode {
 	readonly context: VideoContext;
 	#encoder: VideoEncoder;
@@ -51,7 +53,13 @@ export class VideoEncodeNode extends VideoNode {
 			return;
 		}
 
-		// Clone the input frame
+		// Backpressure: Drop frames if encoder is overloaded
+		if (this.encodeQueueSize > MAX_QUEUE_SIZE) {
+			console.warn(`[VideoEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`);
+			return; // Drop frame without encoding
+		}
+
+		// Ownership: Caller owns input, so we clone for our use
 		const clonedFrame = input.clone();
 
 		// Encode the frame
@@ -61,6 +69,7 @@ export class VideoEncodeNode extends VideoNode {
 			console.error("[VideoEncodeNode] encode error:", e);
 		}
 
+		// Ownership: We own the clone, so we close it
 		clonedFrame.close();
 	}
 

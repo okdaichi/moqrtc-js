@@ -1,6 +1,8 @@
 import type { VideoContext } from "./context.ts";
 import { VideoNode } from "./video_node.ts";
 
+const MAX_QUEUE_SIZE = 3;
+
 export class VideoDecodeNode extends VideoNode {
 	readonly context: VideoContext;
 	#decoder: VideoDecoder;
@@ -47,6 +49,14 @@ export class VideoDecodeNode extends VideoNode {
 			while (this.context.state === "running" && !this.disposed) {
 				const { done, value: chunk } = await reader.read();
 				if (done) break;
+				
+				// Backpressure: Wait if decoder queue is overloaded
+				if (this.decodeQueueSize > MAX_QUEUE_SIZE) {
+					console.warn(`[VideoDecodeNode] Decoder overloaded (queue: ${this.decodeQueueSize}), waiting...`);
+					await new Promise(resolve => setTimeout(resolve, 16)); // ~1 frame @ 60fps
+					continue;
+				}
+				
 				this.#decoder.decode(chunk);
 			}
 		} catch (e) {
@@ -57,10 +67,9 @@ export class VideoDecodeNode extends VideoNode {
 	}
 
 	process(input: VideoFrame): void {
-		// Clone frame for each output (decoder produces frames, owns lifecycle)
-		for (const output of Array.from(this.outputs)) {
+		// Ownership: Caller (decoder callback) owns input, outputs will clone if needed
+		for (const output of this.outputs) {
 			try {
-				// Clone for each output (lightweight reference clone)
 				void output.process(input);
 			} catch (e) {
 				// Handle closed frame or clone error

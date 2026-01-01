@@ -75,7 +75,7 @@ var VideoNode = class {
       __privateGet(this, _outputs).delete(destination);
       __privateGet(destination, _inputs).delete(this);
     } else {
-      for (const output of Array.from(__privateGet(this, _outputs))) {
+      for (const output of __privateGet(this, _outputs)) {
         __privateGet(this, _outputs).delete(output);
         __privateGet(output, _inputs).delete(this);
       }
@@ -93,102 +93,138 @@ _outputs = new WeakMap();
 _disposed = new WeakMap();
 
 // ../analyse_node.ts
-var _brightness, _contrast, _saturation, _colorHistogram, _dominantColors, _sharpness, _edgeStrength, _textureComplexity, _motionMagnitude, _motionDirection, _previousFrameData, _spatialFrequency, _canvas, _ctx, _throttle, _frameCount, _pendingPixelData, _pendingWidth, _pendingHeight, _idleCallbackId, _scheduleAnalysis, scheduleAnalysis_fn, _runDeferredAnalysis, runDeferredAnalysis_fn, _analyzeFrame, analyzeFrame_fn, _calculateBasicStats, calculateBasicStats_fn, _calculateColorHistogram, calculateColorHistogram_fn, _calculateDominantColors, calculateDominantColors_fn, _findHistogramPeaks, findHistogramPeaks_fn, _calculateSpatialFeatures, calculateSpatialFeatures_fn, _calculateSharpness, calculateSharpness_fn, _calculateEdgeStrength, calculateEdgeStrength_fn, _calculateTextureComplexity, calculateTextureComplexity_fn, _calculateMotionFeatures, calculateMotionFeatures_fn, _findBlockMotion, findBlockMotion_fn, _calculateSpatialFrequency, calculateSpatialFrequency_fn;
+var _analysisSize, _smoothingTimeConstant, _historySize, _analysisInterval, _enabledFeatures, _currentAnalysis, _frameIndex, _historyBuffer, _historyWriteIndex, _pixelBuffer, _grayscaleBuffer, _previousFrameBuffer, _previousMotionEnergy, _canvas, _ctx, _frameCount, _pendingPixelData, _pendingWidth, _pendingHeight, _pendingTimestamp, _pendingPresentationTime, _idleCallbackId, _scheduleAnalysis, scheduleAnalysis_fn, _runDeferredAnalysis, runDeferredAnalysis_fn, _convertToGrayscale, convertToGrayscale_fn, _calculateIntraFrame, calculateIntraFrame_fn, _calculateInterFrame, calculateInterFrame_fn, _calculateDensity, calculateDensity_fn;
 var VideoAnalyserNode = class extends VideoNode {
   constructor(context, options) {
     super({ numberOfInputs: 1, numberOfOutputs: 1 });
     __privateAdd(this, _scheduleAnalysis);
     __privateAdd(this, _runDeferredAnalysis);
-    __privateAdd(this, _analyzeFrame);
-    __privateAdd(this, _calculateBasicStats);
-    __privateAdd(this, _calculateColorHistogram);
-    __privateAdd(this, _calculateDominantColors);
-    __privateAdd(this, _findHistogramPeaks);
-    __privateAdd(this, _calculateSpatialFeatures);
-    __privateAdd(this, _calculateSharpness);
-    __privateAdd(this, _calculateEdgeStrength);
-    __privateAdd(this, _calculateTextureComplexity);
-    __privateAdd(this, _calculateMotionFeatures);
-    __privateAdd(this, _findBlockMotion);
-    __privateAdd(this, _calculateSpatialFrequency);
+    __privateAdd(this, _convertToGrayscale);
+    __privateAdd(this, _calculateIntraFrame);
+    __privateAdd(this, _calculateInterFrame);
+    __privateAdd(this, _calculateDensity);
     __publicField(this, "context");
-    // Basic image statistics
-    __privateAdd(this, _brightness, 0);
-    __privateAdd(this, _contrast, 0);
-    __privateAdd(this, _saturation, 0);
-    // Color analysis
-    __privateAdd(this, _colorHistogram, void 0);
-    __privateAdd(this, _dominantColors, []);
-    // Spatial features
-    __privateAdd(this, _sharpness, 0);
-    __privateAdd(this, _edgeStrength, 0);
-    __privateAdd(this, _textureComplexity, 0);
-    // Motion features (requires frame comparison)
-    __privateAdd(this, _motionMagnitude, 0);
-    __privateAdd(this, _motionDirection, 0);
-    __privateAdd(this, _previousFrameData, null);
-    // Frequency domain features
-    __privateAdd(this, _spatialFrequency, void 0);
+    // Configuration
+    __privateAdd(this, _analysisSize, void 0);
+    __privateAdd(this, _smoothingTimeConstant, void 0);
+    __privateAdd(this, _historySize, void 0);
+    __privateAdd(this, _analysisInterval, void 0);
+    __privateAdd(this, _enabledFeatures, void 0);
+    // Current analysis state
+    __privateAdd(this, _currentAnalysis, null);
+    __privateAdd(this, _frameIndex, 0);
+    // History buffer (ring buffer)
+    __privateAdd(this, _historyBuffer, []);
+    __privateAdd(this, _historyWriteIndex, 0);
+    // Reusable buffers for memory efficiency
+    __privateAdd(this, _pixelBuffer, void 0);
+    __privateAdd(this, _grayscaleBuffer, void 0);
+    __privateAdd(this, _previousFrameBuffer, void 0);
+    __privateAdd(this, _previousMotionEnergy, 0);
     // Performance optimization
     __privateAdd(this, _canvas, void 0);
     __privateAdd(this, _ctx, void 0);
-    __privateAdd(this, _throttle, void 0);
     __privateAdd(this, _frameCount, 0);
-    // Pending pixel data for deferred analysis
+    // Event callback
+    __publicField(this, "onanalysis", null);
+    // Pending analysis data
     __privateAdd(this, _pendingPixelData, null);
     __privateAdd(this, _pendingWidth, 0);
     __privateAdd(this, _pendingHeight, 0);
+    __privateAdd(this, _pendingTimestamp, 0);
+    __privateAdd(this, _pendingPresentationTime, 0);
     __privateAdd(this, _idleCallbackId, void 0);
     this.context = context;
     this.context._register(this);
-    const histogramBins = options?.histogramBins ?? 256;
-    __privateSet(this, _colorHistogram, new Uint32Array(histogramBins * 3));
-    __privateSet(this, _spatialFrequency, new Float32Array(histogramBins));
-    __privateSet(this, _throttle, options?.throttle ?? 1);
-  }
-  // Basic statistics getters
-  get brightness() {
-    return __privateGet(this, _brightness);
-  }
-  get contrast() {
-    return __privateGet(this, _contrast);
-  }
-  get saturation() {
-    return __privateGet(this, _saturation);
-  }
-  // Color analysis getters
-  getColorHistogram(array) {
-    const length = Math.min(array.length, __privateGet(this, _colorHistogram).length);
-    for (let i = 0; i < length; i++) {
-      array[i] = __privateGet(this, _colorHistogram)[i] ?? 0;
+    __privateSet(this, _analysisSize, options?.analysisSize ?? { width: 160, height: 120 });
+    __privateSet(this, _smoothingTimeConstant, options?.smoothingTimeConstant ?? 0.8);
+    __privateSet(this, _historySize, options?.historySize ?? 256);
+    __privateSet(this, _analysisInterval, options?.analysisInterval ?? 1);
+    __privateSet(this, _enabledFeatures, {
+      intraFrame: options?.features?.intraFrame ?? true,
+      interFrame: options?.features?.interFrame ?? true,
+      density: options?.features?.density ?? true
+    });
+    const bufferSize = __privateGet(this, _analysisSize).width * __privateGet(this, _analysisSize).height;
+    __privateSet(this, _pixelBuffer, new Uint8Array(bufferSize * 4));
+    __privateSet(this, _grayscaleBuffer, new Uint8Array(bufferSize));
+    if (__privateGet(this, _enabledFeatures).interFrame) {
+      __privateSet(this, _previousFrameBuffer, new Uint8Array(bufferSize * 4));
     }
   }
-  getDominantColors() {
-    return [...__privateGet(this, _dominantColors)];
+  // AudioAnalyserNode-compatible properties
+  get smoothingTimeConstant() {
+    return __privateGet(this, _smoothingTimeConstant);
   }
-  // Spatial features getters
-  get sharpness() {
-    return __privateGet(this, _sharpness);
+  set smoothingTimeConstant(value) {
+    __privateSet(this, _smoothingTimeConstant, Math.max(0, Math.min(1, value)));
   }
-  get edgeStrength() {
-    return __privateGet(this, _edgeStrength);
+  get analysisSize() {
+    return { ...__privateGet(this, _analysisSize) };
   }
-  get textureComplexity() {
-    return __privateGet(this, _textureComplexity);
+  get historySize() {
+    return __privateGet(this, _historySize);
   }
-  // Motion features getters
-  get motionMagnitude() {
-    return __privateGet(this, _motionMagnitude);
+  // Current value retrieval (AudioAnalyserNode.getFloatTimeDomainData equivalent)
+  getFrameAnalysis() {
+    return __privateGet(this, _currentAnalysis);
   }
-  get motionDirection() {
-    return __privateGet(this, _motionDirection);
-  }
-  // Frequency domain getters
-  getSpatialFrequencyData(array) {
-    const length = Math.min(array.length, __privateGet(this, _spatialFrequency).length);
-    for (let i = 0; i < length; i++) {
-      array[i] = __privateGet(this, _spatialFrequency)[i] ?? 0;
+  getAnalysisData(array, metric) {
+    if (!__privateGet(this, _currentAnalysis))
+      return;
+    const value = __privateGet(this, _currentAnalysis)[metric];
+    if (typeof value === "number" && array.length > 0) {
+      array[0] = value;
     }
+  }
+  // History retrieval (AudioAnalyserNode.getFloatFrequencyData equivalent)
+  getAnalysisHistory(array, metric) {
+    const length = Math.min(array.length, __privateGet(this, _historyBuffer).length);
+    for (let i = 0; i < length; i++) {
+      const idx = (__privateGet(this, _historyWriteIndex) - length + i + __privateGet(this, _historySize)) % __privateGet(this, _historySize);
+      const analysis = __privateGet(this, _historyBuffer)[idx];
+      if (analysis) {
+        const value = analysis[metric];
+        array[i] = typeof value === "number" ? value : 0;
+      }
+    }
+  }
+  getRecentAnalysis(count) {
+    const result = [];
+    const length = Math.min(count, __privateGet(this, _historyBuffer).length);
+    for (let i = 0; i < length; i++) {
+      const idx = (__privateGet(this, _historyWriteIndex) - length + i + __privateGet(this, _historySize)) % __privateGet(this, _historySize);
+      const analysis = __privateGet(this, _historyBuffer)[idx];
+      if (analysis) {
+        result.push(analysis);
+      }
+    }
+    return result;
+  }
+  // Aggregate value retrieval
+  getAverageValue(metric) {
+    if (__privateGet(this, _historyBuffer).length === 0)
+      return 0;
+    let sum = 0;
+    for (const analysis of __privateGet(this, _historyBuffer)) {
+      const value = analysis[metric];
+      if (typeof value === "number") {
+        sum += value;
+      }
+    }
+    return sum / __privateGet(this, _historyBuffer).length;
+  }
+  getPeakValue(metric) {
+    if (__privateGet(this, _historyBuffer).length === 0)
+      return 0;
+    let max = 0;
+    for (const analysis of __privateGet(this, _historyBuffer)) {
+      const value = analysis[metric];
+      if (typeof value === "number" && value > max) {
+        max = value;
+      }
+    }
+    return max;
   }
   process(input) {
     if (this.disposed) {
@@ -196,10 +232,10 @@ var VideoAnalyserNode = class extends VideoNode {
     }
     const clonedFrame = input.clone();
     __privateWrapper(this, _frameCount)._++;
-    if (__privateGet(this, _frameCount) % __privateGet(this, _throttle) === 0) {
+    if (__privateGet(this, _frameCount) % __privateGet(this, _analysisInterval) === 0) {
       __privateMethod(this, _scheduleAnalysis, scheduleAnalysis_fn).call(this, clonedFrame);
     }
-    for (const output of Array.from(this.outputs)) {
+    for (const output of this.outputs) {
       try {
         void output.process(clonedFrame);
       } catch (e) {
@@ -208,45 +244,53 @@ var VideoAnalyserNode = class extends VideoNode {
     }
     clonedFrame.close();
   }
-  // Content detection getters (removed - use separate AI nodes)
-  // get hasFaces(): boolean { return this.#hasFaces; }
-  // get hasText(): boolean { return this.#hasText; }
-  // get sceneChange(): boolean { return this.#sceneChange; }
   dispose() {
     if (this.disposed)
       return;
-    __privateSet(this, _previousFrameData, null);
+    if (__privateGet(this, _idleCallbackId) !== void 0) {
+      cancelIdleCallback(__privateGet(this, _idleCallbackId));
+      __privateSet(this, _idleCallbackId, void 0);
+    }
+    __privateSet(this, _pixelBuffer, void 0);
+    __privateSet(this, _grayscaleBuffer, void 0);
+    __privateSet(this, _previousFrameBuffer, void 0);
+    __privateSet(this, _historyBuffer, []);
+    __privateSet(this, _currentAnalysis, null);
+    this.onanalysis = null;
     this.context._unregister(this);
     super.dispose();
   }
 };
-_brightness = new WeakMap();
-_contrast = new WeakMap();
-_saturation = new WeakMap();
-_colorHistogram = new WeakMap();
-_dominantColors = new WeakMap();
-_sharpness = new WeakMap();
-_edgeStrength = new WeakMap();
-_textureComplexity = new WeakMap();
-_motionMagnitude = new WeakMap();
-_motionDirection = new WeakMap();
-_previousFrameData = new WeakMap();
-_spatialFrequency = new WeakMap();
+_analysisSize = new WeakMap();
+_smoothingTimeConstant = new WeakMap();
+_historySize = new WeakMap();
+_analysisInterval = new WeakMap();
+_enabledFeatures = new WeakMap();
+_currentAnalysis = new WeakMap();
+_frameIndex = new WeakMap();
+_historyBuffer = new WeakMap();
+_historyWriteIndex = new WeakMap();
+_pixelBuffer = new WeakMap();
+_grayscaleBuffer = new WeakMap();
+_previousFrameBuffer = new WeakMap();
+_previousMotionEnergy = new WeakMap();
 _canvas = new WeakMap();
 _ctx = new WeakMap();
-_throttle = new WeakMap();
 _frameCount = new WeakMap();
 _pendingPixelData = new WeakMap();
 _pendingWidth = new WeakMap();
 _pendingHeight = new WeakMap();
+_pendingTimestamp = new WeakMap();
+_pendingPresentationTime = new WeakMap();
 _idleCallbackId = new WeakMap();
 _scheduleAnalysis = new WeakSet();
 scheduleAnalysis_fn = function(frame) {
-  const width = frame.displayWidth;
-  const height = frame.displayHeight;
-  const sampleWidth = Math.min(width, 320);
-  const sampleHeight = Math.min(height, 240);
-  const pixelData = new Uint8Array(sampleWidth * sampleHeight * 4);
+  const _width = frame.displayWidth;
+  const _height = frame.displayHeight;
+  const sampleWidth = __privateGet(this, _analysisSize).width;
+  const sampleHeight = __privateGet(this, _analysisSize).height;
+  if (!__privateGet(this, _pixelBuffer))
+    return;
   try {
     if (!__privateGet(this, _canvas) || __privateGet(this, _canvas).width !== sampleWidth || __privateGet(this, _canvas).height !== sampleHeight) {
       __privateSet(this, _canvas, new OffscreenCanvas(sampleWidth, sampleHeight));
@@ -256,13 +300,15 @@ scheduleAnalysis_fn = function(frame) {
       return;
     __privateGet(this, _ctx).drawImage(frame, 0, 0, sampleWidth, sampleHeight);
     const imageData = __privateGet(this, _ctx).getImageData(0, 0, sampleWidth, sampleHeight);
-    pixelData.set(imageData.data);
+    __privateGet(this, _pixelBuffer).set(imageData.data);
   } catch (_e) {
     return;
   }
-  __privateSet(this, _pendingPixelData, pixelData);
+  __privateSet(this, _pendingPixelData, __privateGet(this, _pixelBuffer));
   __privateSet(this, _pendingWidth, sampleWidth);
   __privateSet(this, _pendingHeight, sampleHeight);
+  __privateSet(this, _pendingTimestamp, performance.now());
+  __privateSet(this, _pendingPresentationTime, frame.timestamp ?? 0);
   if (__privateGet(this, _idleCallbackId) !== void 0) {
     cancelIdleCallback(__privateGet(this, _idleCallbackId));
   }
@@ -275,308 +321,157 @@ scheduleAnalysis_fn = function(frame) {
 _runDeferredAnalysis = new WeakSet();
 runDeferredAnalysis_fn = function() {
   __privateSet(this, _idleCallbackId, void 0);
-  if (!__privateGet(this, _pendingPixelData))
+  if (!__privateGet(this, _pendingPixelData) || !__privateGet(this, _grayscaleBuffer))
     return;
   const pixelData = __privateGet(this, _pendingPixelData);
-  const sampleWidth = __privateGet(this, _pendingWidth);
-  const sampleHeight = __privateGet(this, _pendingHeight);
+  const width = __privateGet(this, _pendingWidth);
+  const height = __privateGet(this, _pendingHeight);
+  const timestamp = __privateGet(this, _pendingTimestamp);
+  const presentationTime = __privateGet(this, _pendingPresentationTime);
   __privateSet(this, _pendingPixelData, null);
-  __privateMethod(this, _calculateBasicStats, calculateBasicStats_fn).call(this, pixelData, sampleWidth, sampleHeight);
-  __privateMethod(this, _calculateColorHistogram, calculateColorHistogram_fn).call(this, pixelData, sampleWidth, sampleHeight);
-  __privateMethod(this, _calculateDominantColors, calculateDominantColors_fn).call(this);
-  __privateMethod(this, _calculateSpatialFeatures, calculateSpatialFeatures_fn).call(this, pixelData, sampleWidth, sampleHeight);
-  __privateMethod(this, _calculateMotionFeatures, calculateMotionFeatures_fn).call(this, pixelData, sampleWidth, sampleHeight);
-  __privateMethod(this, _calculateSpatialFrequency, calculateSpatialFrequency_fn).call(this, pixelData, sampleWidth, sampleHeight);
-};
-_analyzeFrame = new WeakSet();
-analyzeFrame_fn = function(frame) {
-  const width = frame.displayWidth;
-  const height = frame.displayHeight;
-  const sampleWidth = Math.min(width, 320);
-  const sampleHeight = Math.min(height, 240);
-  const sampleStepX = width / sampleWidth;
-  const sampleStepY = height / sampleHeight;
-  const pixelData = new Uint8Array(sampleWidth * sampleHeight * 4);
-  try {
-    if (!__privateGet(this, _canvas) || __privateGet(this, _canvas).width !== sampleWidth || __privateGet(this, _canvas).height !== sampleHeight) {
-      __privateSet(this, _canvas, new OffscreenCanvas(sampleWidth, sampleHeight));
-      __privateSet(this, _ctx, __privateGet(this, _canvas).getContext("2d", { willReadFrequently: true }));
-    }
-    if (!__privateGet(this, _ctx))
-      return;
-    __privateGet(this, _ctx).drawImage(frame, 0, 0, sampleWidth, sampleHeight);
-    const imageData = __privateGet(this, _ctx).getImageData(
-      0,
-      0,
-      sampleWidth,
-      sampleHeight
-    );
-    pixelData.set(imageData.data);
-  } catch (_e) {
+  __privateMethod(this, _convertToGrayscale, convertToGrayscale_fn).call(this, pixelData, __privateGet(this, _grayscaleBuffer), width, height);
+  const intraFrame = __privateGet(this, _enabledFeatures).intraFrame ? __privateMethod(this, _calculateIntraFrame, calculateIntraFrame_fn).call(this, pixelData, __privateGet(this, _grayscaleBuffer), width, height) : { lumaAverage: 0, lumaVariance: 0, chromaVariance: 0, frameEnergy: 0 };
+  const interFrame = __privateGet(this, _enabledFeatures).interFrame ? __privateMethod(this, _calculateInterFrame, calculateInterFrame_fn).call(this, pixelData, __privateGet(this, _previousFrameBuffer), width, height) : { frameDelta: 0, motionEnergy: 0, activityLevel: 0 };
+  const density = __privateGet(this, _enabledFeatures).density ? __privateMethod(this, _calculateDensity, calculateDensity_fn).call(this, __privateGet(this, _grayscaleBuffer), width, height) : { edgeDensity: 0, highFrequencyRatio: 0, spatialComplexity: 0 };
+  if (__privateGet(this, _currentAnalysis) && __privateGet(this, _smoothingTimeConstant) > 0) {
+    const k = __privateGet(this, _smoothingTimeConstant);
+    interFrame.activityLevel = k * __privateGet(this, _currentAnalysis).activityLevel + (1 - k) * interFrame.activityLevel;
+  }
+  const analysis = {
+    timestamp,
+    frameIndex: __privateWrapper(this, _frameIndex)._++,
+    presentationTime,
+    ...intraFrame,
+    ...interFrame,
+    ...density
+  };
+  __privateSet(this, _currentAnalysis, analysis);
+  __privateGet(this, _historyBuffer)[__privateGet(this, _historyWriteIndex)] = analysis;
+  __privateSet(this, _historyWriteIndex, (__privateGet(this, _historyWriteIndex) + 1) % __privateGet(this, _historySize));
+  if (this.onanalysis) {
     try {
-      const fullData = new Uint8Array(width * height * 4);
-      frame.copyTo(fullData);
-      for (let y = 0; y < sampleHeight; y++) {
-        for (let x = 0; x < sampleWidth; x++) {
-          const srcX = Math.floor(x * sampleStepX);
-          const srcY = Math.floor(y * sampleStepY);
-          const srcIdx = (srcY * width + srcX) * 4;
-          const dstIdx = (y * sampleWidth + x) * 4;
-          if (srcIdx + 3 < fullData.length && dstIdx + 3 < pixelData.length) {
-            pixelData[dstIdx] = fullData[srcIdx];
-            pixelData[dstIdx + 1] = fullData[srcIdx + 1];
-            pixelData[dstIdx + 2] = fullData[srcIdx + 2];
-            pixelData[dstIdx + 3] = fullData[srcIdx + 3];
-          }
-        }
-      }
-    } catch (fallbackError) {
-      console.warn("Failed to analyze frame:", fallbackError);
-      return;
+      this.onanalysis(analysis);
+    } catch (e) {
+      console.error("[VideoAnalyserNode] onanalysis callback error:", e);
     }
   }
-  __privateMethod(this, _calculateBasicStats, calculateBasicStats_fn).call(this, pixelData, sampleWidth, sampleHeight);
-  __privateMethod(this, _calculateColorHistogram, calculateColorHistogram_fn).call(this, pixelData, sampleWidth, sampleHeight);
-  __privateMethod(this, _calculateDominantColors, calculateDominantColors_fn).call(this);
-  __privateMethod(this, _calculateSpatialFeatures, calculateSpatialFeatures_fn).call(this, pixelData, sampleWidth, sampleHeight);
-  __privateMethod(this, _calculateMotionFeatures, calculateMotionFeatures_fn).call(this, pixelData, sampleWidth, sampleHeight);
-  __privateMethod(this, _calculateSpatialFrequency, calculateSpatialFrequency_fn).call(this, pixelData, sampleWidth, sampleHeight);
+  if (__privateGet(this, _previousFrameBuffer) && __privateGet(this, _enabledFeatures).interFrame) {
+    __privateGet(this, _previousFrameBuffer).set(pixelData);
+  }
 };
-_calculateBasicStats = new WeakSet();
-calculateBasicStats_fn = function(pixelData, width, height) {
-  let sumBrightness = 0;
-  let sumSaturation = 0;
+_convertToGrayscale = new WeakSet();
+convertToGrayscale_fn = function(pixelData, grayscale, width, height) {
+  for (let i = 0; i < width * height; i++) {
+    const r = pixelData[i * 4];
+    const g = pixelData[i * 4 + 1];
+    const b = pixelData[i * 4 + 2];
+    grayscale[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+  }
+};
+_calculateIntraFrame = new WeakSet();
+calculateIntraFrame_fn = function(pixelData, grayscale, width, height) {
   const pixelCount = width * height;
-  for (let i = 0; i < pixelData.length; i += 4) {
-    const r = pixelData[i];
-    const g = pixelData[i + 1];
-    const b = pixelData[i + 2];
-    const brightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    sumBrightness += brightness;
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const saturation = max > 0 ? (max - min) / max : 0;
-    sumSaturation += saturation;
+  let sumLuma = 0;
+  let sumLumaSquared = 0;
+  let sumChromaU = 0;
+  let sumChromaV = 0;
+  let sumChromaUSquared = 0;
+  let sumChromaVSquared = 0;
+  let sumEnergy = 0;
+  for (let i = 0; i < pixelCount; i++) {
+    const r = pixelData[i * 4];
+    const g = pixelData[i * 4 + 1];
+    const b = pixelData[i * 4 + 2];
+    const luma = grayscale[i] / 255;
+    sumLuma += luma;
+    sumLumaSquared += luma * luma;
+    const u = (b - luma * 255) / 255;
+    const v = (r - luma * 255) / 255;
+    sumChromaU += u;
+    sumChromaV += v;
+    sumChromaUSquared += u * u;
+    sumChromaVSquared += v * v;
+    sumEnergy += (r * r + g * g + b * b) / (3 * 255 * 255);
   }
-  __privateSet(this, _brightness, sumBrightness / pixelCount);
+  const lumaAverage = sumLuma / pixelCount;
+  const lumaVariance = sumLumaSquared / pixelCount - lumaAverage * lumaAverage;
+  const chromaUMean = sumChromaU / pixelCount;
+  const chromaVMean = sumChromaV / pixelCount;
+  const chromaUVariance = sumChromaUSquared / pixelCount - chromaUMean * chromaUMean;
+  const chromaVVariance = sumChromaVSquared / pixelCount - chromaVMean * chromaVMean;
+  const chromaVariance = (chromaUVariance + chromaVVariance) / 2;
+  const frameEnergy = sumEnergy / pixelCount;
+  return {
+    lumaAverage: Math.max(0, Math.min(1, lumaAverage)),
+    lumaVariance: Math.max(0, Math.min(1, lumaVariance)),
+    chromaVariance: Math.max(0, Math.min(1, chromaVariance)),
+    frameEnergy: Math.max(0, Math.min(1, frameEnergy))
+  };
+};
+_calculateInterFrame = new WeakSet();
+calculateInterFrame_fn = function(currentPixels, previousPixels, width, height) {
+  if (!previousPixels) {
+    return { frameDelta: 0, motionEnergy: 0, activityLevel: 0 };
+  }
+  const pixelCount = width * height;
+  let sumAbsoluteDiff = 0;
   let sumSquaredDiff = 0;
-  for (let i = 0; i < pixelData.length; i += 4) {
-    const r = pixelData[i];
-    const g = pixelData[i + 1];
-    const b = pixelData[i + 2];
-    const brightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    sumSquaredDiff += Math.pow(brightness - __privateGet(this, _brightness), 2);
+  for (let i = 0; i < pixelCount * 4; i += 4) {
+    const diffR = currentPixels[i] - previousPixels[i];
+    const diffG = currentPixels[i + 1] - previousPixels[i + 1];
+    const diffB = currentPixels[i + 2] - previousPixels[i + 2];
+    sumAbsoluteDiff += Math.abs(diffR) + Math.abs(diffG) + Math.abs(diffB);
+    sumSquaredDiff += diffR * diffR + diffG * diffG + diffB * diffB;
   }
-  __privateSet(this, _contrast, Math.sqrt(sumSquaredDiff / pixelCount));
-  __privateSet(this, _saturation, sumSaturation / pixelCount);
+  const frameDelta = sumAbsoluteDiff / (pixelCount * 3 * 255);
+  const motionEnergy = Math.sqrt(sumSquaredDiff / (pixelCount * 3)) / 255;
+  const alpha = 0.3;
+  const activityLevel = alpha * motionEnergy + (1 - alpha) * __privateGet(this, _previousMotionEnergy);
+  __privateSet(this, _previousMotionEnergy, activityLevel);
+  return {
+    frameDelta: Math.max(0, Math.min(1, frameDelta)),
+    motionEnergy: Math.max(0, Math.min(1, motionEnergy)),
+    activityLevel: Math.max(0, Math.min(1, activityLevel))
+  };
 };
-_calculateColorHistogram = new WeakSet();
-calculateColorHistogram_fn = function(pixelData, _width, _height) {
-  __privateGet(this, _colorHistogram).fill(0);
-  for (let i = 0; i < pixelData.length; i += 4) {
-    const r = pixelData[i];
-    const g = pixelData[i + 1];
-    const b = pixelData[i + 2];
-    __privateGet(this, _colorHistogram)[r] = (__privateGet(this, _colorHistogram)[r] ?? 0) + 1;
-    __privateGet(this, _colorHistogram)[256 + g] = (__privateGet(this, _colorHistogram)[256 + g] ?? 0) + 1;
-    __privateGet(this, _colorHistogram)[512 + b] = (__privateGet(this, _colorHistogram)[512 + b] ?? 0) + 1;
-  }
-};
-_calculateDominantColors = new WeakSet();
-calculateDominantColors_fn = function() {
-  const peaks = __privateMethod(this, _findHistogramPeaks, findHistogramPeaks_fn).call(this);
-  __privateSet(this, _dominantColors, peaks.slice(0, 5).map((peak) => ({
-    r: peak.r,
-    g: peak.g,
-    b: peak.b,
-    count: peak.count
-  })));
-};
-_findHistogramPeaks = new WeakSet();
-findHistogramPeaks_fn = function() {
-  const peaks = [];
-  for (let r = 1; r < 255; r++) {
-    const countR = __privateGet(this, _colorHistogram)[r] ?? 0;
-    if (countR > (__privateGet(this, _colorHistogram)[r - 1] ?? 0) && countR > (__privateGet(this, _colorHistogram)[r + 1] ?? 0)) {
-      for (let g = 1; g < 255; g++) {
-        const countG = __privateGet(this, _colorHistogram)[256 + g] ?? 0;
-        if (countG > (__privateGet(this, _colorHistogram)[256 + g - 1] ?? 0) && countG > (__privateGet(this, _colorHistogram)[256 + g + 1] ?? 0)) {
-          for (let b = 1; b < 255; b++) {
-            const countB = __privateGet(this, _colorHistogram)[512 + b] ?? 0;
-            if (countB > (__privateGet(this, _colorHistogram)[512 + b - 1] ?? 0) && countB > (__privateGet(this, _colorHistogram)[512 + b + 1] ?? 0)) {
-              peaks.push({
-                r,
-                g,
-                b,
-                count: countR + countG + countB
-              });
-            }
-          }
-        }
-      }
-    }
-  }
-  return peaks.sort((a, b) => b.count - a.count);
-};
-_calculateSpatialFeatures = new WeakSet();
-calculateSpatialFeatures_fn = function(pixelData, width, height) {
-  const gray = new Uint8Array(width * height);
-  for (let i = 0; i < pixelData.length; i += 4) {
-    const r = pixelData[i];
-    const g = pixelData[i + 1];
-    const b = pixelData[i + 2];
-    gray[i / 4] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-  }
-  __privateSet(this, _sharpness, __privateMethod(this, _calculateSharpness, calculateSharpness_fn).call(this, gray, width, height));
-  __privateSet(this, _edgeStrength, __privateMethod(this, _calculateEdgeStrength, calculateEdgeStrength_fn).call(this, gray, width, height));
-  __privateSet(this, _textureComplexity, __privateMethod(this, _calculateTextureComplexity, calculateTextureComplexity_fn).call(this, gray));
-};
-_calculateSharpness = new WeakSet();
-calculateSharpness_fn = function(gray, width, height) {
-  let sum = 0;
-  let count = 0;
+_calculateDensity = new WeakSet();
+calculateDensity_fn = function(grayscale, width, height) {
+  let edgeSum = 0;
+  let edgeCount = 0;
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
-      const idx = y * width + x;
-      const laplacian = -4 * gray[idx] + gray[(y - 1) * width + x] + gray[y * width + (x - 1)] + gray[y * width + (x + 1)] + gray[(y + 1) * width + x];
-      sum += laplacian * laplacian;
-      count++;
+      const gx = -1 * grayscale[(y - 1) * width + (x - 1)] + 1 * grayscale[(y - 1) * width + (x + 1)] + -2 * grayscale[y * width + (x - 1)] + 2 * grayscale[y * width + (x + 1)] + -1 * grayscale[(y + 1) * width + (x - 1)] + 1 * grayscale[(y + 1) * width + (x + 1)];
+      const gy = -1 * grayscale[(y - 1) * width + (x - 1)] - 2 * grayscale[(y - 1) * width + x] - 1 * grayscale[(y - 1) * width + (x + 1)] + 1 * grayscale[(y + 1) * width + (x - 1)] + 2 * grayscale[(y + 1) * width + x] + 1 * grayscale[(y + 1) * width + (x + 1)];
+      const magnitude = Math.sqrt(gx * gx + gy * gy);
+      edgeSum += magnitude;
+      edgeCount++;
     }
   }
-  return count > 0 ? Math.sqrt(sum / count) / 128 : 0;
-};
-_calculateEdgeStrength = new WeakSet();
-calculateEdgeStrength_fn = function(gray, width, height) {
-  let sum = 0;
-  let count = 0;
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const gx = -1 * gray[(y - 1) * width + (x - 1)] + 1 * gray[(y - 1) * width + (x + 1)] + -2 * gray[y * width + (x - 1)] + 2 * gray[y * width + (x + 1)] + -1 * gray[(y + 1) * width + (x - 1)] + 1 * gray[(y + 1) * width + (x + 1)];
-      const gy = -1 * gray[(y - 1) * width + (x - 1)] - 2 * gray[(y - 1) * width + x] - 1 * gray[(y - 1) * width + (x + 1)] + 1 * gray[(y + 1) * width + (x - 1)] + 2 * gray[(y + 1) * width + x] + 1 * gray[(y + 1) * width + (x + 1)];
-      sum += Math.sqrt(gx * gx + gy * gy);
-      count++;
-    }
-  }
-  return count > 0 ? sum / count / 1442 : 0;
-};
-_calculateTextureComplexity = new WeakSet();
-calculateTextureComplexity_fn = function(gray) {
+  const edgeDensity = edgeCount > 0 ? edgeSum / edgeCount / 1442 : 0;
+  const highFrequencyRatio = Math.min(1, edgeDensity * 2);
   const hist = new Uint32Array(256);
-  for (let i = 0; i < gray.length; i++) {
-    hist[gray[i]] = (hist[gray[i]] ?? 0) + 1;
+  for (let i = 0; i < grayscale.length; i++) {
+    const idx = grayscale[i];
+    hist[idx] = (hist[idx] ?? 0) + 1;
   }
   let entropy = 0;
-  const total = gray.length;
+  const total = grayscale.length;
   for (let i = 0; i < 256; i++) {
     if (hist[i] > 0) {
       const p = hist[i] / total;
       entropy -= p * Math.log2(p);
     }
   }
-  return entropy / 8;
-};
-_calculateMotionFeatures = new WeakSet();
-calculateMotionFeatures_fn = function(pixelData, width, height) {
-  if (!__privateGet(this, _previousFrameData)) {
-    __privateSet(this, _previousFrameData, new Uint8Array(pixelData));
-    __privateSet(this, _motionMagnitude, 0);
-    __privateSet(this, _motionDirection, 0);
-    return;
-  }
-  let sumDiff = 0;
-  let sumX = 0;
-  let sumY = 0;
-  let count = 0;
-  const blockSize = 8;
-  for (let by = 0; by < height - blockSize; by += blockSize) {
-    for (let bx = 0; bx < width - blockSize; bx += blockSize) {
-      const motion = __privateMethod(this, _findBlockMotion, findBlockMotion_fn).call(this, pixelData, __privateGet(this, _previousFrameData), width, height, bx, by, blockSize);
-      if (motion) {
-        sumDiff += motion.magnitude;
-        sumX += motion.dx;
-        sumY += motion.dy;
-        count++;
-      }
-    }
-  }
-  if (count > 0) {
-    __privateSet(this, _motionMagnitude, sumDiff / count / (255 * 3));
-    __privateSet(this, _motionDirection, Math.atan2(sumY / count, sumX / count));
-  }
-  __privateGet(this, _previousFrameData).set(pixelData);
-};
-_findBlockMotion = new WeakSet();
-findBlockMotion_fn = function(curr, prev, width, height, bx, by, blockSize) {
-  let minSAD = Infinity;
-  let bestDx = 0;
-  let bestDy = 0;
-  const searchRange = 4;
-  for (let dy = -searchRange; dy <= searchRange; dy++) {
-    for (let dx = -searchRange; dx <= searchRange; dx++) {
-      if (bx + dx < 0 || bx + dx + blockSize >= width || by + dy < 0 || by + dy + blockSize >= height)
-        continue;
-      let sad = 0;
-      for (let y = 0; y < blockSize; y++) {
-        for (let x = 0; x < blockSize; x++) {
-          const currIdx = ((by + y) * width + (bx + x)) * 4;
-          const prevIdx = ((by + dy + y) * width + (bx + dx + x)) * 4;
-          const currR = curr[currIdx];
-          const currG = curr[currIdx + 1];
-          const currB = curr[currIdx + 2];
-          const prevR = prev[prevIdx];
-          const prevG = prev[prevIdx + 1];
-          const prevB = prev[prevIdx + 2];
-          sad += Math.abs(currR - prevR) + Math.abs(currG - prevG) + Math.abs(currB - prevB);
-        }
-      }
-      if (sad < minSAD) {
-        minSAD = sad;
-        bestDx = dx;
-        bestDy = dy;
-      }
-    }
-  }
+  const spatialComplexity = entropy / 8;
   return {
-    magnitude: Math.sqrt(bestDx * bestDx + bestDy * bestDy),
-    dx: bestDx,
-    dy: bestDy
+    edgeDensity: Math.max(0, Math.min(1, edgeDensity)),
+    highFrequencyRatio: Math.max(0, Math.min(1, highFrequencyRatio)),
+    spatialComplexity: Math.max(0, Math.min(1, spatialComplexity))
   };
-};
-_calculateSpatialFrequency = new WeakSet();
-calculateSpatialFrequency_fn = function(pixelData, width, height) {
-  const gray = new Uint8Array(width * height);
-  for (let i = 0; i < pixelData.length; i += 4) {
-    const r = pixelData[i];
-    const g = pixelData[i + 1];
-    const b = pixelData[i + 2];
-    gray[i / 4] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-  }
-  const numFreqs = Math.min(__privateGet(this, _spatialFrequency).length, width / 2);
-  for (let freq = 0; freq < numFreqs; freq++) {
-    let real = 0;
-    let imag = 0;
-    for (let x = 0; x < width; x++) {
-      let rowSum = 0;
-      for (let y = 0; y < height; y++) {
-        rowSum += gray[y * width + x];
-      }
-      const avg = rowSum / height;
-      const angle = -2 * Math.PI * freq * x / width;
-      real += avg * Math.cos(angle);
-      imag += avg * Math.sin(angle);
-    }
-    __privateGet(this, _spatialFrequency)[freq] = Math.sqrt(real * real + imag * imag) / width;
-  }
-  const maxFreq = Math.max(...__privateGet(this, _spatialFrequency));
-  if (maxFreq > 0) {
-    for (let i = 0; i < __privateGet(this, _spatialFrequency).length; i++) {
-      __privateGet(this, _spatialFrequency)[i] = __privateGet(this, _spatialFrequency)[i] / maxFreq;
-    }
-  }
 };
 
 // ../destination_node.ts
-var _animateId, _pendingFrame, _isVisible, _renderFunction, _delayFunc, _renderVideoFrame, renderVideoFrame_fn;
+var _animateId, _pendingFrame, _isVisible, _renderFunction, _delayFunc, _timeoutId, _renderVideoFrame, renderVideoFrame_fn;
 var VideoDestinationNode = class extends VideoNode {
   constructor(context, canvas, options) {
     super({ numberOfInputs: 1, numberOfOutputs: 0 });
@@ -588,6 +483,7 @@ var VideoDestinationNode = class extends VideoNode {
     __privateAdd(this, _isVisible, true);
     __privateAdd(this, _renderFunction, void 0);
     __privateAdd(this, _delayFunc, void 0);
+    __privateAdd(this, _timeoutId, void 0);
     this.context = context;
     this.context._register(this);
     this.canvas = canvas;
@@ -626,10 +522,30 @@ var VideoDestinationNode = class extends VideoNode {
       return;
     __privateSet(this, _animateId, requestAnimationFrame(() => {
       __privateSet(this, _animateId, void 0);
+      if (__privateGet(this, _timeoutId) !== void 0) {
+        clearTimeout(__privateGet(this, _timeoutId));
+        __privateSet(this, _timeoutId, void 0);
+      }
       const frame = __privateGet(this, _pendingFrame);
       __privateSet(this, _pendingFrame, void 0);
       void __privateMethod(this, _renderVideoFrame, renderVideoFrame_fn).call(this, frame);
     }));
+    __privateSet(this, _timeoutId, setTimeout(() => {
+      if (__privateGet(this, _animateId)) {
+        cancelAnimationFrame(__privateGet(this, _animateId));
+        __privateSet(this, _animateId, void 0);
+      }
+      const frame = __privateGet(this, _pendingFrame);
+      __privateSet(this, _pendingFrame, void 0);
+      if (frame) {
+        try {
+          frame.close();
+        } catch (e) {
+          console.error("[VideoDestinationNode] timeout cleanup error:", e);
+        }
+      }
+      __privateSet(this, _timeoutId, void 0);
+    }, 1e3));
   }
   setVisible(visible) {
     __privateSet(this, _isVisible, visible);
@@ -640,6 +556,10 @@ var VideoDestinationNode = class extends VideoNode {
     if (__privateGet(this, _animateId)) {
       cancelAnimationFrame(__privateGet(this, _animateId));
       __privateSet(this, _animateId, void 0);
+    }
+    if (__privateGet(this, _timeoutId) !== void 0) {
+      clearTimeout(__privateGet(this, _timeoutId));
+      __privateSet(this, _timeoutId, void 0);
     }
     if (__privateGet(this, _pendingFrame)) {
       try {
@@ -659,6 +579,7 @@ _pendingFrame = new WeakMap();
 _isVisible = new WeakMap();
 _renderFunction = new WeakMap();
 _delayFunc = new WeakMap();
+_timeoutId = new WeakMap();
 _renderVideoFrame = new WeakSet();
 renderVideoFrame_fn = async function(frame) {
   if (!frame)
@@ -806,7 +727,7 @@ var VideoContext = class {
     if (__privateGet(this, _state) === "closed")
       return Promise.resolve();
     __privateMethod(this, _setState, setState_fn).call(this, "closed");
-    for (const node of Array.from(__privateGet(this, _nodes))) {
+    for (const node of __privateGet(this, _nodes)) {
       try {
         node.dispose();
       } catch (_) {
@@ -837,6 +758,7 @@ setState_fn = function(newState) {
 };
 
 // ../decode_node.ts
+var MAX_QUEUE_SIZE = 3;
 var _decoder;
 var VideoDecodeNode = class extends VideoNode {
   constructor(context) {
@@ -876,6 +798,11 @@ var VideoDecodeNode = class extends VideoNode {
         const { done, value: chunk } = await reader.read();
         if (done)
           break;
+        if (this.decodeQueueSize > MAX_QUEUE_SIZE) {
+          console.warn(`[VideoDecodeNode] Decoder overloaded (queue: ${this.decodeQueueSize}), waiting...`);
+          await new Promise((resolve) => setTimeout(resolve, 16));
+          continue;
+        }
         __privateGet(this, _decoder).decode(chunk);
       }
     } catch (e) {
@@ -885,7 +812,7 @@ var VideoDecodeNode = class extends VideoNode {
     }
   }
   process(input) {
-    for (const output of Array.from(this.outputs)) {
+    for (const output of this.outputs) {
       try {
         void output.process(input);
       } catch (e) {
@@ -925,6 +852,7 @@ var VideoDecodeNode = class extends VideoNode {
 _decoder = new WeakMap();
 
 // ../encode_node.ts
+var MAX_QUEUE_SIZE2 = 2;
 var _encoder, _isKey, _dests;
 var VideoEncodeNode = class extends VideoNode {
   constructor(context, options) {
@@ -962,6 +890,10 @@ var VideoEncodeNode = class extends VideoNode {
   }
   process(input) {
     if (this.disposed) {
+      return;
+    }
+    if (this.encodeQueueSize > MAX_QUEUE_SIZE2) {
+      console.warn(`[VideoEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`);
       return;
     }
     const clonedFrame = input.clone();
@@ -1103,7 +1035,7 @@ var VideoSourceNode = class extends VideoNode {
   process(input) {
     if (this.disposed)
       return;
-    for (const output of Array.from(this.outputs)) {
+    for (const output of this.outputs) {
       try {
         output.process(input);
       } catch (e) {
@@ -1435,54 +1367,6 @@ function collectMetrics() {
     }
   }
 }
-var analysisLoopRunning = false;
-function startAnalysisLoop() {
-  if (analysisLoopRunning)
-    return;
-  analysisLoopRunning = true;
-  updateAnalysis();
-}
-function stopAnalysisLoop() {
-  analysisLoopRunning = false;
-}
-function updateAnalysis() {
-  if (!analysisLoopRunning || !pipeline.analyserNode)
-    return;
-  try {
-    const brightness = pipeline.analyserNode.brightness;
-    const contrast = pipeline.analyserNode.contrast;
-    const saturation = pipeline.analyserNode.saturation;
-    const dominantColors = pipeline.analyserNode.getDominantColors();
-    const brightnessEl = elements.brightness();
-    if (brightnessEl)
-      brightnessEl.textContent = brightness.toFixed(2);
-    const contrastEl = elements.contrast();
-    if (contrastEl)
-      contrastEl.textContent = contrast.toFixed(2);
-    const saturationEl = elements.saturation();
-    if (saturationEl)
-      saturationEl.textContent = saturation.toFixed(2);
-    const dominantColorEl = elements.dominantColor();
-    if (dominantColorEl && dominantColors && dominantColors.length > 0) {
-      const color = dominantColors[0];
-      dominantColorEl.style.backgroundColor = `rgb(${color.r}, ${color.g}, ${color.b})`;
-    }
-    const colorBarEl = elements.colorBar();
-    if (colorBarEl && dominantColors) {
-      colorBarEl.innerHTML = "";
-      for (let i = 0; i < Math.min(5, dominantColors.length); i++) {
-        const color = dominantColors[i];
-        const colorDiv = document.createElement("div");
-        colorDiv.className = "color-block";
-        colorDiv.style.backgroundColor = `rgb(${color.r}, ${color.g}, ${color.b})`;
-        colorBarEl.appendChild(colorDiv);
-      }
-    }
-  } catch (e) {
-    console.warn("Analysis update error:", e);
-  }
-  setTimeout(() => updateAnalysis(), 500);
-}
 async function startPipeline(sourceType) {
   if (pipeline.running) {
     console.warn("Pipeline already running");
@@ -1511,11 +1395,51 @@ async function startPipeline(sourceType) {
     pipeline.sourceNode = new MediaStreamVideoSourceNode(track, sourceContext);
     pipeline.sourceNode.connect(sourceContext.destination);
     pipeline.analyserNode = new VideoAnalyserNode(sourceContext, {
-      throttle: 10
+      analysisInterval: 10,
       // Analyze every 10th frame (~3fps at 30fps) to reduce CPU load
+      smoothingTimeConstant: 0.8
+      // Smooth values over time
     });
     pipeline.sourceNode.connect(pipeline.analyserNode);
-    startAnalysisLoop();
+    pipeline.analyserNode.onanalysis = (analysis) => {
+      try {
+        const lumaEl = elements.brightness();
+        if (lumaEl)
+          lumaEl.textContent = analysis.lumaAverage.toFixed(2);
+        const contrastEl = elements.contrast();
+        if (contrastEl)
+          contrastEl.textContent = analysis.lumaVariance.toFixed(2);
+        const saturationEl = elements.saturation();
+        if (saturationEl)
+          saturationEl.textContent = analysis.chromaVariance.toFixed(2);
+        const dominantColorEl = elements.dominantColor();
+        if (dominantColorEl) {
+          const energy = Math.floor(analysis.frameEnergy * 255);
+          dominantColorEl.style.backgroundColor = `rgb(${energy}, ${energy}, ${energy})`;
+        }
+        const colorBarEl = elements.colorBar();
+        if (colorBarEl) {
+          colorBarEl.innerHTML = "";
+          const metrics2 = [
+            { value: analysis.motionEnergy, label: "Motion" },
+            { value: analysis.activityLevel, label: "Activity" },
+            { value: analysis.edgeDensity, label: "Edges" },
+            { value: analysis.highFrequencyRatio, label: "HF" },
+            { value: analysis.spatialComplexity, label: "Complex" }
+          ];
+          for (const metric of metrics2) {
+            const intensity = Math.floor(metric.value * 255);
+            const colorDiv = document.createElement("div");
+            colorDiv.className = "color-block";
+            colorDiv.style.backgroundColor = `rgb(0, ${intensity}, ${255 - intensity})`;
+            colorDiv.title = `${metric.label}: ${metric.value.toFixed(2)}`;
+            colorBarEl.appendChild(colorDiv);
+          }
+        }
+      } catch (e) {
+        console.warn("Analysis callback error:", e);
+      }
+    };
     const encoderConfig = await videoEncoderConfig({
       width: 1280,
       height: 720,
