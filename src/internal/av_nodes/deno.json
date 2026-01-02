@@ -1,0 +1,62 @@
+{
+	"name": "@okdaichi/av-nodes",
+	"version": "0.4.0",
+	"exports": {
+		".": "./mod.ts"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/okdaichi/moqrtc-js",
+		"directory": "src/internal/av_nodes"
+	},
+	"description": "WebCodecs-based video and audio processing nodes with MoQ Transport support",
+	"keywords": [
+		"webcodecs",
+		"video",
+		"audio",
+		"encoding",
+		"decoding",
+		"moq",
+		"streaming",
+		"webrtc"
+	],
+	"compilerOptions": {
+		"lib": ["ESNext", "DOM", "dom.iterable", "dom.asynciterable"],
+		"strict": true,
+		"noImplicitAny": true,
+		"strictNullChecks": true,
+		"noUncheckedIndexedAccess": true
+	},
+	"tasks": {
+		"build": "deno run -A scripts/build_worklets.ts",
+		"build:worklets": "deno run -A scripts/build_worklets.ts",
+		"check": "deno check **/*.ts",
+		"test": "deno test --allow-all",
+		"prepublish": "deno task build:worklets"
+	},
+	"fmt": {
+		"useTabs": true,
+		"lineWidth": 120,
+		"indentWidth": 4,
+		"singleQuote": false,
+		"semiColons": true
+	},
+	"exclude": [
+		"demo/",
+		"*_test.ts",
+		"mock_*.ts",
+		"audio/audio_hijack_worklet.ts",
+		"audio/audio_offload_worklet.ts"
+	],
+	"publish": {
+		"exclude": [
+			"demo/",
+			"*_test.ts",
+			"mock_*.ts",
+			"scripts/",
+			"audio/audio_hijack_worklet.ts",
+			"audio/audio_offload_worklet.ts"
+		]
+	}
+}

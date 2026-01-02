@@ -1,40 +1,5 @@
 {
   "version": "5",
-  "specifiers": {
-    "jsr:@okudai/golikejs@0.5.2": "0.5.2",
-    "jsr:@okudai/golikejs@~0.5.2": "0.5.2",
-    "jsr:@okudai/moq@0.4.0": "0.4.0",
-    "jsr:@std/assert@1": "1.0.15",
-    "jsr:@std/assert@^1.0.15": "1.0.15",
-    "jsr:@std/internal@^1.0.12": "1.0.12",
-    "jsr:@std/testing@1": "1.0.16"
-  },
-  "jsr": {
-    "@okudai/golikejs@0.5.2": {
-      "integrity": "ffce4168072ccbd8cf274e1278f16a8c175f517c636e426878a9085bfd17d06b"
-    },
-    "@okudai/moq@0.4.0": {
-      "integrity": "d0dc5757f0baa9fe83736a94b4b528e4e9b9a764b1b7e31bc5999e1546daa097",
-      "dependencies": [
-        "jsr:@okudai/golikejs@~0.5.2"
-      ]
-    },
-    "@std/assert@1.0.15": {
-      "integrity": "d64018e951dbdfab9777335ecdb000c0b4e3df036984083be219ce5941e4703b",
-      "dependencies": [
-        "jsr:@std/internal"
-      ]
-    },
-    "@std/internal@1.0.12": {
-      "integrity": "972a634fd5bc34b242024402972cd5143eac68d8dffaca5eaa4dba30ce17b027"
-    },
-    "@std/testing@1.0.16": {
-      "integrity": "a917ffdeb5924c9be436dc78bc32e511760e14d3a96e49c607fc5ecca86d0092",
-      "dependencies": [
-        "jsr:@std/assert@^1.0.15"
-      ]
-    }
-  },
   "remote": {
     "https://deno.land/std@0.208.0/assert/assert.ts": "9a97dad6d98c238938e7540736b826440ad8c1c1e54430ca4c4e623e585607ee",
     "https://deno.land/std@0.208.0/assert/assertion_error.ts": "4d0bde9b374dfbcbe8ac23f54f567b77024fb67dbb1906a852d67fe050d42f56",
@@ -118,17 +83,6 @@
     "https://deno.land/x/denoflate@1.2.1/mod.ts": "f5628e44b80b3d80ed525afa2ba0f12408e3849db817d47a883b801f9ce69dd6",
     "https://deno.land/x/denoflate@1.2.1/pkg/denoflate.js": "b9f9ad9457d3f12f28b1fb35c555f57443427f74decb403113d67364e4f2caf4",
     "https://deno.land/x/denoflate@1.2.1/pkg/denoflate_bg.wasm.js": "d581956245407a2115a3d7e8d85a9641c032940a8e810acbd59ca86afd34d44d",
-    "https://deno.land/x/esbuild@v0.20.1/mod.js": "d50e500b53ce67e31116beba3916b0f9275c0e1cc20bc5cadc0fc1b7a3b06fd9",
-    "https://esm.sh/zod@3.23.8": "15e60c792ac21d4818f181671c7c74bf33bf7526d487dc524911e42785d8b5c2",
-    "https://esm.sh/zod@3.23.8/denonext/zod.mjs": "0776ff1b85cde578a80a14b7921d72dbf17ba4de827f5ddf9c3423d7ab8562cf"
-  },
-  "workspace": {
-    "dependencies": [
-      "jsr:@okudai/golikejs@~0.5.2",
-      "jsr:@okudai/moq@0.4",
-      "jsr:@std/assert@1",
-      "jsr:@std/path@1",
-      "jsr:@std/testing@1"
-    ]
+    "https://deno.land/x/esbuild@v0.20.1/mod.js": "d50e500b53ce67e31116beba3916b0f9275c0e1cc20bc5cadc0fc1b7a3b06fd9"
   }
 }

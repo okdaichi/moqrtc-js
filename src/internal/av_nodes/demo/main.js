@@ -95,136 +95,15 @@ function upgradeAudioEncoderConfig(base, codec, bitrate) {
   return cfg;
 }
 
-// ../audio/audio_offload_worklet.ts
-function importWorkletUrl() {
-  return new URL("./audio_offload_worklet.js", import.meta.url).href;
-}
-var workletName = "audio-offloader";
-var _channelsBuffer, _readIndex, _writeIndex;
-if (typeof AudioWorkletProcessor !== "undefined") {
-  class AudioOffloadProcessor extends AudioWorkletProcessor {
-    constructor(options) {
-      super();
-      __privateAdd(this, _channelsBuffer, []);
-      __privateAdd(this, _readIndex, 0);
-      __privateAdd(this, _writeIndex, 0);
-      if (!options.processorOptions) {
-        throw new Error("processorOptions is required");
-      }
-      const channelCount = options.channelCount;
-      if (!channelCount || channelCount <= 0) {
-        throw new Error("invalid channelCount");
-      }
-      const sampleRate = options.processorOptions.sampleRate;
-      if (!sampleRate || sampleRate <= 0) {
-        throw new Error("invalid sampleRate");
-      }
-      const latency = options.processorOptions.latency;
-      if (!latency || latency <= 0) {
-        throw new Error("invalid latency");
-      }
-      const bufferingSamples = Math.ceil(sampleRate * latency / 1e3);
-      for (let i = 0; i < channelCount; i++) {
-        __privateGet(this, _channelsBuffer)[i] = new Float32Array(bufferingSamples);
-      }
-      this.port.onmessage = ({ data }) => {
-        this.append(data.channels);
-      };
-    }
-    append(channels) {
-      if (!channels.length || !channels[0] || channels[0].length === 0) {
-        return;
-      }
-      if (__privateGet(this, _channelsBuffer) === void 0 || __privateGet(this, _channelsBuffer).length === 0 || __privateGet(this, _channelsBuffer)[0] === void 0)
-        return;
-      const bufferLength = __privateGet(this, _channelsBuffer)[0].length;
-      const numberOfFrames = channels[0].length;
-      const discard = __privateGet(this, _writeIndex) - __privateGet(this, _readIndex) + numberOfFrames - bufferLength;
-      if (discard > 0) {
-        __privateSet(this, _readIndex, __privateGet(this, _readIndex) + discard);
-      }
-      for (let channel = 0; channel < __privateGet(this, _channelsBuffer).length; channel++) {
-        const src = channels[channel];
-        const dst = __privateGet(this, _channelsBuffer)[channel];
-        if (!dst)
-          continue;
-        if (!src) {
-          const writeStart = __privateGet(this, _writeIndex) % bufferLength;
-          const firstPart = Math.min(numberOfFrames, bufferLength - writeStart);
-          dst.fill(0, writeStart, writeStart + firstPart);
-          if (firstPart < numberOfFrames) {
-            dst.fill(0, 0, numberOfFrames - firstPart);
-          }
-          continue;
-        }
-        let writePos = __privateGet(this, _writeIndex) % bufferLength;
-        let srcOffset = 0;
-        while (srcOffset < numberOfFrames) {
-          const remaining = numberOfFrames - srcOffset;
-          const spaceToEnd = bufferLength - writePos;
-          const toCopy = Math.min(remaining, spaceToEnd);
-          dst.set(src.subarray(srcOffset, srcOffset + toCopy), writePos);
-          srcOffset += toCopy;
-          writePos = (writePos + toCopy) % bufferLength;
-        }
-      }
-      __privateSet(this, _writeIndex, __privateGet(this, _writeIndex) + numberOfFrames);
-    }
-    process(_inputs2, outputs) {
-      if (outputs === void 0 || outputs.length === 0 || outputs[0] === void 0 || outputs[0]?.length === 0)
-        return true;
-      if (__privateGet(this, _channelsBuffer).length === 0 || __privateGet(this, _channelsBuffer)[0] === void 0) {
-        return true;
-      }
-      const bufferLength = __privateGet(this, _channelsBuffer)[0].length;
-      const available = __privateGet(this, _writeIndex) - __privateGet(this, _readIndex);
-      const outputLength = outputs[0][0]?.length ?? 128;
-      const numberOfFrames = Math.min(Math.max(0, available), outputLength);
-      if (numberOfFrames <= 0) {
-        for (const output of outputs) {
-          for (const channel of output) {
-            if (channel)
-              channel.fill(0);
-          }
-        }
-        return true;
-      }
-      for (const output of outputs) {
-        for (let channel = 0; channel < output.length; channel++) {
-          const src = __privateGet(this, _channelsBuffer)[channel];
-          const dst = output[channel];
-          if (!dst)
-            continue;
-          if (!src) {
-            dst.fill(0);
-            continue;
-          }
-          let readPos = __privateGet(this, _readIndex) % bufferLength;
-          let dstOffset = 0;
-          while (dstOffset < numberOfFrames) {
-            const remaining = numberOfFrames - dstOffset;
-            const availableToEnd = bufferLength - readPos;
-            const toCopy = Math.min(remaining, availableToEnd);
-            dst.set(src.subarray(readPos, readPos + toCopy), dstOffset);
-            dstOffset += toCopy;
-            readPos = (readPos + toCopy) % bufferLength;
-          }
-          if (dstOffset < dst.length) {
-            dst.fill(0, dstOffset);
-          }
-        }
-      }
-      __privateSet(this, _readIndex, __privateGet(this, _readIndex) + numberOfFrames);
-      return true;
-    }
-  }
-  _channelsBuffer = new WeakMap();
-  _readIndex = new WeakMap();
-  _writeIndex = new WeakMap();
-  registerProcessor(workletName, AudioOffloadProcessor);
+// ../audio/audio_offload_worklet_inline.ts
+var audioOffloadWorkletCode = 'function y(){return new URL("./audio_offload_worklet.js",import.meta.url).href}var g="audio-offloader";if(typeof AudioWorkletProcessor<"u"){class u extends AudioWorkletProcessor{#t=[];#e=0;#n=0;constructor(o){if(super(),!o.processorOptions)throw new Error("processorOptions is required");let t=o.channelCount;if(!t||t<=0)throw new Error("invalid channelCount");let e=o.processorOptions.sampleRate;if(!e||e<=0)throw new Error("invalid sampleRate");let f=o.processorOptions.latency;if(!f||f<=0)throw new Error("invalid latency");let c=Math.ceil(e*f/1e3);for(let n=0;n<t;n++)this.#t[n]=new Float32Array(c);this.port.onmessage=({data:n})=>{this.append(n.channels)}}append(o){if(!o.length||!o[0]||o[0].length===0||this.#t===void 0||this.#t.length===0||this.#t[0]===void 0)return;let t=this.#t[0].length,e=o[0].length,f=this.#n-this.#e+e-t;f>0&&(this.#e+=f);for(let c=0;c<this.#t.length;c++){let n=o[c],l=this.#t[c];if(!l)continue;if(!n){let i=this.#n%t,s=Math.min(e,t-i);l.fill(0,i,i+s),s<e&&l.fill(0,0,e-s);continue}let r=this.#n%t,h=0;for(;h<e;){let i=e-h,s=t-r,a=Math.min(i,s);l.set(n.subarray(h,h+a),r),h+=a,r=(r+a)%t}}this.#n+=e}process(o,t){if(t===void 0||t.length===0||t[0]===void 0||t[0]?.length===0||this.#t.length===0||this.#t[0]===void 0)return!0;let e=this.#t[0].length,f=this.#n-this.#e,c=t[0][0]?.length??128,n=Math.min(Math.max(0,f),c);if(n<=0){for(let l of t)for(let r of l)r&&r.fill(0);return!0}for(let l of t)for(let r=0;r<l.length;r++){let h=this.#t[r],i=l[r];if(!i)continue;if(!h){i.fill(0);continue}let s=this.#e%e,a=0;for(;a<n;){let m=n-a,p=e-s,d=Math.min(m,p);i.set(h.subarray(s,s+d),a),a+=d,s=(s+d)%e}a<i.length&&i.fill(0,a)}return this.#e+=n,!0}}registerProcessor(g,u)}export{y as importWorkletUrl,g as workletName};\n';
+function createWorkletBlobUrl() {
+  const blob = new Blob([audioOffloadWorkletCode], { type: "application/javascript" });
+  return URL.createObjectURL(blob);
 }
 
 // ../audio/decode_node.ts
+var offloadWorkletName = "audio-offloader";
 var MAX_DECODE_QUEUE_SIZE = 3;
 var _decoder, _workletReady, _disposed, _process, process_fn;
 var AudioDecodeNode = class extends GainNode {
@@ -236,10 +115,10 @@ var AudioDecodeNode = class extends GainNode {
     __privateAdd(this, _disposed, false);
     // Callback for decoded output (for metrics)
     __publicField(this, "onoutput", null);
-    __privateSet(this, _workletReady, context.audioWorklet.addModule(importWorkletUrl()).then(() => {
+    __privateSet(this, _workletReady, context.audioWorklet.addModule(createWorkletBlobUrl()).then(() => {
       const worklet = new AudioWorkletNode(
         context,
-        workletName,
+        offloadWorkletName,
         {
           channelCount: context.destination.channelCount,
           numberOfInputs: 0,
@@ -386,73 +265,15 @@ process_fn = function(input) {
   });
 };
 
-// ../audio/audio_hijack_worklet.ts
-function importWorkletUrl2() {
-  return new URL("./audio_hijack_worklet.js", import.meta.url).href;
-}
-var workletName2 = "audio-hijacker";
-var _currentFrame, _sampleRate, _targetChannels;
-if (typeof AudioWorkletProcessor !== "undefined") {
-  class AudioHijackProcessor extends AudioWorkletProcessor {
-    constructor(options) {
-      super();
-      __privateAdd(this, _currentFrame, 0);
-      __privateAdd(this, _sampleRate, void 0);
-      __privateAdd(this, _targetChannels, void 0);
-      __privateSet(this, _sampleRate, options.processorOptions?.sampleRate || globalThis.sampleRate);
-      __privateSet(this, _targetChannels, options.processorOptions?.targetChannels || 1);
-    }
-    process(inputs) {
-      if (inputs.length > 1)
-        throw new Error("only one input is supported.");
-      const channels = inputs[0];
-      if (!channels || channels.length === 0 || !channels[0]) {
-        return true;
-      }
-      const inputChannels = channels.length;
-      const numberOfFrames = channels[0].length;
-      const numberOfChannels = __privateGet(this, _targetChannels);
-      const data = new Float32Array(numberOfChannels * numberOfFrames);
-      for (let i = 0; i < numberOfChannels; i++) {
-        if (i < inputChannels) {
-          const inputChannel = channels[i];
-          if (inputChannel && inputChannel.length > 0) {
-            data.set(inputChannel, i * numberOfFrames);
-          } else {
-            data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
-          }
-        } else if (inputChannels > 0) {
-          const firstChannel = channels[0];
-          if (firstChannel && firstChannel.length > 0) {
-            data.set(firstChannel, i * numberOfFrames);
-          } else {
-            data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
-          }
-        } else {
-          data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
-        }
-      }
-      const init2 = {
-        format: "f32-planar",
-        sampleRate: __privateGet(this, _sampleRate),
-        numberOfChannels,
-        numberOfFrames,
-        data,
-        timestamp: Math.round(__privateGet(this, _currentFrame) * 1e6 / __privateGet(this, _sampleRate)),
-        transfer: [data.buffer]
-      };
-      this.port.postMessage(init2);
-      __privateSet(this, _currentFrame, __privateGet(this, _currentFrame) + numberOfFrames);
-      return true;
-    }
-  }
-  _currentFrame = new WeakMap();
-  _sampleRate = new WeakMap();
-  _targetChannels = new WeakMap();
-  registerProcessor(workletName2, AudioHijackProcessor);
+// ../audio/audio_hijack_worklet_inline.ts
+var audioHijackWorkletCode = 'function f(){return new URL("./audio_hijack_worklet.js",import.meta.url).href}var h="audio-hijacker";if(typeof AudioWorkletProcessor<"u"){class l extends AudioWorkletProcessor{#t=0;#e;#r;constructor(o){super(),this.#e=o.processorOptions?.sampleRate||globalThis.sampleRate,this.#r=o.processorOptions?.targetChannels||1}process(o){if(o.length>1)throw new Error("only one input is supported.");let r=o[0];if(!r||r.length===0||!r[0])return!0;let i=r.length,t=r[0].length,a=this.#r,s=new Float32Array(a*t);for(let e=0;e<a;e++)if(e<i){let n=r[e];n&&n.length>0?s.set(n,e*t):s.fill(0,e*t,(e+1)*t)}else if(i>0){let n=r[0];n&&n.length>0?s.set(n,e*t):s.fill(0,e*t,(e+1)*t)}else s.fill(0,e*t,(e+1)*t);let u={format:"f32-planar",sampleRate:this.#e,numberOfChannels:a,numberOfFrames:t,data:s,timestamp:Math.round(this.#t*1e6/this.#e),transfer:[s.buffer]};return this.port.postMessage(u),this.#t+=t,!0}}registerProcessor(h,l)}export{f as importWorkletUrl,h as workletName};\n';
+function createWorkletBlobUrl2() {
+  const blob = new Blob([audioHijackWorkletCode], { type: "application/javascript" });
+  return URL.createObjectURL(blob);
 }
 
 // ../audio/encode_node.ts
+var hijackWorkletName = "audio-hijacker";
 var MAX_ENCODE_QUEUE_SIZE = 2;
 var _encoder, _workletReady2, _disposed2, _dests, _next, next_fn;
 var AudioEncodeNode = class extends GainNode {
@@ -473,10 +294,10 @@ var AudioEncodeNode = class extends GainNode {
         console.error("[AudioEncodeNode] encoder error:", e);
       }
     }));
-    __privateSet(this, _workletReady2, context.audioWorklet.addModule(importWorkletUrl2()).then(() => {
+    __privateSet(this, _workletReady2, context.audioWorklet.addModule(createWorkletBlobUrl2()).then(() => {
       const worklet = new AudioWorkletNode(
         context,
-        workletName2,
+        hijackWorkletName,
         {
           numberOfInputs: 1,
           numberOfOutputs: 1,
@@ -598,6 +419,195 @@ next_fn = async function(stream) {
   clonedData.close();
   queueMicrotask(() => __privateMethod(this, _next, next_fn).call(this, stream));
 };
+
+// ../audio/audio_hijack_worklet.ts
+var workletName = "audio-hijacker";
+var _currentFrame, _sampleRate, _targetChannels;
+if (typeof AudioWorkletProcessor !== "undefined") {
+  class AudioHijackProcessor extends AudioWorkletProcessor {
+    constructor(options) {
+      super();
+      __privateAdd(this, _currentFrame, 0);
+      __privateAdd(this, _sampleRate, void 0);
+      __privateAdd(this, _targetChannels, void 0);
+      __privateSet(this, _sampleRate, options.processorOptions?.sampleRate || globalThis.sampleRate);
+      __privateSet(this, _targetChannels, options.processorOptions?.targetChannels || 1);
+    }
+    process(inputs) {
+      if (inputs.length > 1)
+        throw new Error("only one input is supported.");
+      const channels = inputs[0];
+      if (!channels || channels.length === 0 || !channels[0]) {
+        return true;
+      }
+      const inputChannels = channels.length;
+      const numberOfFrames = channels[0].length;
+      const numberOfChannels = __privateGet(this, _targetChannels);
+      const data = new Float32Array(numberOfChannels * numberOfFrames);
+      for (let i = 0; i < numberOfChannels; i++) {
+        if (i < inputChannels) {
+          const inputChannel = channels[i];
+          if (inputChannel && inputChannel.length > 0) {
+            data.set(inputChannel, i * numberOfFrames);
+          } else {
+            data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
+          }
+        } else if (inputChannels > 0) {
+          const firstChannel = channels[0];
+          if (firstChannel && firstChannel.length > 0) {
+            data.set(firstChannel, i * numberOfFrames);
+          } else {
+            data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
+          }
+        } else {
+          data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
+        }
+      }
+      const init2 = {
+        format: "f32-planar",
+        sampleRate: __privateGet(this, _sampleRate),
+        numberOfChannels,
+        numberOfFrames,
+        data,
+        timestamp: Math.round(__privateGet(this, _currentFrame) * 1e6 / __privateGet(this, _sampleRate)),
+        transfer: [data.buffer]
+      };
+      this.port.postMessage(init2);
+      __privateSet(this, _currentFrame, __privateGet(this, _currentFrame) + numberOfFrames);
+      return true;
+    }
+  }
+  _currentFrame = new WeakMap();
+  _sampleRate = new WeakMap();
+  _targetChannels = new WeakMap();
+  registerProcessor(workletName, AudioHijackProcessor);
+}
+
+// ../audio/audio_offload_worklet.ts
+var workletName2 = "audio-offloader";
+var _channelsBuffer, _readIndex, _writeIndex;
+if (typeof AudioWorkletProcessor !== "undefined") {
+  class AudioOffloadProcessor extends AudioWorkletProcessor {
+    constructor(options) {
+      super();
+      __privateAdd(this, _channelsBuffer, []);
+      __privateAdd(this, _readIndex, 0);
+      __privateAdd(this, _writeIndex, 0);
+      if (!options.processorOptions) {
+        throw new Error("processorOptions is required");
+      }
+      const channelCount = options.channelCount;
+      if (!channelCount || channelCount <= 0) {
+        throw new Error("invalid channelCount");
+      }
+      const sampleRate = options.processorOptions.sampleRate;
+      if (!sampleRate || sampleRate <= 0) {
+        throw new Error("invalid sampleRate");
+      }
+      const latency = options.processorOptions.latency;
+      if (!latency || latency <= 0) {
+        throw new Error("invalid latency");
+      }
+      const bufferingSamples = Math.ceil(sampleRate * latency / 1e3);
+      for (let i = 0; i < channelCount; i++) {
+        __privateGet(this, _channelsBuffer)[i] = new Float32Array(bufferingSamples);
+      }
+      this.port.onmessage = ({ data }) => {
+        this.append(data.channels);
+      };
+    }
+    append(channels) {
+      if (!channels.length || !channels[0] || channels[0].length === 0) {
+        return;
+      }
+      if (__privateGet(this, _channelsBuffer) === void 0 || __privateGet(this, _channelsBuffer).length === 0 || __privateGet(this, _channelsBuffer)[0] === void 0)
+        return;
+      const bufferLength = __privateGet(this, _channelsBuffer)[0].length;
+      const numberOfFrames = channels[0].length;
+      const discard = __privateGet(this, _writeIndex) - __privateGet(this, _readIndex) + numberOfFrames - bufferLength;
+      if (discard > 0) {
+        __privateSet(this, _readIndex, __privateGet(this, _readIndex) + discard);
+      }
+      for (let channel = 0; channel < __privateGet(this, _channelsBuffer).length; channel++) {
+        const src = channels[channel];
+        const dst = __privateGet(this, _channelsBuffer)[channel];
+        if (!dst)
+          continue;
+        if (!src) {
+          const writeStart = __privateGet(this, _writeIndex) % bufferLength;
+          const firstPart = Math.min(numberOfFrames, bufferLength - writeStart);
+          dst.fill(0, writeStart, writeStart + firstPart);
+          if (firstPart < numberOfFrames) {
+            dst.fill(0, 0, numberOfFrames - firstPart);
+          }
+          continue;
+        }
+        let writePos = __privateGet(this, _writeIndex) % bufferLength;
+        let srcOffset = 0;
+        while (srcOffset < numberOfFrames) {
+          const remaining = numberOfFrames - srcOffset;
+          const spaceToEnd = bufferLength - writePos;
+          const toCopy = Math.min(remaining, spaceToEnd);
+          dst.set(src.subarray(srcOffset, srcOffset + toCopy), writePos);
+          srcOffset += toCopy;
+          writePos = (writePos + toCopy) % bufferLength;
+        }
+      }
+      __privateSet(this, _writeIndex, __privateGet(this, _writeIndex) + numberOfFrames);
+    }
+    process(_inputs2, outputs) {
+      if (outputs === void 0 || outputs.length === 0 || outputs[0] === void 0 || outputs[0]?.length === 0)
+        return true;
+      if (__privateGet(this, _channelsBuffer).length === 0 || __privateGet(this, _channelsBuffer)[0] === void 0) {
+        return true;
+      }
+      const bufferLength = __privateGet(this, _channelsBuffer)[0].length;
+      const available = __privateGet(this, _writeIndex) - __privateGet(this, _readIndex);
+      const outputLength = outputs[0][0]?.length ?? 128;
+      const numberOfFrames = Math.min(Math.max(0, available), outputLength);
+      if (numberOfFrames <= 0) {
+        for (const output of outputs) {
+          for (const channel of output) {
+            if (channel)
+              channel.fill(0);
+          }
+        }
+        return true;
+      }
+      for (const output of outputs) {
+        for (let channel = 0; channel < output.length; channel++) {
+          const src = __privateGet(this, _channelsBuffer)[channel];
+          const dst = output[channel];
+          if (!dst)
+            continue;
+          if (!src) {
+            dst.fill(0);
+            continue;
+          }
+          let readPos = __privateGet(this, _readIndex) % bufferLength;
+          let dstOffset = 0;
+          while (dstOffset < numberOfFrames) {
+            const remaining = numberOfFrames - dstOffset;
+            const availableToEnd = bufferLength - readPos;
+            const toCopy = Math.min(remaining, availableToEnd);
+            dst.set(src.subarray(readPos, readPos + toCopy), dstOffset);
+            dstOffset += toCopy;
+            readPos = (readPos + toCopy) % bufferLength;
+          }
+          if (dstOffset < dst.length) {
+            dst.fill(0, dstOffset);
+          }
+        }
+      }
+      __privateSet(this, _readIndex, __privateGet(this, _readIndex) + numberOfFrames);
+      return true;
+    }
+  }
+  _channelsBuffer = new WeakMap();
+  _readIndex = new WeakMap();
+  _writeIndex = new WeakMap();
+  registerProcessor(workletName2, AudioOffloadProcessor);
+}
 
 // ../video/video_node.ts
 var _inputs, _outputs, _disposed3;

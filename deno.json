@@ -38,7 +38,8 @@
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint",
-    "check": "deno check src/**/*.ts"
+    "check": "deno check src/**/*.ts",
+    "build:worklets": "deno run -A src/internal/av_nodes/scripts/build_worklets.ts"
   },
   "fmt": {
     "useTabs": true,

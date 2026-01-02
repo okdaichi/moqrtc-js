@@ -1,9 +1,10 @@
 // Audio node API: AudioEncodeNode
 // Extends GainNode to enable standard connect() pattern while adding encoding capabilities
 import {
-	workletName as hijackWorkletName,
-	importWorkletUrl as importHijackWorkletUrl,
-} from "./audio_hijack_worklet.ts";
+	createWorkletBlobUrl as createHijackWorkletBlobUrl,
+} from "./audio_hijack_worklet_inline.ts";
+
+const hijackWorkletName = "audio-hijacker";
 
 // Backpressure management: Maximum queue size before dropping frames
 const MAX_ENCODE_QUEUE_SIZE = 2;
@@ -47,7 +48,7 @@ export class AudioEncodeNode extends GainNode {
 		});
 
 		// Initialize worklet and connect this GainNode to it
-		this.#workletReady = context.audioWorklet.addModule(importHijackWorkletUrl()).then(() => {
+		this.#workletReady = context.audioWorklet.addModule(createHijackWorkletBlobUrl()).then(() => {
 			const worklet = new AudioWorkletNode(
 				context,
 				hijackWorkletName,

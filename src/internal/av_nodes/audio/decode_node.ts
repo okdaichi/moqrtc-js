@@ -1,9 +1,10 @@
 // Audio node API: AudioDecodeNode
 // Extends GainNode to enable standard connect() pattern while adding decoding capabilities
 import {
-	importWorkletUrl as importOffloadWorkletUrl,
-	workletName as offloadWorkletName,
-} from "./audio_offload_worklet.ts";
+	createWorkletBlobUrl as createOffloadWorkletBlobUrl,
+} from "./audio_offload_worklet_inline.ts";
+
+const offloadWorkletName = "audio-offloader";
 
 const MAX_DECODE_QUEUE_SIZE = 3;
 
@@ -36,7 +37,7 @@ export class AudioDecodeNode extends GainNode {
 		super(context, { gain: 1.0 });
 
 		// Initialize worklet asynchronously
-		this.#workletReady = context.audioWorklet.addModule(importOffloadWorkletUrl()).then(() => {
+		this.#workletReady = context.audioWorklet.addModule(createOffloadWorkletBlobUrl()).then(() => {
 			// Create AudioWorkletNode
 			const worklet = new AudioWorkletNode(
 				context,
