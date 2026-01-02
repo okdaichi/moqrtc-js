@@ -104,10 +104,12 @@ export class VideoEncodeNode extends VideoNode {
 		super.dispose();
 	}
 
-	async encodeTo(dest: EncodeDestination): Promise<void> {
+	encodeTo(dest: EncodeDestination): { done: Promise<void> } {
 		this.#dests.add(dest);
-		await Promise.allSettled([dest.done]);
-		this.#dests.delete(dest);
+		const done = dest.done.finally(() => {
+			this.#dests.delete(dest);
+		});
+		return { done };
 	}
 }
 

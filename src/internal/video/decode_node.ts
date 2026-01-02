@@ -42,28 +42,36 @@ export class VideoDecodeNode extends VideoNode {
 		this.#decoder.configure(config);
 	}
 
-	async decodeFrom(stream: ReadableStream<EncodedVideoChunk>): Promise<void> {
-		let reader: ReadableStreamDefaultReader<EncodedVideoChunk> | undefined;
-		try {
-			reader = stream.getReader();
-			while (this.context.state === "running" && !this.disposed) {
-				const { done, value: chunk } = await reader.read();
-				if (done) break;
+	decodeFrom(stream: ReadableStream<EncodedVideoChunk>): { done: Promise<void> } {
+		const done = (async () => {
+			let reader: ReadableStreamDefaultReader<EncodedVideoChunk> | undefined;
+			try {
+				reader = stream.getReader();
+				while (this.context.state === "running" && !this.disposed) {
+					// Backpressure: Wait if decoder queue is overloaded
+					if (this.decodeQueueSize > MAX_QUEUE_SIZE) {
+						console.warn(`[VideoDecodeNode] Decoder overloaded (queue: ${this.decodeQueueSize}), waiting...`);
+						await new Promise<void>((resolve) => {
+							queueMicrotask(() => resolve());
+						});
+						continue;
+					}
 
-				// Backpressure: Wait if decoder queue is overloaded
-				if (this.decodeQueueSize > MAX_QUEUE_SIZE) {
-					console.warn(`[VideoDecodeNode] Decoder overloaded (queue: ${this.decodeQueueSize}), waiting...`);
-					await new Promise((resolve) => setTimeout(resolve, 16)); // ~1 frame @ 60fps
-					continue;
+					const { done, value: chunk } = await reader.read();
+					if (done) {
+						break;
+					}
+
+					this.#decoder.decode(chunk);
 				}
-
-				this.#decoder.decode(chunk);
+			} catch (e) {
+				console.error("[VideoDecodeNode] decodeFrom error:", e);
+			} finally {
+				reader?.releaseLock();
 			}
-		} catch (e) {
-			console.error("[VideoDecodeNode] decodeFrom error:", e);
-		} finally {
-			reader?.releaseLock();
-		}
+		})();
+
+		return { done };
 	}
 
 	process(input: VideoFrame): void {
