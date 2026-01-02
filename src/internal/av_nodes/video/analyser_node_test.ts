@@ -150,9 +150,9 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		analyserNode = new VideoAnalyserNode(context);
 
 		let callbackTriggered = false;
-		let receivedAnalysis: VideoFrameAnalysis | null = null;
+		let receivedAnalysis!: VideoFrameAnalysis;
 
-		analyserNode.onanalysis = (analysis) => {
+		analyserNode.onanalysis = (analysis: VideoFrameAnalysis) => {
 			callbackTriggered = true;
 			receivedAnalysis = analysis;
 		};
@@ -164,9 +164,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 
 		assert(callbackTriggered);
 		assertExists(receivedAnalysis);
-		if (receivedAnalysis) {
-			assertEquals(receivedAnalysis.frameIndex, 0);
-		}
+		assertEquals(receivedAnalysis.frameIndex, 0);
 	});
 
 	await t.step("should handle callback errors gracefully", async () => {

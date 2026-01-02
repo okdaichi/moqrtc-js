@@ -36,11 +36,21 @@ var __privateMethod = (obj, member, method) => {
 };
 
 // ../support.ts
-var isChrome = navigator.userAgent.toLowerCase().includes("chrome");
-var isFirefox = navigator.userAgent.toLowerCase().includes("firefox");
+var isChrome = navigator.userAgent.toLowerCase().includes(
+  "chrome"
+);
+var isFirefox = navigator.userAgent.toLowerCase().includes(
+  "firefox"
+);
 
 // ../audio/audio_config.ts
-var DEFAULT_AUDIO_CODECS = ["opus", "isac", "g722", "pcmu", "pcma"];
+var DEFAULT_AUDIO_CODECS = [
+  "opus",
+  "isac",
+  "g722",
+  "pcmu",
+  "pcma"
+];
 var DEFAULT_AUDIO_CONFIG = {
   sampleRate: 48e3,
   channels: 2,
@@ -85,8 +95,9 @@ function upgradeAudioEncoderConfig(base, codec, bitrate) {
     anyCfg.opus.application = anyCfg.opus.application ?? (isVoice ? "voip" : "audio");
     anyCfg.opus.signal = anyCfg.opus.signal ?? (isVoice ? "voice" : "music");
     anyCfg.parameters = anyCfg.parameters ?? {};
-    if (anyCfg.parameters.useinbandfec === void 0)
+    if (anyCfg.parameters.useinbandfec === void 0) {
       anyCfg.parameters.useinbandfec = 1;
+    }
     if (anyCfg.parameters.stereo === void 0) {
       anyCfg.parameters.stereo = cfg.numberOfChannels === 2 ? 1 : 0;
     }
@@ -115,25 +126,32 @@ var AudioDecodeNode = class extends GainNode {
     __privateAdd(this, _disposed, false);
     // Callback for decoded output (for metrics)
     __publicField(this, "onoutput", null);
-    __privateSet(this, _workletReady, context.audioWorklet.addModule(createWorkletBlobUrl()).then(() => {
-      const worklet = new AudioWorkletNode(
-        context,
-        offloadWorkletName,
-        {
-          channelCount: context.destination.channelCount,
-          numberOfInputs: 0,
-          numberOfOutputs: 1,
-          processorOptions: {
-            sampleRate: context.sampleRate,
-            latency: init2.latency || 100
-            // Default to 100ms if not specified
+    __privateSet(this, _workletReady, context.audioWorklet.addModule(
+      createWorkletBlobUrl()
+    ).then(
+      () => {
+        const worklet = new AudioWorkletNode(
+          context,
+          offloadWorkletName,
+          {
+            channelCount: context.destination.channelCount,
+            numberOfInputs: 0,
+            numberOfOutputs: 1,
+            processorOptions: {
+              sampleRate: context.sampleRate,
+              latency: init2.latency || 100
+              // Default to 100ms if not specified
+            }
           }
-        }
+        );
+        worklet.connect(this);
+        return worklet;
+      }
+    ).catch((error) => {
+      console.error(
+        "[AudioDecodeNode] failed to load AudioWorklet module:",
+        error
       );
-      worklet.connect(this);
-      return worklet;
-    }).catch((error) => {
-      console.error("[AudioDecodeNode] failed to load AudioWorklet module:", error);
       throw error;
     }));
     __privateSet(this, _decoder, new AudioDecoder({
@@ -294,38 +312,45 @@ var AudioEncodeNode = class extends GainNode {
         console.error("[AudioEncodeNode] encoder error:", e);
       }
     }));
-    __privateSet(this, _workletReady2, context.audioWorklet.addModule(createWorkletBlobUrl2()).then(() => {
-      const worklet = new AudioWorkletNode(
-        context,
-        hijackWorkletName,
-        {
-          numberOfInputs: 1,
-          numberOfOutputs: 1,
-          channelCount: context.destination.channelCount,
-          processorOptions: {
-            sampleRate: context.sampleRate,
-            targetChannels: context.destination.channelCount
-          }
-        }
-      );
-      const readable = new ReadableStream({
-        start: (controller) => {
-          worklet.port.onmessage = ({ data }) => {
-            try {
-              const frame = new AudioData(data);
-              controller.enqueue(frame);
-            } catch (e) {
-              console.error("[AudioEncodeNode] Failed to create AudioData:", e);
+    __privateSet(this, _workletReady2, context.audioWorklet.addModule(
+      createWorkletBlobUrl2()
+    ).then(
+      () => {
+        const worklet = new AudioWorkletNode(
+          context,
+          hijackWorkletName,
+          {
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            channelCount: context.destination.channelCount,
+            processorOptions: {
+              sampleRate: context.sampleRate,
+              targetChannels: context.destination.channelCount
             }
-          };
-        },
-        cancel() {
-        }
-      });
-      super.connect(worklet);
-      __privateMethod(this, _next, next_fn).call(this, readable.getReader());
-      return worklet;
-    }).catch((e) => {
+          }
+        );
+        const readable = new ReadableStream({
+          start: (controller) => {
+            worklet.port.onmessage = ({ data }) => {
+              try {
+                const frame = new AudioData(data);
+                controller.enqueue(frame);
+              } catch (e) {
+                console.error(
+                  "[AudioEncodeNode] Failed to create AudioData:",
+                  e
+                );
+              }
+            };
+          },
+          cancel() {
+          }
+        });
+        super.connect(worklet);
+        __privateMethod(this, _next, next_fn).call(this, readable.getReader());
+        return worklet;
+      }
+    ).catch((e) => {
       console.error("[AudioEncodeNode] Failed to initialize worklet:", e);
       throw e;
     }));
@@ -402,7 +427,9 @@ next_fn = async function(stream) {
     return;
   }
   if (this.encodeQueueSize > MAX_ENCODE_QUEUE_SIZE) {
-    console.warn(`[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`);
+    console.warn(
+      `[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`
+    );
     value.close();
     queueMicrotask(() => __privateMethod(this, _next, next_fn).call(this, stream));
     return;
@@ -679,12 +706,19 @@ scheduleAnalysis_fn = function(frame) {
   try {
     if (!__privateGet(this, _canvas) || __privateGet(this, _canvas).width !== sampleWidth || __privateGet(this, _canvas).height !== sampleHeight) {
       __privateSet(this, _canvas, new OffscreenCanvas(sampleWidth, sampleHeight));
-      __privateSet(this, _ctx, __privateGet(this, _canvas).getContext("2d", { willReadFrequently: true }));
+      __privateSet(this, _ctx, __privateGet(this, _canvas).getContext("2d", {
+        willReadFrequently: true
+      }));
     }
     if (!__privateGet(this, _ctx))
       return;
     __privateGet(this, _ctx).drawImage(frame, 0, 0, sampleWidth, sampleHeight);
-    const imageData = __privateGet(this, _ctx).getImageData(0, 0, sampleWidth, sampleHeight);
+    const imageData = __privateGet(this, _ctx).getImageData(
+      0,
+      0,
+      sampleWidth,
+      sampleHeight
+    );
     __privateGet(this, _pixelBuffer).set(imageData.data);
   } catch (_e) {
     return;
@@ -715,7 +749,12 @@ runDeferredAnalysis_fn = function() {
   const presentationTime = __privateGet(this, _pendingPresentationTime);
   __privateSet(this, _pendingPixelData, null);
   __privateMethod(this, _convertToGrayscale, convertToGrayscale_fn).call(this, pixelData, __privateGet(this, _grayscaleBuffer), width, height);
-  const intraFrame = __privateGet(this, _enabledFeatures).intraFrame ? __privateMethod(this, _calculateIntraFrame, calculateIntraFrame_fn).call(this, pixelData, __privateGet(this, _grayscaleBuffer), width, height) : { lumaAverage: 0, lumaVariance: 0, chromaVariance: 0, frameEnergy: 0 };
+  const intraFrame = __privateGet(this, _enabledFeatures).intraFrame ? __privateMethod(this, _calculateIntraFrame, calculateIntraFrame_fn).call(this, pixelData, __privateGet(this, _grayscaleBuffer), width, height) : {
+    lumaAverage: 0,
+    lumaVariance: 0,
+    chromaVariance: 0,
+    frameEnergy: 0
+  };
   const interFrame = __privateGet(this, _enabledFeatures).interFrame ? __privateMethod(this, _calculateInterFrame, calculateInterFrame_fn).call(this, pixelData, __privateGet(this, _previousFrameBuffer), width, height) : { frameDelta: 0, motionEnergy: 0, activityLevel: 0 };
   const density = __privateGet(this, _enabledFeatures).density ? __privateMethod(this, _calculateDensity, calculateDensity_fn).call(this, __privateGet(this, _grayscaleBuffer), width, height) : { edgeDensity: 0, highFrequencyRatio: 0, spatialComplexity: 0 };
   if (__privateGet(this, _currentAnalysis) && __privateGet(this, _smoothingTimeConstant) > 0) {
@@ -737,7 +776,10 @@ runDeferredAnalysis_fn = function() {
     try {
       this.onanalysis(analysis);
     } catch (e) {
-      console.error("[VideoAnalyserNode] onanalysis callback error:", e);
+      console.error(
+        "[VideoAnalyserNode] onanalysis callback error:",
+        e
+      );
     }
   }
   if (__privateGet(this, _previousFrameBuffer) && __privateGet(this, _enabledFeatures).interFrame) {
@@ -926,7 +968,10 @@ var VideoDestinationNode = class extends VideoNode {
         try {
           frame.close();
         } catch (e) {
-          console.error("[VideoDestinationNode] timeout cleanup error:", e);
+          console.error(
+            "[VideoDestinationNode] timeout cleanup error:",
+            e
+          );
         }
       }
       __privateSet(this, _timeoutId, void 0);
@@ -1308,7 +1353,10 @@ var VideoEncodeNode = class extends VideoNode {
     __privateSet(this, _encoder2, new VideoEncoder({
       output: async (chunk, meta) => {
         if (meta?.decoderConfig) {
-          console.log("[VideoEncodeNode] Encoded chunk decoderConfig:", meta.decoderConfig);
+          console.log(
+            "[VideoEncodeNode] Encoded chunk decoderConfig:",
+            meta.decoderConfig
+          );
         }
         await Promise.allSettled(
           Array.from(__privateGet(this, _dests2), (dest) => dest.output(chunk))
@@ -1337,7 +1385,9 @@ var VideoEncodeNode = class extends VideoNode {
       return;
     }
     if (this.encodeQueueSize > MAX_QUEUE_SIZE2) {
-      console.warn(`[VideoEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`);
+      console.warn(
+        `[VideoEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`
+      );
       return;
     }
     const clonedFrame = input.clone();
@@ -1451,7 +1501,9 @@ var VideoOverlayNode = class extends VideoNode {
           output.process(outputFrame);
         } catch (e) {
           if (e instanceof DOMException && e.name === "InvalidStateError") {
-            console.warn("[VideoOverlayNode] Cannot clone closed frame");
+            console.warn(
+              "[VideoOverlayNode] Cannot clone closed frame"
+            );
           } else {
             console.error("[VideoOverlayNode] process error:", e);
           }
@@ -1564,7 +1616,9 @@ var MediaStreamVideoSourceNode = class extends VideoSourceNode {
     const { mediaStream } = options;
     const track = mediaStream.getVideoTracks()[0];
     if (!track) {
-      throw new Error("[MediaStreamVideoSourceNode] No video track in MediaStream");
+      throw new Error(
+        "[MediaStreamVideoSourceNode] No video track in MediaStream"
+      );
     }
     let stream;
     if ("MediaStreamTrackProcessor" in globalThis) {

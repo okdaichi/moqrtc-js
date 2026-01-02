@@ -1,19 +1,21 @@
 import { assert, assertEquals } from "@std/assert";
+import { VideoContext } from "./context.ts";
+import { VideoDestinationNode } from "./destination_node.ts";
 import { MockHTMLCanvasElement } from "./mock_htmlcanvaselement_test.ts";
-import { VideoContext, VideoDestinationNode, VideoNode } from "./video_node.ts";
+import { VideoNode } from "./video_node.ts";
 
 // Using shared MockVideoEncoder from test-stubs
 
 // Mock VideoNode for testing abstract class behavior
 class MockVideoNode extends VideoNode {
-	process(_input?: VideoFrame | any): void {
+	process(_input?: VideoFrame): void {
 		// Mock implementation
 	}
 }
 
 Deno.test("VideoContext", async (t) => {
 	const canvas = new MockHTMLCanvasElement();
-	const context = new VideoContext({ frameRate: 30, canvas: canvas as any });
+	const context = new VideoContext({ frameRate: 30, canvas: canvas as unknown as HTMLCanvasElement });
 
 	await t.step("should create VideoContext with default options", () => {
 		const defaultContext = new VideoContext();
@@ -24,7 +26,7 @@ Deno.test("VideoContext", async (t) => {
 	await t.step("should create VideoContext with custom options", () => {
 		assertEquals(context.frameRate, 30);
 		assert(context.destination instanceof VideoDestinationNode);
-		assertEquals(context.destination.canvas, canvas as any);
+		assertEquals(context.destination.canvas, canvas as unknown as HTMLCanvasElement);
 	});
 
 	await t.step("should have initial running state", () => {

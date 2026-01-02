@@ -1,6 +1,7 @@
 import type {
 	BroadcastPath,
 	Session,
+	TrackEncoder,
 	TrackHandler,
 	TrackName,
 	TrackReader,
@@ -11,9 +12,9 @@ import type { CancelCauseFunc, Context } from "golikejs/context";
 import { background, withCancelCause } from "golikejs/context";
 import type { TrackDescriptor } from "./catalog/index.ts";
 import { CATALOG_TRACK_NAME, DEFAULT_CATALOG_VERSION } from "./catalog/index.ts";
-import { CatalogDecoder, CatalogEncoder, TrackCatalog } from "./internal/catalog_stream.ts";
+import type { EncodedChunk } from "./internal/av_nodes/container.ts";
+import { CatalogDecoder, CatalogEncoder } from "./internal/catalog_stream.ts";
 import type { EncodeDestination } from "./internal/container.ts";
-import { type EncodedChunk } from "./internal/index.ts";
 import { participantName } from "./room.ts";
 
 type EncodeCallback = (chunk: EncodedChunk) => Promise<void>;
@@ -41,14 +42,20 @@ export class BroadcastPublisher implements TrackHandler {
 		});
 	}
 
-	setTrack(tracks: { catalog: TrackCatalog }): void {
-		if (track.descriptor.name === CATALOG_TRACK_NAME) {
+	setTrack(track: TrackDescriptor, encoder: TrackEncoder): void {
+		if (track.name === CATALOG_TRACK_NAME) {
 			throw new Error("Cannot add catalog track");
 		}
 
-		this.#encoders.set(track.descriptor.name, track.encoder);
+		this.#encoders.set(track.name, encoder);
+		this.#tracks.set(track.name, track);
 
-		this.#catalog.set();
+		this.#catalog.set([{
+			name: track.name,
+			priority: track.priority,
+			schema: track.schema,
+			config: track.config,
+		}]);
 	}
 
 	async serveTrack(ctx: Promise<void>, track: TrackWriter): Promise<void> {

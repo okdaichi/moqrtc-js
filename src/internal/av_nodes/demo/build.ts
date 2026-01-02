@@ -16,25 +16,25 @@ try {
 
 	console.log("🔨 Building audio worklets...");
 
-	// Build audio hijack worklet
-	await build({
-		entryPoints: ["../audio/audio_hijack_worklet.ts"],
-		outfile: "./audio_hijack_worklet.js",
-		bundle: false, // Don't bundle worklets - they need to be standalone
-		format: "esm",
-		target: "es2020",
-		platform: "browser",
-	});
+	// // Build audio hijack worklet
+	// await build({
+	// 	entryPoints: ["../audio/audio_hijack_worklet.ts"],
+	// 	outfile: "./audio_hijack_worklet.js",
+	// 	bundle: false, // Don't bundle worklets - they need to be standalone
+	// 	format: "esm",
+	// 	target: "es2020",
+	// 	platform: "browser",
+	// });
 
-	// Build audio offload worklet
-	await build({
-		entryPoints: ["../audio/audio_offload_worklet.ts"],
-		outfile: "./audio_offload_worklet.js",
-		bundle: false,
-		format: "esm",
-		target: "es2020",
-		platform: "browser",
-	});
+	// // Build audio offload worklet
+	// await build({
+	// 	entryPoints: ["../audio/audio_offload_worklet.ts"],
+	// 	outfile: "./audio_offload_worklet.js",
+	// 	bundle: false,
+	// 	format: "esm",
+	// 	target: "es2020",
+	// 	platform: "browser",
+	// });
 
 	console.log("✅ Build complete!");
 } catch (error) {

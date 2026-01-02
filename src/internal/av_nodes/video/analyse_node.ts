@@ -187,7 +187,7 @@ export class VideoAnalyserNode extends VideoNode {
 		}
 	}
 
-	getRecentAnalysis(count: number): ReadonlyArray<VideoFrameAnalysis> {
+	getRecentAnalysis(count: number): VideoFrameAnalysis[] {
 		const result: VideoFrameAnalysis[] = [];
 		const length = Math.min(count, this.#historyBuffer.length);
 		for (let i = 0; i < length; i++) {
