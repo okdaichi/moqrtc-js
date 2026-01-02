@@ -50,7 +50,9 @@ export class VideoDecodeNode extends VideoNode {
 				while (this.context.state === "running" && !this.disposed) {
 					// Backpressure: Wait if decoder queue is overloaded
 					if (this.decodeQueueSize > MAX_QUEUE_SIZE) {
-						console.warn(`[VideoDecodeNode] Decoder overloaded (queue: ${this.decodeQueueSize}), waiting...`);
+						console.warn(
+							`[VideoDecodeNode] Decoder overloaded (queue: ${this.decodeQueueSize}), waiting...`,
+						);
 						await new Promise<void>((resolve) => {
 							queueMicrotask(() => resolve());
 						});

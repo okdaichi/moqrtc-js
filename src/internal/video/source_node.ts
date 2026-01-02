@@ -14,11 +14,6 @@ export class VideoSourceNode extends VideoNode {
 		this.context._register(this);
 	}
 
-	/** @internal Accessor for subclasses */
-	protected get _stream(): ReadableStream<VideoFrame> {
-		return this.#stream;
-	}
-
 	get running(): boolean {
 		return this.#running;
 	}
@@ -41,33 +36,38 @@ export class VideoSourceNode extends VideoNode {
 		}
 	}
 
-	async start(): Promise<void> {
-		if (this.#running || this.disposed) return;
-		this.#running = true;
+	start(): { done: Promise<void> } {
+		const done = (async () => {
+			if (this.#running || this.disposed) return;
+			this.#running = true;
 
-		try {
-			this.#reader = this.#stream.getReader();
+			try {
+				this.#reader = this.#stream.getReader();
 
-			while (this.#running && this.context.state === "running") {
-				const { done, value: frame } = await this.#reader.read();
-				if (done) break;
+				while (this.#running && this.context.state === "running") {
+					const { done, value: frame } = await this.#reader.read();
+					if (done) break;
 
-				// Pass frame to outputs (they will clone if needed)
-				this.process(frame);
+					// Pass frame to outputs (they will clone if needed)
+					this.process(frame);
 
-				// Ownership: We own the frame from stream, so we close it
-				frame.close();
+					// Ownership: We own the frame from stream, so we close it
+					frame.close();
+				}
+			} catch (e) {
+				console.error("[VideoSourceNode] read error:", e);
+			} finally {
+				this.#running = false;
+				this.#releaseReader();
 			}
-		} catch (e) {
-			console.error("[VideoSourceNode] read error:", e);
-		} finally {
-			this.#running = false;
-			this.#releaseReader();
-		}
+		})();
+
+		return { done };
 	}
 
 	stop(): void {
 		this.#running = false;
+		this.#releaseReader(); // Release reader immediately
 	}
 
 	#releaseReader(): void {
@@ -77,14 +77,14 @@ export class VideoSourceNode extends VideoNode {
 			} catch (_) {
 				/* ignore */
 			}
-			this.#reader = undefined;
 		}
 	}
 
 	override dispose(): void {
 		if (this.disposed) return;
 		this.stop();
-		this.#releaseReader();
+		this.#releaseReader(); // Release reader immediately
+		this.#reader = undefined; // Clear reader reference
 		this.context._unregister(this);
 		super.dispose();
 	}
@@ -92,6 +92,7 @@ export class VideoSourceNode extends VideoNode {
 
 export class MediaStreamVideoSourceNode extends VideoSourceNode {
 	readonly track: MediaStreamTrack;
+	#stream: ReadableStream<VideoFrame>;
 
 	constructor(track: MediaStreamTrack, context?: VideoContext) {
 		const settings = track.getSettings();
@@ -148,6 +149,7 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 
 		super(videoContext, stream);
 		this.track = track;
+		this.#stream = stream;
 	}
 
 	override dispose(): void {
@@ -155,7 +157,7 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 		this.stop();
 		this.track.stop();
 		try {
-			void this._stream.cancel();
+			void this.#stream.cancel();
 		} catch (_) {
 			/* ignore */
 		}

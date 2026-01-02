@@ -97,7 +97,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#writeIndex += numberOfFrames;
 		}
 
-		process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+		process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
 			// No output to write to
 			if (
 				outputs === undefined ||
