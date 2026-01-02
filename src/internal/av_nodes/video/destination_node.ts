@@ -96,7 +96,10 @@ export class VideoDestinationNode extends VideoNode {
 				try {
 					frame.close();
 				} catch (e) {
-					console.error("[VideoDestinationNode] timeout cleanup error:", e);
+					console.error(
+						"[VideoDestinationNode] timeout cleanup error:",
+						e,
+					);
 				}
 			}
 

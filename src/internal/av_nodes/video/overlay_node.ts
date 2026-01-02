@@ -90,9 +90,12 @@ export class VideoOverlayNode extends VideoNode {
 					output.process(outputFrame);
 				} catch (e) {
 					if (
-						e instanceof DOMException && e.name === "InvalidStateError"
+						e instanceof DOMException &&
+						e.name === "InvalidStateError"
 					) {
-						console.warn("[VideoOverlayNode] Cannot clone closed frame");
+						console.warn(
+							"[VideoOverlayNode] Cannot clone closed frame",
+						);
 					} else {
 						console.error("[VideoOverlayNode] process error:", e);
 					}

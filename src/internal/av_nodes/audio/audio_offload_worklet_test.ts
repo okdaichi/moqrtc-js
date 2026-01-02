@@ -15,221 +15,290 @@ Deno.test("audio_offload_worklet", async (t) => {
 		// assert(() => new URL(url));
 	});
 
-	await t.step("registers the offload processor when AudioWorkletProcessor is defined", () => {
-		// Setup mocks
-		const mockRegisterProcessor = { calls: [] as any[] };
-		const originalAudioWorkletProcessor = (globalThis as any).AudioWorkletProcessor;
-		const originalRegisterProcessor = (globalThis as any).registerProcessor;
+	await t.step(
+		"registers the offload processor when AudioWorkletProcessor is defined",
+		() => {
+			// Setup mocks
+			const mockRegisterProcessor = { calls: [] as any[] };
+			const originalAudioWorkletProcessor =
+				(globalThis as any).AudioWorkletProcessor;
+			const originalRegisterProcessor =
+				(globalThis as any).registerProcessor;
 
-		(globalThis as any).AudioWorkletProcessor = class {
-			port = { onmessage: undefined };
-		};
-		(globalThis as any).registerProcessor = (name: string, processor: any) => {
-			mockRegisterProcessor.calls.push([name, processor]);
-		};
+			(globalThis as any).AudioWorkletProcessor = class {
+				port = { onmessage: undefined };
+			};
+			(globalThis as any).registerProcessor = (
+				name: string,
+				processor: any,
+			) => {
+				mockRegisterProcessor.calls.push([name, processor]);
+			};
 
-		try {
-			// Execute the worklet code directly
-			if (typeof AudioWorkletProcessor !== "undefined") {
-				// AudioWorkletProcessor for AudioEmitter
-				class AudioOffloadProcessor extends AudioWorkletProcessor {
-					#channelsBuffer: Float32Array[] = [];
+			try {
+				// Execute the worklet code directly
+				if (typeof AudioWorkletProcessor !== "undefined") {
+					// AudioWorkletProcessor for AudioEmitter
+					class AudioOffloadProcessor extends AudioWorkletProcessor {
+						#channelsBuffer: Float32Array[] = [];
 
-					#readIndex: number = 0;
-					#writeIndex: number = 0;
+						#readIndex: number = 0;
+						#writeIndex: number = 0;
 
-					constructor(options: AudioWorkletNodeOptions) {
-						super();
-						if (!options.processorOptions) {
-							throw new Error("processorOptions is required");
-						}
-
-						const channelCount = options.channelCount;
-						if (!channelCount || channelCount <= 0) {
-							throw new Error("invalid channelCount");
-						}
-
-						const sampleRate = options.processorOptions.sampleRate;
-						if (!sampleRate || sampleRate <= 0) {
-							throw new Error("invalid sampleRate");
-						}
-
-						const latency = options.processorOptions.latency;
-						if (!latency || latency <= 0) {
-							throw new Error("invalid latency");
-						}
-
-						const bufferingSamples = Math.ceil(sampleRate * latency / 1000);
-
-						for (let i = 0; i < channelCount; i++) {
-							this.#channelsBuffer[i] = new Float32Array(bufferingSamples);
-						}
-
-						this.port.onmessage = (
-							{ data }: { data: { channels: Float32Array[]; timestamp: number } },
-						) => {
-							this.append(data.channels);
-							// We do not use timestamp for now
-							// TODO: handle timestamp and sync if needed
-						};
-					}
-
-					append(channels: Float32Array[]): void {
-						if (!channels.length || !channels[0] || channels[0].length === 0) {
-							return;
-						}
-
-						// Not initialized yet. Skip
-						if (
-							this.#channelsBuffer === undefined ||
-							this.#channelsBuffer.length === 0 ||
-							this.#channelsBuffer[0] === undefined
-						) return;
-
-						const numberOfFrames = channels[0].length;
-
-						// Advance read index for discarded samples
-						const discard = this.#writeIndex - this.#readIndex + numberOfFrames -
-							this.#channelsBuffer[0].length;
-						if (discard >= 0) {
-							this.#readIndex += discard;
-						}
-
-						// Write new samples to buffer
-						for (let channel = 0; channel < this.#channelsBuffer.length; channel++) {
-							const src = channels[channel];
-							const dst = this.#channelsBuffer[channel];
-
-							if (!dst) continue;
-							if (!src) {
-								dst.fill(0, 0, numberOfFrames);
-								continue;
+						constructor(options: AudioWorkletNodeOptions) {
+							super();
+							if (!options.processorOptions) {
+								throw new Error("processorOptions is required");
 							}
 
-							let readPos = this.#writeIndex % dst.length;
-							let offset = 0;
-
-							let n: number;
-							while (numberOfFrames - offset > 0) { // Still data remaining to copy
-								n = Math.min(numberOfFrames - offset, numberOfFrames - readPos);
-								dst.set(src.subarray(readPos, readPos + n), offset);
-								readPos = (readPos + n) % numberOfFrames;
-								offset += n;
+							const channelCount = options.channelCount;
+							if (!channelCount || channelCount <= 0) {
+								throw new Error("invalid channelCount");
 							}
+
+							const sampleRate =
+								options.processorOptions.sampleRate;
+							if (!sampleRate || sampleRate <= 0) {
+								throw new Error("invalid sampleRate");
+							}
+
+							const latency = options.processorOptions.latency;
+							if (!latency || latency <= 0) {
+								throw new Error("invalid latency");
+							}
+
+							const bufferingSamples = Math.ceil(
+								sampleRate * latency / 1000,
+							);
+
+							for (let i = 0; i < channelCount; i++) {
+								this.#channelsBuffer[i] = new Float32Array(
+									bufferingSamples,
+								);
+							}
+
+							this.port.onmessage = (
+								{ data }: {
+									data: {
+										channels: Float32Array[];
+										timestamp: number;
+									};
+								},
+							) => {
+								this.append(data.channels);
+								// We do not use timestamp for now
+								// TODO: handle timestamp and sync if needed
+							};
 						}
 
-						this.#writeIndex += numberOfFrames;
-					}
+						append(channels: Float32Array[]): void {
+							if (
+								!channels.length || !channels[0] ||
+								channels[0].length === 0
+							) {
+								return;
+							}
 
-					process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-						// No output to write to
-						if (
-							outputs === undefined ||
-							outputs.length === 0 ||
-							outputs[0] === undefined ||
-							outputs[0]?.length === 0
-						) return true;
+							// Not initialized yet. Skip
+							if (
+								this.#channelsBuffer === undefined ||
+								this.#channelsBuffer.length === 0 ||
+								this.#channelsBuffer[0] === undefined
+							) return;
 
-						// Not initialized yet
-						if (
-							this.#channelsBuffer.length === 0 ||
-							this.#channelsBuffer[0] === undefined
-						) return true;
+							const numberOfFrames = channels[0].length;
 
-						const available =
-							(this.#writeIndex - this.#readIndex + this.#channelsBuffer[0].length) %
-							this.#channelsBuffer[0].length;
-						const numberOfFrames = Math.min(available, outputs[0].length);
+							// Advance read index for discarded samples
+							const discard = this.#writeIndex - this.#readIndex +
+								numberOfFrames -
+								this.#channelsBuffer[0].length;
+							if (discard >= 0) {
+								this.#readIndex += discard;
+							}
 
-						// No data to read
-						if (numberOfFrames <= 0) return true;
+							// Write new samples to buffer
+							for (
+								let channel = 0;
+								channel < this.#channelsBuffer.length;
+								channel++
+							) {
+								const src = channels[channel];
+								const dst = this.#channelsBuffer[channel];
 
-						for (const output of outputs) {
-							for (let channel = 0; channel < output.length; channel++) {
-								const src = this.#channelsBuffer[channel];
-								const dst = output[channel];
 								if (!dst) continue;
 								if (!src) {
 									dst.fill(0, 0, numberOfFrames);
 									continue;
 								}
 
-								let readPos = this.#readIndex;
+								let readPos = this.#writeIndex % dst.length;
 								let offset = 0;
 
 								let n: number;
 								while (numberOfFrames - offset > 0) { // Still data remaining to copy
-									n = Math.min(numberOfFrames - offset, numberOfFrames - readPos);
-									dst.set(src.subarray(readPos, readPos + n), offset);
+									n = Math.min(
+										numberOfFrames - offset,
+										numberOfFrames - readPos,
+									);
+									dst.set(
+										src.subarray(readPos, readPos + n),
+										offset,
+									);
 									readPos = (readPos + n) % numberOfFrames;
 									offset += n;
 								}
 							}
+
+							this.#writeIndex += numberOfFrames;
 						}
 
-						// Advance read index
-						this.#readIndex += numberOfFrames;
-						if (this.#readIndex >= this.#channelsBuffer[0].length) {
-							this.#readIndex -= this.#channelsBuffer[0].length;
-							this.#writeIndex -= this.#channelsBuffer[0].length;
-						}
+						process(
+							_inputs: Float32Array[][],
+							outputs: Float32Array[][],
+						): boolean {
+							// No output to write to
+							if (
+								outputs === undefined ||
+								outputs.length === 0 ||
+								outputs[0] === undefined ||
+								outputs[0]?.length === 0
+							) return true;
 
-						return true;
+							// Not initialized yet
+							if (
+								this.#channelsBuffer.length === 0 ||
+								this.#channelsBuffer[0] === undefined
+							) return true;
+
+							const available =
+								(this.#writeIndex - this.#readIndex +
+									this.#channelsBuffer[0].length) %
+								this.#channelsBuffer[0].length;
+							const numberOfFrames = Math.min(
+								available,
+								outputs[0].length,
+							);
+
+							// No data to read
+							if (numberOfFrames <= 0) return true;
+
+							for (const output of outputs) {
+								for (
+									let channel = 0;
+									channel < output.length;
+									channel++
+								) {
+									const src = this.#channelsBuffer[channel];
+									const dst = output[channel];
+									if (!dst) continue;
+									if (!src) {
+										dst.fill(0, 0, numberOfFrames);
+										continue;
+									}
+
+									let readPos = this.#readIndex;
+									let offset = 0;
+
+									let n: number;
+									while (numberOfFrames - offset > 0) { // Still data remaining to copy
+										n = Math.min(
+											numberOfFrames - offset,
+											numberOfFrames - readPos,
+										);
+										dst.set(
+											src.subarray(readPos, readPos + n),
+											offset,
+										);
+										readPos = (readPos + n) %
+											numberOfFrames;
+										offset += n;
+									}
+								}
+							}
+
+							// Advance read index
+							this.#readIndex += numberOfFrames;
+							if (
+								this.#readIndex >=
+									this.#channelsBuffer[0].length
+							) {
+								this.#readIndex -=
+									this.#channelsBuffer[0].length;
+								this.#writeIndex -=
+									this.#channelsBuffer[0].length;
+							}
+
+							return true;
+						}
 					}
+
+					(globalThis as any).registerProcessor(
+						"audio-offloader",
+						AudioOffloadProcessor,
+					);
 				}
 
-				(globalThis as any).registerProcessor("audio-offloader", AudioOffloadProcessor);
+				assertEquals(mockRegisterProcessor.calls.length, 1);
+				const [name, processorCtor] = mockRegisterProcessor.calls[0];
+				assertEquals(name, "audio-offloader");
+				assertEquals(typeof processorCtor, "function");
+
+				const ProcessorCtor = processorCtor as new (
+					options: any,
+				) => any;
+				const instance = new ProcessorCtor({
+					channelCount: 2,
+					processorOptions: {
+						sampleRate: 48000,
+						latency: 50,
+					},
+				});
+
+				assert(instance instanceof processorCtor);
+				assertEquals(typeof instance.process, "function");
+				assertEquals(typeof instance.append, "function");
+				assertExists(instance.port);
+				assertEquals(typeof instance.port.onmessage, "function");
+
+				// Test append method
+				const channels = [
+					new Float32Array([1, 2, 3]),
+					new Float32Array([4, 5, 6]),
+				];
+				instance.append(channels);
+				// Since buffer is initialized, append should work without error
+
+				// Test process method with no outputs
+				let result = instance.process([], []);
+				assertEquals(result, true);
+
+				// Test process method with outputs
+				const outputs = [[new Float32Array(3), new Float32Array(3)]];
+				result = instance.process([], outputs);
+				assertEquals(result, true);
+
+				assertExists(importWorkletUrl);
+			} finally {
+				// Cleanup
+				(globalThis as any).AudioWorkletProcessor =
+					originalAudioWorkletProcessor;
+				(globalThis as any).registerProcessor =
+					originalRegisterProcessor;
 			}
-
-			assertEquals(mockRegisterProcessor.calls.length, 1);
-			const [name, processorCtor] = mockRegisterProcessor.calls[0];
-			assertEquals(name, "audio-offloader");
-			assertEquals(typeof processorCtor, "function");
-
-			const ProcessorCtor = processorCtor as new (options: any) => any;
-			const instance = new ProcessorCtor({
-				channelCount: 2,
-				processorOptions: {
-					sampleRate: 48000,
-					latency: 50,
-				},
-			});
-
-			assert(instance instanceof processorCtor);
-			assertEquals(typeof instance.process, "function");
-			assertEquals(typeof instance.append, "function");
-			assertExists(instance.port);
-			assertEquals(typeof instance.port.onmessage, "function");
-
-			// Test append method
-			const channels = [new Float32Array([1, 2, 3]), new Float32Array([4, 5, 6])];
-			instance.append(channels);
-			// Since buffer is initialized, append should work without error
-
-			// Test process method with no outputs
-			let result = instance.process([], []);
-			assertEquals(result, true);
-
-			// Test process method with outputs
-			const outputs = [[new Float32Array(3), new Float32Array(3)]];
-			result = instance.process([], outputs);
-			assertEquals(result, true);
-
-			assertExists(importWorkletUrl);
-		} finally {
-			// Cleanup
-			(globalThis as any).AudioWorkletProcessor = originalAudioWorkletProcessor;
-			(globalThis as any).registerProcessor = originalRegisterProcessor;
-		}
-	});
+		},
+	);
 
 	await t.step(
 		"does not register the offload processor when AudioWorkletProcessor is not defined",
 		() => {
 			const mockRegisterProcessor = { calls: [] as any[] };
-			const originalRegisterProcessor = (globalThis as any).registerProcessor;
+			const originalRegisterProcessor =
+				(globalThis as any).registerProcessor;
 
-			(globalThis as any).registerProcessor = (name: string, processor: any) => {
+			(globalThis as any).registerProcessor = (
+				name: string,
+				processor: any,
+			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
 			};
 
@@ -240,7 +309,8 @@ Deno.test("audio_offload_worklet", async (t) => {
 				if (typeof AudioWorkletProcessor !== "undefined") {
 					(globalThis as any).registerProcessor(
 						"audio-offloader",
-						class AudioOffloadProcessor extends AudioWorkletProcessor {
+						class AudioOffloadProcessor
+							extends AudioWorkletProcessor {
 							constructor(_options: any) {
 								super();
 								this.port = { onmessage: undefined };
@@ -256,20 +326,25 @@ Deno.test("audio_offload_worklet", async (t) => {
 
 				assertEquals(mockRegisterProcessor.calls.length, 0);
 			} finally {
-				(globalThis as any).registerProcessor = originalRegisterProcessor;
+				(globalThis as any).registerProcessor =
+					originalRegisterProcessor;
 			}
 		},
 	);
 
 	await t.step("throws error in constructor for invalid options", () => {
 		const mockRegisterProcessor = { calls: [] as any[] };
-		const originalAudioWorkletProcessor = (globalThis as any).AudioWorkletProcessor;
+		const originalAudioWorkletProcessor =
+			(globalThis as any).AudioWorkletProcessor;
 		const originalRegisterProcessor = (globalThis as any).registerProcessor;
 
 		(globalThis as any).AudioWorkletProcessor = class {
 			port = { onmessage: undefined };
 		};
-		(globalThis as any).registerProcessor = (name: string, processor: any) => {
+		(globalThis as any).registerProcessor = (
+			name: string,
+			processor: any,
+		) => {
 			mockRegisterProcessor.calls.push([name, processor]);
 		};
 
@@ -291,7 +366,8 @@ Deno.test("audio_offload_worklet", async (t) => {
 								throw new Error("invalid channelCount");
 							}
 
-							const sampleRate = options.processorOptions.sampleRate;
+							const sampleRate =
+								options.processorOptions.sampleRate;
 							if (!sampleRate || sampleRate <= 0) {
 								throw new Error("invalid sampleRate");
 							}
@@ -301,14 +377,23 @@ Deno.test("audio_offload_worklet", async (t) => {
 								throw new Error("invalid latency");
 							}
 
-							const bufferingSamples = Math.ceil(sampleRate * latency / 1000);
+							const bufferingSamples = Math.ceil(
+								sampleRate * latency / 1000,
+							);
 
 							for (let i = 0; i < channelCount; i++) {
-								this.#channelsBuffer[i] = new Float32Array(bufferingSamples);
+								this.#channelsBuffer[i] = new Float32Array(
+									bufferingSamples,
+								);
 							}
 
 							this.port.onmessage = (
-								{ data }: { data: { channels: Float32Array[]; timestamp: number } },
+								{ data }: {
+									data: {
+										channels: Float32Array[];
+										timestamp: number;
+									};
+								},
 							) => {
 								this.append(data.channels);
 							};
@@ -318,34 +403,51 @@ Deno.test("audio_offload_worklet", async (t) => {
 							// Simplified for test
 						}
 
-						process(_inputs: Float32Array[][], _outputs: Float32Array[][]): boolean {
+						process(
+							_inputs: Float32Array[][],
+							_outputs: Float32Array[][],
+						): boolean {
 							return true;
 						}
 					},
 				);
 			}
 
-			const ProcessorCtor = mockRegisterProcessor.calls[0][1] as new (options: any) => any;
+			const ProcessorCtor = mockRegisterProcessor.calls[0][1] as new (
+				options: any,
+			) => any;
 
-			assertThrows(() => new ProcessorCtor({}), Error, "processorOptions is required");
+			assertThrows(
+				() => new ProcessorCtor({}),
+				Error,
+				"processorOptions is required",
+			);
 			assertThrows(
 				() => new ProcessorCtor({ processorOptions: {} }),
 				Error,
 				"invalid channelCount",
 			);
 			assertThrows(
-				() => new ProcessorCtor({ channelCount: 2, processorOptions: {} }),
+				() =>
+					new ProcessorCtor({
+						channelCount: 2,
+						processorOptions: {},
+					}),
 				Error,
 				"invalid sampleRate",
 			);
 			assertThrows(
 				() =>
-					new ProcessorCtor({ channelCount: 2, processorOptions: { sampleRate: 48000 } }),
+					new ProcessorCtor({
+						channelCount: 2,
+						processorOptions: { sampleRate: 48000 },
+					}),
 				Error,
 				"invalid latency",
 			);
 		} finally {
-			(globalThis as any).AudioWorkletProcessor = originalAudioWorkletProcessor;
+			(globalThis as any).AudioWorkletProcessor =
+				originalAudioWorkletProcessor;
 			(globalThis as any).registerProcessor = originalRegisterProcessor;
 		}
 	});
@@ -367,16 +469,22 @@ Deno.test("audio_offload_worklet", async (t) => {
 			};
 
 			// Mock AudioWorkletProcessor
-			const originalAudioWorkletProcessor = (globalThis as any).AudioWorkletProcessor;
-			const originalRegisterProcessor = (globalThis as any).registerProcessor;
+			const originalAudioWorkletProcessor =
+				(globalThis as any).AudioWorkletProcessor;
+			const originalRegisterProcessor =
+				(globalThis as any).registerProcessor;
 
-			(globalThis as any).AudioWorkletProcessor = class MockAudioWorkletProcessor {
-				port = mockPort;
-			};
+			(globalThis as any).AudioWorkletProcessor =
+				class MockAudioWorkletProcessor {
+					port = mockPort;
+				};
 
 			// Mock registerProcessor
 			const mockRegisterProcessor = { calls: [] as any[] };
-			(globalThis as any).registerProcessor = (name: string, processor: any) => {
+			(globalThis as any).registerProcessor = (
+				name: string,
+				processor: any,
+			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
 			};
 
@@ -399,7 +507,8 @@ Deno.test("audio_offload_worklet", async (t) => {
 								throw new Error("invalid channelCount");
 							}
 
-							const sampleRate = options.processorOptions.sampleRate;
+							const sampleRate =
+								options.processorOptions.sampleRate;
 							if (!sampleRate || sampleRate <= 0) {
 								throw new Error("invalid sampleRate");
 							}
@@ -409,21 +518,33 @@ Deno.test("audio_offload_worklet", async (t) => {
 								throw new Error("invalid latency");
 							}
 
-							const bufferingSamples = Math.ceil(sampleRate * latency / 1000);
+							const bufferingSamples = Math.ceil(
+								sampleRate * latency / 1000,
+							);
 
 							for (let i = 0; i < channelCount; i++) {
-								this.#channelsBuffer[i] = new Float32Array(bufferingSamples);
+								this.#channelsBuffer[i] = new Float32Array(
+									bufferingSamples,
+								);
 							}
 
 							this.port.onmessage = (
-								{ data }: { data: { channels: Float32Array[]; timestamp: number } },
+								{ data }: {
+									data: {
+										channels: Float32Array[];
+										timestamp: number;
+									};
+								},
 							) => {
 								this.append(data.channels);
 							};
 						}
 
 						append(channels: Float32Array[]): void {
-							if (!channels.length || !channels[0] || channels[0].length === 0) {
+							if (
+								!channels.length || !channels[0] ||
+								channels[0].length === 0
+							) {
 								return;
 							}
 
@@ -435,7 +556,8 @@ Deno.test("audio_offload_worklet", async (t) => {
 
 							const numberOfFrames = channels[0].length;
 
-							const discard = this.#writeIndex - this.#readIndex + numberOfFrames -
+							const discard = this.#writeIndex - this.#readIndex +
+								numberOfFrames -
 								this.#channelsBuffer[0].length;
 							if (discard >= 0) {
 								this.#readIndex += discard;
@@ -460,8 +582,14 @@ Deno.test("audio_offload_worklet", async (t) => {
 
 								let n: number;
 								while (numberOfFrames - offset > 0) {
-									n = Math.min(numberOfFrames - offset, dst.length - readPos);
-									dst.set(src.subarray(offset, offset + n), readPos);
+									n = Math.min(
+										numberOfFrames - offset,
+										dst.length - readPos,
+									);
+									dst.set(
+										src.subarray(offset, offset + n),
+										readPos,
+									);
 									readPos = (readPos + n) % dst.length;
 									offset += n;
 								}
@@ -470,7 +598,10 @@ Deno.test("audio_offload_worklet", async (t) => {
 							this.#writeIndex += numberOfFrames;
 						}
 
-						process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+						process(
+							_inputs: Float32Array[][],
+							outputs: Float32Array[][],
+						): boolean {
 							if (
 								outputs === undefined ||
 								outputs.length === 0 ||
@@ -483,8 +614,9 @@ Deno.test("audio_offload_worklet", async (t) => {
 								this.#channelsBuffer[0] === undefined
 							) return true;
 
-							const available = (this.#writeIndex - this.#readIndex +
-								this.#channelsBuffer[0].length) %
+							const available =
+								(this.#writeIndex - this.#readIndex +
+									this.#channelsBuffer[0].length) %
 								this.#channelsBuffer[0].length;
 							const numberOfFrames = (outputs[0][0] !== undefined)
 								? Math.min(available, outputs[0][0].length)
@@ -493,7 +625,11 @@ Deno.test("audio_offload_worklet", async (t) => {
 							if (numberOfFrames <= 0) return true;
 
 							for (const output of outputs) {
-								for (let channel = 0; channel < output.length; channel++) {
+								for (
+									let channel = 0;
+									channel < output.length;
+									channel++
+								) {
 									const src = this.#channelsBuffer[channel];
 									const dst = output[channel];
 									if (!dst) continue;
@@ -507,8 +643,14 @@ Deno.test("audio_offload_worklet", async (t) => {
 
 									let n: number;
 									while (numberOfFrames - offset > 0) {
-										n = Math.min(numberOfFrames - offset, src.length - readPos);
-										dst.set(src.subarray(readPos, readPos + n), offset);
+										n = Math.min(
+											numberOfFrames - offset,
+											src.length - readPos,
+										);
+										dst.set(
+											src.subarray(readPos, readPos + n),
+											offset,
+										);
 										readPos = (readPos + n) % src.length;
 										offset += n;
 									}
@@ -516,9 +658,14 @@ Deno.test("audio_offload_worklet", async (t) => {
 							}
 
 							this.#readIndex += numberOfFrames;
-							if (this.#readIndex >= this.#channelsBuffer[0].length) {
-								this.#readIndex -= this.#channelsBuffer[0].length;
-								this.#writeIndex -= this.#channelsBuffer[0].length;
+							if (
+								this.#readIndex >=
+									this.#channelsBuffer[0].length
+							) {
+								this.#readIndex -=
+									this.#channelsBuffer[0].length;
+								this.#writeIndex -=
+									this.#channelsBuffer[0].length;
 							}
 
 							return true;
@@ -526,7 +673,10 @@ Deno.test("audio_offload_worklet", async (t) => {
 					}
 
 					// Register the processor
-					(globalThis as any).registerProcessor("audio-offloader", AudioOffloadProcessor);
+					(globalThis as any).registerProcessor(
+						"audio-offloader",
+						AudioOffloadProcessor,
+					);
 				}
 
 				// Create processor instance
@@ -540,8 +690,10 @@ Deno.test("audio_offload_worklet", async (t) => {
 				});
 			} finally {
 				// Restore globals
-				(globalThis as any).AudioWorkletProcessor = originalAudioWorkletProcessor;
-				(globalThis as any).registerProcessor = originalRegisterProcessor;
+				(globalThis as any).AudioWorkletProcessor =
+					originalAudioWorkletProcessor;
+				(globalThis as any).registerProcessor =
+					originalRegisterProcessor;
 			}
 		});
 
@@ -551,7 +703,10 @@ Deno.test("audio_offload_worklet", async (t) => {
 		});
 
 		await t.step("appends data to buffer", () => {
-			const channels = [new Float32Array([1, 2, 3]), new Float32Array([4, 5, 6])];
+			const channels = [
+				new Float32Array([1, 2, 3]),
+				new Float32Array([4, 5, 6]),
+			];
 			processor.append(channels);
 
 			// Check that data was written (implementation detail, but we can verify by processing)
@@ -599,7 +754,10 @@ Deno.test("audio_offload_worklet", async (t) => {
 
 		await t.step("reads from circular buffer correctly", () => {
 			// Add some data
-			const channels1 = [new Float32Array([1, 2]), new Float32Array([3, 4])];
+			const channels1 = [
+				new Float32Array([1, 2]),
+				new Float32Array([3, 4]),
+			];
 			processor.append(channels1);
 
 			// Process some
@@ -612,7 +770,10 @@ Deno.test("audio_offload_worklet", async (t) => {
 			assertEquals(outputs1[0][1][0], 3);
 
 			// Add more data
-			const channels2 = [new Float32Array([5, 6]), new Float32Array([7, 8])];
+			const channels2 = [
+				new Float32Array([5, 6]),
+				new Float32Array([7, 8]),
+			];
 			processor.append(channels2);
 
 			// Process remaining
@@ -636,7 +797,10 @@ Deno.test("audio_offload_worklet", async (t) => {
 		});
 
 		await t.step("handles onmessage events", () => {
-			const channels = [new Float32Array([1, 2]), new Float32Array([3, 4])];
+			const channels = [
+				new Float32Array([1, 2]),
+				new Float32Array([3, 4]),
+			];
 			const message = { data: { channels, timestamp: 123 } };
 
 			// Call the onmessage handler directly

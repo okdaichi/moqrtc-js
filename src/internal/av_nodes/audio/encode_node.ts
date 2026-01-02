@@ -1,8 +1,6 @@
 // Audio node API: AudioEncodeNode
 // Extends GainNode to enable standard connect() pattern while adding encoding capabilities
-import {
-	createWorkletBlobUrl as createHijackWorkletBlobUrl,
-} from "./audio_hijack_worklet_inline.ts";
+import { createWorkletBlobUrl as createHijackWorkletBlobUrl } from "./audio_hijack_worklet_inline.ts";
 
 const hijackWorkletName = "audio-hijacker";
 
@@ -48,44 +46,53 @@ export class AudioEncodeNode extends GainNode {
 		});
 
 		// Initialize worklet and connect this GainNode to it
-		this.#workletReady = context.audioWorklet.addModule(createHijackWorkletBlobUrl()).then(() => {
-			const worklet = new AudioWorkletNode(
-				context,
-				hijackWorkletName,
-				{
-					numberOfInputs: 1,
-					numberOfOutputs: 1,
-					channelCount: context.destination.channelCount,
-					processorOptions: {
-						sampleRate: context.sampleRate,
-						targetChannels: context.destination.channelCount,
+		this.#workletReady = context.audioWorklet.addModule(
+			createHijackWorkletBlobUrl(),
+		).then(
+			() => {
+				const worklet = new AudioWorkletNode(
+					context,
+					hijackWorkletName,
+					{
+						numberOfInputs: 1,
+						numberOfOutputs: 1,
+						channelCount: context.destination.channelCount,
+						processorOptions: {
+							sampleRate: context.sampleRate,
+							targetChannels: context.destination.channelCount,
+						},
 					},
-				},
-			);
+				);
 
-			const readable = new ReadableStream<AudioData>({
-				start: (controller) => {
-					worklet.port.onmessage = ({ data }: { data: AudioDataInit }) => {
-						try {
-							const frame = new AudioData(data);
-							controller.enqueue(frame);
-						} catch (e) {
-							console.error("[AudioEncodeNode] Failed to create AudioData:", e);
-						}
-					};
-				},
-				cancel() {
-					// Clean up when stream is cancelled
-				},
-			});
+				const readable = new ReadableStream<AudioData>({
+					start: (controller) => {
+						worklet.port.onmessage = (
+							{ data }: { data: AudioDataInit },
+						) => {
+							try {
+								const frame = new AudioData(data);
+								controller.enqueue(frame);
+							} catch (e) {
+								console.error(
+									"[AudioEncodeNode] Failed to create AudioData:",
+									e,
+								);
+							}
+						};
+					},
+					cancel() {
+						// Clean up when stream is cancelled
+					},
+				});
 
-			// Connect this GainNode (super) to the worklet
-			// This captures all audio flowing into this node
-			super.connect(worklet);
+				// Connect this GainNode (super) to the worklet
+				// This captures all audio flowing into this node
+				super.connect(worklet);
 
-			this.#next(readable.getReader());
-			return worklet;
-		}).catch((e) => {
+				this.#next(readable.getReader());
+				return worklet;
+			},
+		).catch((e) => {
 			console.error("[AudioEncodeNode] Failed to initialize worklet:", e);
 			throw e;
 		});
@@ -117,7 +124,9 @@ export class AudioEncodeNode extends GainNode {
 
 		// Backpressure: Drop frame if queue is overloaded
 		if (this.encodeQueueSize > MAX_ENCODE_QUEUE_SIZE) {
-			console.warn(`[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`);
+			console.warn(
+				`[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`,
+			);
 			value.close();
 			queueMicrotask(() => this.#next(stream));
 			return;

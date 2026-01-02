@@ -9,112 +9,161 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		// assert(() => new URL(url));
 	});
 
-	await t.step("registers the hijack processor when AudioWorkletProcessor is available", () => {
-		// Setup mocks
-		const mockRegisterProcessor = { calls: [] as any[] };
-		const originalRegisterProcessor = (globalThis as any).registerProcessor;
-		const originalAudioWorkletProcessor = (globalThis as any).AudioWorkletProcessor;
+	await t.step(
+		"registers the hijack processor when AudioWorkletProcessor is available",
+		() => {
+			// Setup mocks
+			const mockRegisterProcessor = { calls: [] as any[] };
+			const originalRegisterProcessor =
+				(globalThis as any).registerProcessor;
+			const originalAudioWorkletProcessor =
+				(globalThis as any).AudioWorkletProcessor;
 
-		(globalThis as any).AudioWorkletProcessor = class {};
-		(globalThis as any).registerProcessor = (name: string, processor: any) => {
-			mockRegisterProcessor.calls.push([name, processor]);
-		};
+			(globalThis as any).AudioWorkletProcessor = class {};
+			(globalThis as any).registerProcessor = (
+				name: string,
+				processor: any,
+			) => {
+				mockRegisterProcessor.calls.push([name, processor]);
+			};
 
-		try {
-			// Execute the worklet code directly
-			if (typeof (globalThis as any).AudioWorkletProcessor !== "undefined") {
-				// Worklet code
-				class AudioHijackProcessor extends (globalThis as any).AudioWorkletProcessor {
-					#currentFrame: number = 0;
-					#sampleRate: number;
-					#targetChannels: number;
+			try {
+				// Execute the worklet code directly
+				if (
+					typeof (globalThis as any).AudioWorkletProcessor !==
+						"undefined"
+				) {
+					// Worklet code
+					class AudioHijackProcessor
+						extends (globalThis as any).AudioWorkletProcessor {
+						#currentFrame: number = 0;
+						#sampleRate: number;
+						#targetChannels: number;
 
-					constructor(options: AudioWorkletNodeOptions) {
-						super();
-						// Get sampleRate from processorOptions or fall back to global sampleRate
-						this.#sampleRate = options.processorOptions?.sampleRate ||
-							(globalThis as any).sampleRate;
-						// Get target number of channels from processorOptions
-						this.#targetChannels = options.processorOptions?.targetChannels || 1;
-					}
+						constructor(options: AudioWorkletNodeOptions) {
+							super();
+							// Get sampleRate from processorOptions or fall back to global sampleRate
+							this.#sampleRate =
+								options.processorOptions?.sampleRate ||
+								(globalThis as any).sampleRate;
+							// Get target number of channels from processorOptions
+							this.#targetChannels =
+								options.processorOptions?.targetChannels || 1;
+						}
 
-					process(inputs: Float32Array[][]) {
-						if (inputs.length > 1) throw new Error("only one input is supported.");
+						process(inputs: Float32Array[][]) {
+							if (inputs.length > 1) {
+								throw new Error("only one input is supported.");
+							}
 
-						// Just take one input channel, the first one.
-						// MOQ enables the delivery of audio inputs individually for each track.
-						// So do not mix audio from different tracks or different devices.
-						const channels = inputs[0];
+							// Just take one input channel, the first one.
+							// MOQ enables the delivery of audio inputs individually for each track.
+							// So do not mix audio from different tracks or different devices.
+							const channels = inputs[0];
 
-						if (!channels || channels.length === 0 || !channels[0]) {
+							if (
+								!channels || channels.length === 0 ||
+								!channels[0]
+							) {
+								return true;
+							}
+
+							const inputChannels = channels.length;
+							const numberOfFrames = channels[0].length;
+
+							// Use target channels from configuration, not input channels
+							const numberOfChannels = this.#targetChannels;
+							const data = new Float32Array(
+								numberOfChannels * numberOfFrames,
+							);
+
+							for (let i = 0; i < numberOfChannels; i++) {
+								if (i < inputChannels) {
+									const inputChannel = channels[i];
+									if (
+										inputChannel && inputChannel.length > 0
+									) {
+										// Use input channel data
+										data.set(
+											inputChannel,
+											i * numberOfFrames,
+										);
+									} else {
+										// Fill with silence if input channel is empty
+										data.fill(
+											0,
+											i * numberOfFrames,
+											(i + 1) * numberOfFrames,
+										);
+									}
+								} else if (inputChannels > 0) {
+									const firstChannel = channels[0];
+									if (
+										firstChannel && firstChannel.length > 0
+									) {
+										// If we need more channels than input provides, duplicate the first channel
+										data.set(
+											firstChannel,
+											i * numberOfFrames,
+										);
+									} else {
+										// Fill with silence if first channel is empty
+										data.fill(
+											0,
+											i * numberOfFrames,
+											(i + 1) * numberOfFrames,
+										);
+									}
+								} else {
+									// Fill with silence if no input data
+									data.fill(
+										0,
+										i * numberOfFrames,
+										(i + 1) * numberOfFrames,
+									);
+								}
+							}
+
+							const init: AudioDataInit = {
+								format: "f32-planar",
+								sampleRate: this.#sampleRate,
+								numberOfChannels: numberOfChannels,
+								numberOfFrames: numberOfFrames,
+								data: data,
+								timestamp: Math.round(
+									this.#currentFrame * 1_000_000 /
+										this.#sampleRate,
+								),
+								transfer: [data.buffer],
+							};
+
+							this.port.postMessage(init);
+
+							this.#currentFrame += numberOfFrames;
+
 							return true;
 						}
-
-						const inputChannels = channels.length;
-						const numberOfFrames = channels[0].length;
-
-						// Use target channels from configuration, not input channels
-						const numberOfChannels = this.#targetChannels;
-						const data = new Float32Array(numberOfChannels * numberOfFrames);
-
-						for (let i = 0; i < numberOfChannels; i++) {
-							if (i < inputChannels) {
-								const inputChannel = channels[i];
-								if (inputChannel && inputChannel.length > 0) {
-									// Use input channel data
-									data.set(inputChannel, i * numberOfFrames);
-								} else {
-									// Fill with silence if input channel is empty
-									data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
-								}
-							} else if (inputChannels > 0) {
-								const firstChannel = channels[0];
-								if (firstChannel && firstChannel.length > 0) {
-									// If we need more channels than input provides, duplicate the first channel
-									data.set(firstChannel, i * numberOfFrames);
-								} else {
-									// Fill with silence if first channel is empty
-									data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
-								}
-							} else {
-								// Fill with silence if no input data
-								data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
-							}
-						}
-
-						const init: AudioDataInit = {
-							format: "f32-planar",
-							sampleRate: this.#sampleRate,
-							numberOfChannels: numberOfChannels,
-							numberOfFrames: numberOfFrames,
-							data: data,
-							timestamp: Math.round(
-								this.#currentFrame * 1_000_000 / this.#sampleRate,
-							),
-							transfer: [data.buffer],
-						};
-
-						this.port.postMessage(init);
-
-						this.#currentFrame += numberOfFrames;
-
-						return true;
 					}
+
+					(globalThis as any).registerProcessor(
+						"AudioHijacker",
+						AudioHijackProcessor,
+					);
 				}
 
-				(globalThis as any).registerProcessor("AudioHijacker", AudioHijackProcessor);
+				assertEquals(mockRegisterProcessor.calls.length, 1);
+				const [name, processorCtor] = mockRegisterProcessor.calls[0];
+				assertEquals(name, "AudioHijacker");
+				assertEquals(typeof processorCtor, "function");
+			} finally {
+				// Cleanup
+				(globalThis as any).AudioWorkletProcessor =
+					originalAudioWorkletProcessor;
+				(globalThis as any).registerProcessor =
+					originalRegisterProcessor;
 			}
-
-			assertEquals(mockRegisterProcessor.calls.length, 1);
-			const [name, processorCtor] = mockRegisterProcessor.calls[0];
-			assertEquals(name, "AudioHijacker");
-			assertEquals(typeof processorCtor, "function");
-		} finally {
-			// Cleanup
-			(globalThis as any).AudioWorkletProcessor = originalAudioWorkletProcessor;
-			(globalThis as any).registerProcessor = originalRegisterProcessor;
-		}
-	});
+		},
+	);
 
 	await t.step("AudioHijackProcessor", async (t) => {
 		let processor: any;
@@ -129,22 +178,31 @@ Deno.test("audio_hijack_worklet", async (t) => {
 			};
 
 			// Mock AudioWorkletProcessor
-			const originalAudioWorkletProcessor = (globalThis as any).AudioWorkletProcessor;
-			const originalRegisterProcessor = (globalThis as any).registerProcessor;
+			const originalAudioWorkletProcessor =
+				(globalThis as any).AudioWorkletProcessor;
+			const originalRegisterProcessor =
+				(globalThis as any).registerProcessor;
 
-			(globalThis as any).AudioWorkletProcessor = class MockAudioWorkletProcessor {
-				port = mockPort;
-			};
+			(globalThis as any).AudioWorkletProcessor =
+				class MockAudioWorkletProcessor {
+					port = mockPort;
+				};
 
 			// Mock registerProcessor
 			const mockRegisterProcessor = { calls: [] as any[] };
-			(globalThis as any).registerProcessor = (name: string, processor: any) => {
+			(globalThis as any).registerProcessor = (
+				name: string,
+				processor: any,
+			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
 			};
 
 			try {
 				// Import the worklet code by simulating the worklet context
-				if (typeof (globalThis as any).AudioWorkletProcessor !== "undefined") {
+				if (
+					typeof (globalThis as any).AudioWorkletProcessor !==
+						"undefined"
+				) {
 					// Simulate the worklet code execution
 					class TestAudioHijackProcessor
 						extends (globalThis as any).AudioWorkletProcessor {
@@ -155,21 +213,28 @@ Deno.test("audio_hijack_worklet", async (t) => {
 						constructor(options: AudioWorkletNodeOptions) {
 							super();
 							// Get sampleRate from processorOptions or fall back to global sampleRate
-							this.#sampleRate = options.processorOptions?.sampleRate ||
+							this.#sampleRate =
+								options.processorOptions?.sampleRate ||
 								(globalThis as any).sampleRate;
 							// Get target number of channels from processorOptions
-							this.#targetChannels = options.processorOptions?.targetChannels || 1;
+							this.#targetChannels =
+								options.processorOptions?.targetChannels || 1;
 						}
 
 						process(inputs: Float32Array[][]) {
-							if (inputs.length > 1) throw new Error("only one input is supported.");
+							if (inputs.length > 1) {
+								throw new Error("only one input is supported.");
+							}
 
 							// Just take one input channel, the first one.
 							// MOQ enables the delivery of audio inputs individually for each track.
 							// So do not mix audio from different tracks or different devices.
 							const channels = inputs[0];
 
-							if (!channels || channels.length === 0 || !channels[0]) {
+							if (
+								!channels || channels.length === 0 ||
+								!channels[0]
+							) {
 								return true;
 							}
 
@@ -178,30 +243,54 @@ Deno.test("audio_hijack_worklet", async (t) => {
 
 							// Use target channels from configuration, not input channels
 							const numberOfChannels = this.#targetChannels;
-							const data = new Float32Array(numberOfChannels * numberOfFrames);
+							const data = new Float32Array(
+								numberOfChannels * numberOfFrames,
+							);
 
 							for (let i = 0; i < numberOfChannels; i++) {
 								if (i < inputChannels) {
 									const inputChannel = channels[i];
-									if (inputChannel && inputChannel.length > 0) {
+									if (
+										inputChannel && inputChannel.length > 0
+									) {
 										// Use input channel data
-										data.set(inputChannel, i * numberOfFrames);
+										data.set(
+											inputChannel,
+											i * numberOfFrames,
+										);
 									} else {
 										// Fill with silence if input channel is empty
-										data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
+										data.fill(
+											0,
+											i * numberOfFrames,
+											(i + 1) * numberOfFrames,
+										);
 									}
 								} else if (inputChannels > 0) {
 									const firstChannel = channels[0];
-									if (firstChannel && firstChannel.length > 0) {
+									if (
+										firstChannel && firstChannel.length > 0
+									) {
 										// If we need more channels than input provides, duplicate the first channel
-										data.set(firstChannel, i * numberOfFrames);
+										data.set(
+											firstChannel,
+											i * numberOfFrames,
+										);
 									} else {
 										// Fill with silence if first channel is empty
-										data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
+										data.fill(
+											0,
+											i * numberOfFrames,
+											(i + 1) * numberOfFrames,
+										);
 									}
 								} else {
 									// Fill with silence if no input data
-									data.fill(0, i * numberOfFrames, (i + 1) * numberOfFrames);
+									data.fill(
+										0,
+										i * numberOfFrames,
+										(i + 1) * numberOfFrames,
+									);
 								}
 							}
 
@@ -212,7 +301,8 @@ Deno.test("audio_hijack_worklet", async (t) => {
 								numberOfFrames: numberOfFrames,
 								data: data,
 								timestamp: Math.round(
-									this.#currentFrame * 1_000_000 / this.#sampleRate,
+									this.#currentFrame * 1_000_000 /
+										this.#sampleRate,
 								),
 								transfer: [data.buffer],
 							};
@@ -233,7 +323,8 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				}
 
 				// Create processor instance
-				const TestAudioHijackProcessor = mockRegisterProcessor.calls[0][1];
+				const TestAudioHijackProcessor =
+					mockRegisterProcessor.calls[0][1];
 				processor = new TestAudioHijackProcessor({
 					processorOptions: {
 						sampleRate: 44100,
@@ -242,18 +333,25 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				});
 			} finally {
 				// Restore globals
-				(globalThis as any).AudioWorkletProcessor = originalAudioWorkletProcessor;
-				(globalThis as any).registerProcessor = originalRegisterProcessor;
+				(globalThis as any).AudioWorkletProcessor =
+					originalAudioWorkletProcessor;
+				(globalThis as any).registerProcessor =
+					originalRegisterProcessor;
 			}
 		});
 
 		await t.step("initializes with default values", () => {
-			const originalAudioWorkletProcessor = (globalThis as any).AudioWorkletProcessor;
-			const originalRegisterProcessor = (globalThis as any).registerProcessor;
+			const originalAudioWorkletProcessor =
+				(globalThis as any).AudioWorkletProcessor;
+			const originalRegisterProcessor =
+				(globalThis as any).registerProcessor;
 
 			const mockRegisterProcessor = { calls: [] as any[] };
 			(globalThis as any).AudioWorkletProcessor = class {};
-			(globalThis as any).registerProcessor = (name: string, processor: any) => {
+			(globalThis as any).registerProcessor = (
+				name: string,
+				processor: any,
+			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
 			};
 
@@ -275,8 +373,10 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				});
 				assertExists(proc);
 			} finally {
-				(globalThis as any).AudioWorkletProcessor = originalAudioWorkletProcessor;
-				(globalThis as any).registerProcessor = originalRegisterProcessor;
+				(globalThis as any).AudioWorkletProcessor =
+					originalAudioWorkletProcessor;
+				(globalThis as any).registerProcessor =
+					originalRegisterProcessor;
 			}
 		});
 
@@ -348,16 +448,22 @@ Deno.test("audio_hijack_worklet", async (t) => {
 			assertEquals(message.numberOfFrames, 0);
 		});
 
-		await t.step("duplicates first channel when target channels exceed input", () => {
-			const inputData = new Float32Array([0.1, 0.2]);
-			const inputs = [[inputData]];
+		await t.step(
+			"duplicates first channel when target channels exceed input",
+			() => {
+				const inputData = new Float32Array([0.1, 0.2]);
+				const inputs = [[inputData]];
 
-			const result = processor.process(inputs);
+				const result = processor.process(inputs);
 
-			assertEquals(result, true);
-			const message = mockPort.messages[0];
-			assertEquals(message.data, new Float32Array([0.1, 0.2, 0.1, 0.2])); // duplicated
-		});
+				assertEquals(result, true);
+				const message = mockPort.messages[0];
+				assertEquals(
+					message.data,
+					new Float32Array([0.1, 0.2, 0.1, 0.2]),
+				); // duplicated
+			},
+		);
 
 		await t.step("fills with silence for missing channels", () => {
 			const inputData = new Float32Array([0.1]);
@@ -373,7 +479,11 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		await t.step("throws error for multiple inputs", () => {
 			const inputs = [[], []];
 
-			assertThrows(() => processor.process(inputs), Error, "only one input is supported.");
+			assertThrows(
+				() => processor.process(inputs),
+				Error,
+				"only one input is supported.",
+			);
 		});
 
 		await t.step("updates frame counter", () => {

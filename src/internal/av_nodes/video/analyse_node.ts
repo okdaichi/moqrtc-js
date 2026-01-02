@@ -116,7 +116,8 @@ export class VideoAnalyserNode extends VideoNode {
 		this.context = context;
 		this.context._register(this);
 
-		this.#analysisSize = options?.analysisSize ?? { width: 160, height: 120 };
+		this.#analysisSize = options?.analysisSize ??
+			{ width: 160, height: 120 };
 		this.#smoothingTimeConstant = options?.smoothingTimeConstant ?? 0.8;
 		this.#historySize = options?.historySize ?? 256;
 		this.#analysisInterval = options?.analysisInterval ?? 1;
@@ -157,7 +158,10 @@ export class VideoAnalyserNode extends VideoNode {
 		return this.#currentAnalysis;
 	}
 
-	getAnalysisData(array: Float32Array, metric: keyof VideoFrameAnalysis): void {
+	getAnalysisData(
+		array: Float32Array,
+		metric: keyof VideoFrameAnalysis,
+	): void {
 		if (!this.#currentAnalysis) return;
 		const value = this.#currentAnalysis[metric];
 		if (typeof value === "number" && array.length > 0) {
@@ -166,10 +170,14 @@ export class VideoAnalyserNode extends VideoNode {
 	}
 
 	// History retrieval (AudioAnalyserNode.getFloatFrequencyData equivalent)
-	getAnalysisHistory(array: Float32Array, metric: keyof VideoFrameAnalysis): void {
+	getAnalysisHistory(
+		array: Float32Array,
+		metric: keyof VideoFrameAnalysis,
+	): void {
 		const length = Math.min(array.length, this.#historyBuffer.length);
 		for (let i = 0; i < length; i++) {
-			const idx = (this.#historyWriteIndex - length + i + this.#historySize) %
+			const idx =
+				(this.#historyWriteIndex - length + i + this.#historySize) %
 				this.#historySize;
 			const analysis = this.#historyBuffer[idx];
 			if (analysis) {
@@ -183,7 +191,8 @@ export class VideoAnalyserNode extends VideoNode {
 		const result: VideoFrameAnalysis[] = [];
 		const length = Math.min(count, this.#historyBuffer.length);
 		for (let i = 0; i < length; i++) {
-			const idx = (this.#historyWriteIndex - length + i + this.#historySize) %
+			const idx =
+				(this.#historyWriteIndex - length + i + this.#historySize) %
 				this.#historySize;
 			const analysis = this.#historyBuffer[idx];
 			if (analysis) {
@@ -262,7 +271,9 @@ export class VideoAnalyserNode extends VideoNode {
 				this.#canvas.height !== sampleHeight
 			) {
 				this.#canvas = new OffscreenCanvas(sampleWidth, sampleHeight);
-				this.#ctx = this.#canvas.getContext("2d", { willReadFrequently: true });
+				this.#ctx = this.#canvas.getContext("2d", {
+					willReadFrequently: true,
+				});
 			}
 			if (!this.#ctx) return;
 
@@ -270,7 +281,12 @@ export class VideoAnalyserNode extends VideoNode {
 			this.#ctx.drawImage(frame, 0, 0, sampleWidth, sampleHeight);
 
 			// Get image data (this is the main sync cost, but unavoidable)
-			const imageData = this.#ctx.getImageData(0, 0, sampleWidth, sampleHeight);
+			const imageData = this.#ctx.getImageData(
+				0,
+				0,
+				sampleWidth,
+				sampleHeight,
+			);
 			this.#pixelBuffer.set(imageData.data);
 		} catch (_e) {
 			return; // Skip analysis on error
@@ -307,12 +323,27 @@ export class VideoAnalyserNode extends VideoNode {
 		this.#pendingPixelData = null;
 
 		// Convert to grayscale once (reuse for multiple calculations)
-		this.#convertToGrayscale(pixelData, this.#grayscaleBuffer, width, height);
+		this.#convertToGrayscale(
+			pixelData,
+			this.#grayscaleBuffer,
+			width,
+			height,
+		);
 
 		// Calculate all metrics
 		const intraFrame = this.#enabledFeatures.intraFrame
-			? this.#calculateIntraFrame(pixelData, this.#grayscaleBuffer, width, height)
-			: { lumaAverage: 0, lumaVariance: 0, chromaVariance: 0, frameEnergy: 0 };
+			? this.#calculateIntraFrame(
+				pixelData,
+				this.#grayscaleBuffer,
+				width,
+				height,
+			)
+			: {
+				lumaAverage: 0,
+				lumaVariance: 0,
+				chromaVariance: 0,
+				frameEnergy: 0,
+			};
 
 		const interFrame = this.#enabledFeatures.interFrame
 			? this.#calculateInterFrame(
@@ -349,14 +380,18 @@ export class VideoAnalyserNode extends VideoNode {
 
 		// Add to history buffer (ring buffer)
 		this.#historyBuffer[this.#historyWriteIndex] = analysis;
-		this.#historyWriteIndex = (this.#historyWriteIndex + 1) % this.#historySize;
+		this.#historyWriteIndex = (this.#historyWriteIndex + 1) %
+			this.#historySize;
 
 		// Trigger callback
 		if (this.onanalysis) {
 			try {
 				this.onanalysis(analysis);
 			} catch (e) {
-				console.error("[VideoAnalyserNode] onanalysis callback error:", e);
+				console.error(
+					"[VideoAnalyserNode] onanalysis callback error:",
+					e,
+				);
 			}
 		}
 
@@ -470,7 +505,8 @@ export class VideoAnalyserNode extends VideoNode {
 			const diffG = currentPixels[i + 1]! - previousPixels[i + 1]!;
 			const diffB = currentPixels[i + 2]! - previousPixels[i + 2]!;
 
-			sumAbsoluteDiff += Math.abs(diffR) + Math.abs(diffG) + Math.abs(diffB);
+			sumAbsoluteDiff += Math.abs(diffR) + Math.abs(diffG) +
+				Math.abs(diffB);
 			sumSquaredDiff += diffR * diffR + diffG * diffG + diffB * diffB;
 		}
 
@@ -480,7 +516,8 @@ export class VideoAnalyserNode extends VideoNode {
 
 		// Activity level (smoothed motion energy with emphasis on changes)
 		const alpha = 0.3; // Smoothing factor
-		const activityLevel = alpha * motionEnergy + (1 - alpha) * this.#previousMotionEnergy;
+		const activityLevel = alpha * motionEnergy +
+			(1 - alpha) * this.#previousMotionEnergy;
 		this.#previousMotionEnergy = activityLevel;
 
 		return {

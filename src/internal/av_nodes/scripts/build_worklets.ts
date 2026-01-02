@@ -2,14 +2,19 @@
 /// <reference lib="deno.ns" />
 /**
  * Build script for AudioWorklet processors
- * 
+ *
  * This script:
  * 1. Bundles worklet TypeScript files to JavaScript
  * 2. Generates TypeScript files that export the worklet code as strings
  * 3. Allows importing worklets as inline code instead of external files
  */
 
-import { basename, dirname, fromFileUrl, join } from "https://deno.land/std@0.208.0/path/mod.ts";
+import {
+	basename,
+	dirname,
+	fromFileUrl,
+	join,
+} from "https://deno.land/std@0.208.0/path/mod.ts";
 import * as esbuild from "https://deno.land/x/esbuild@v0.20.1/mod.js";
 
 // Get the directory where this script is located
@@ -42,10 +47,12 @@ function getWorkletInfo(sourceFile: string): WorkletInfo {
 		// Fallback: convert audio_hijack_worklet -> audioHijackWorkletCode
 		exportName = baseName
 			.split("_")
-			.map((part, i) => i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1))
+			.map((part, i) =>
+				i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)
+			)
 			.join("") + "Code";
 	}
-	
+
 	return { sourceFile, outputFile, exportName };
 }
 
@@ -74,25 +81,33 @@ async function buildWorklet(info: WorkletInfo): Promise<void> {
 	}
 
 	let code = new TextDecoder().decode(outputFile.contents);
-	
+
 	// Extract worklet name before modifications
 	const workletNameMatch = code.match(/var\s+(\w+)="([\w-]+)"/);
-	const workletName = workletNameMatch ? workletNameMatch[2] : "audio-worklet";
-	
+	const workletName = workletNameMatch
+		? workletNameMatch[2]
+		: "audio-worklet";
+
 	// Remove export statements - worklet doesn't need them
 	code = code.replace(/export\s*\{[^}]*\}\s*;?\s*$/gm, "");
 	code = code.replace(/export\s+(const|function|class)\s+/g, "$1 ");
-	
+
 	// Remove importWorkletUrl function (not needed in inline version)
-	code = code.replace(/function\s+\w+\(\)\{return new URL\([^)]+\)\.href\}/g, "");
-	
+	code = code.replace(
+		/function\s+\w+\(\)\{return new URL\([^)]+\)\.href\}/g,
+		"",
+	);
+
 	// Replace workletName variable with string literal in registerProcessor
 	// Before: var h="audio-hijacker";...registerProcessor(h,l)
 	// After: registerProcessor("audio-hijacker",l)
 	if (workletNameMatch) {
 		const varName = workletNameMatch[1];
 		code = code.replace(new RegExp(`var\\s+${varName}="[^"]+";`, "g"), "");
-		code = code.replace(new RegExp(`registerProcessor\\(${varName},`, "g"), `registerProcessor("${workletName}",`);
+		code = code.replace(
+			new RegExp(`registerProcessor\\(${varName},`, "g"),
+			`registerProcessor("${workletName}",`,
+		);
 	}
 
 	// Generate TypeScript file with inline code
@@ -130,7 +145,9 @@ async function main() {
 
 	console.log("\n✨ All worklets built successfully!");
 	console.log("\nNext steps:");
-	console.log("1. Update encode_node.ts and decode_node.ts to import from *_inline.ts files");
+	console.log(
+		"1. Update encode_node.ts and decode_node.ts to import from *_inline.ts files",
+	);
 	console.log("2. Use createWorkletBlobUrl() instead of importWorkletUrl()");
 }
 

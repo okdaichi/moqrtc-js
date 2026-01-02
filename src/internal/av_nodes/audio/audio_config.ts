@@ -1,7 +1,13 @@
 import { isChrome, isFirefox } from "../support.ts";
 
 // Exported defaults so callers can reuse instead of recreating per-call.
-export const DEFAULT_AUDIO_CODECS = ["opus", "isac", "g722", "pcmu", "pcma"] as const;
+export const DEFAULT_AUDIO_CODECS = [
+	"opus",
+	"isac",
+	"g722",
+	"pcmu",
+	"pcma",
+] as const;
 
 export const DEFAULT_AUDIO_CONFIG = {
 	sampleRate: 48000,
@@ -79,12 +85,16 @@ export function upgradeAudioEncoderConfig(
 
 		// Default parameters object used by some UAs (Chrome, Edge, etc.). Use safe assignments.
 		anyCfg.opus = anyCfg.opus ?? {};
-		anyCfg.opus.application = anyCfg.opus.application ?? (isVoice ? "voip" : "audio");
+		anyCfg.opus.application = anyCfg.opus.application ??
+			(isVoice ? "voip" : "audio");
 		// 'signal' is an optional hint (e.g., 'voice' | 'music'), some browsers support it.
-		anyCfg.opus.signal = anyCfg.opus.signal ?? (isVoice ? "voice" : "music");
+		anyCfg.opus.signal = anyCfg.opus.signal ??
+			(isVoice ? "voice" : "music");
 		// Include some robustness and stereo hints where supported.
 		anyCfg.parameters = anyCfg.parameters ?? {};
-		if (anyCfg.parameters.useinbandfec === undefined) anyCfg.parameters.useinbandfec = 1;
+		if (anyCfg.parameters.useinbandfec === undefined) {
+			anyCfg.parameters.useinbandfec = 1;
+		}
 		if (anyCfg.parameters.stereo === undefined) {
 			anyCfg.parameters.stereo = cfg.numberOfChannels === 2 ? 1 : 0;
 		}

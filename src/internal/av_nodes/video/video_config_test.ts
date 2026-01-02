@@ -48,22 +48,25 @@ Deno.test("VideoConfig", async (t) => {
 	});
 
 	await t.step("videoEncoderConfig", async (t2) => {
-		await t2.step("calculates bitrate correctly for standard resolution", async () => {
-			const options: VideoEncoderOptions = {
-				width: 1920,
-				height: 1080,
-				frameRate: 30,
-			};
+		await t2.step(
+			"calculates bitrate correctly for standard resolution",
+			async () => {
+				const options: VideoEncoderOptions = {
+					width: 1920,
+					height: 1080,
+					frameRate: 30,
+				};
 
-			const config = await videoEncoderConfig(options);
+				const config = await videoEncoderConfig(options);
 
-			assertEquals(config.width, 1920);
-			assertEquals(config.height, 1080);
-			assertEquals(config.framerate, 30);
-			// Bitrate may be adjusted by codec-specific settings
-			assert(config.bitrate! > 0);
-			assertEquals(typeof config.bitrate, "number");
-		});
+				assertEquals(config.width, 1920);
+				assertEquals(config.height, 1080);
+				assertEquals(config.framerate, 30);
+				// Bitrate may be adjusted by codec-specific settings
+				assert(config.bitrate! > 0);
+				assertEquals(typeof config.bitrate, "number");
+			},
+		);
 
 		await t2.step("uses provided bitrate when specified", async () => {
 			const options: VideoEncoderOptions = {
@@ -80,73 +83,86 @@ Deno.test("VideoConfig", async (t) => {
 			assert(config.bitrate! > 0);
 		});
 
-		await t2.step("adjusts frameRate factor for different frame rates", async () => {
-			const baseOptions: VideoEncoderOptions = {
-				width: 640,
-				height: 480,
-				frameRate: 60,
-			};
+		await t2.step(
+			"adjusts frameRate factor for different frame rates",
+			async () => {
+				const baseOptions: VideoEncoderOptions = {
+					width: 640,
+					height: 480,
+					frameRate: 60,
+				};
 
-			const config = await videoEncoderConfig(baseOptions);
+				const config = await videoEncoderConfig(baseOptions);
 
-			assertEquals(config.framerate, 60);
-			// Bitrate calculation includes frame rate factor and codec adjustments
-			assert(config.bitrate! > 500000); // Reasonable lower bound
-		});
+				assertEquals(config.framerate, 60);
+				// Bitrate calculation includes frame rate factor and codec adjustments
+				assert(config.bitrate! > 500000); // Reasonable lower bound
+			},
+		);
 
-		await t2.step("uses hardware encoding when available and not Firefox", async () => {
-			const options: VideoEncoderOptions = {
-				width: 1280,
-				height: 720,
-				frameRate: 30,
-				tryHardware: true,
-			};
+		await t2.step(
+			"uses hardware encoding when available and not Firefox",
+			async () => {
+				const options: VideoEncoderOptions = {
+					width: 1280,
+					height: 720,
+					frameRate: 30,
+					tryHardware: true,
+				};
 
-			const config = await videoEncoderConfig(options);
+				const config = await videoEncoderConfig(options);
 
-			// Should find a supported codec with hardware acceleration
-			assertExists(config.codec);
-			assert(config.codec !== "none");
-			assertEquals(config.hardwareAcceleration, "prefer-hardware");
-			// Note: console spy assertions would need proper mock setup
-		});
+				// Should find a supported codec with hardware acceleration
+				assertExists(config.codec);
+				assert(config.codec !== "none");
+				assertEquals(config.hardwareAcceleration, "prefer-hardware");
+				// Note: console spy assertions would need proper mock setup
+			},
+		);
 
-		await t2.step("falls back to software encoding when hardware is disabled", async () => {
-			const options: VideoEncoderOptions = {
-				width: 1280,
-				height: 720,
-				frameRate: 30,
-				tryHardware: false,
-			};
+		await t2.step(
+			"falls back to software encoding when hardware is disabled",
+			async () => {
+				const options: VideoEncoderOptions = {
+					width: 1280,
+					height: 720,
+					frameRate: 30,
+					tryHardware: false,
+				};
 
-			const config = await videoEncoderConfig(options);
+				const config = await videoEncoderConfig(options);
 
-			// Should use software codec
-			assert(config.codec!.startsWith("avc1"));
-			assertEquals(config.hardwareAcceleration, undefined);
-			// Note: console spy assertions would need proper mock setup
-		});
+				// Should use software codec
+				assert(config.codec!.startsWith("avc1"));
+				assertEquals(config.hardwareAcceleration, undefined);
+				// Note: console spy assertions would need proper mock setup
+			},
+		);
 
-		await t2.step("skips Firefox warning test due to mocking complexity", async () => {
-			// Note: Firefox warning test skipped due to ES module mocking limitations
-			// The warning is tested in integration tests where browser detection works
-			const options: VideoEncoderOptions = {
-				width: 1280,
-				height: 720,
-				frameRate: 30,
-				tryHardware: true,
-			};
+		await t2.step(
+			"skips Firefox warning test due to mocking complexity",
+			async () => {
+				// Note: Firefox warning test skipped due to ES module mocking limitations
+				// The warning is tested in integration tests where browser detection works
+				const options: VideoEncoderOptions = {
+					width: 1280,
+					height: 720,
+					frameRate: 30,
+					tryHardware: true,
+				};
 
-			const config = await videoEncoderConfig(options);
+				const config = await videoEncoderConfig(options);
 
-			assertExists(config.codec);
-			assertEquals(config.width, 1280);
-			assertEquals(config.height, 720);
-		});
+				assertExists(config.codec);
+				assertEquals(config.width, 1280);
+				assertEquals(config.height, 720);
+			},
+		);
 
 		await t2.step("throws error when no codec is supported", async () => {
 			// Mock VideoEncoder to return no supported codecs
-			const originalIsConfigSupported = MockVideoEncoder.isConfigSupported;
+			const originalIsConfigSupported =
+				MockVideoEncoder.isConfigSupported;
 			MockVideoEncoder.isConfigSupported = async () => ({
 				supported: false,
 				config: null,
@@ -168,21 +184,24 @@ Deno.test("VideoConfig", async (t) => {
 			MockVideoEncoder.isConfigSupported = originalIsConfigSupported;
 		});
 
-		await t2.step("sets correct base configuration properties", async () => {
-			const options: VideoEncoderOptions = {
-				width: 800,
-				height: 600,
-				frameRate: 25,
-			};
+		await t2.step(
+			"sets correct base configuration properties",
+			async () => {
+				const options: VideoEncoderOptions = {
+					width: 800,
+					height: 600,
+					frameRate: 25,
+				};
 
-			const config = await videoEncoderConfig(options);
+				const config = await videoEncoderConfig(options);
 
-			assertEquals(config.width, 800);
-			assertEquals(config.height, 600);
-			assertEquals(config.framerate, 25);
-			assertEquals(config.latencyMode, "realtime");
-			assert(config.codec !== "none");
-		});
+				assertEquals(config.width, 800);
+				assertEquals(config.height, 600);
+				assertEquals(config.framerate, 25);
+				assertEquals(config.latencyMode, "realtime");
+				assert(config.codec !== "none");
+			},
+		);
 
 		await t2.step("handles edge case dimensions", async () => {
 			const options: VideoEncoderOptions = {
@@ -211,10 +230,18 @@ Deno.test("VideoConfig", async (t) => {
 		};
 
 		await t2.step("configures AVC1 codec correctly", () => {
-			const upgradedConfig = upgradeEncoderConfig(baseConfig, "avc1.640028", 2000000, true);
+			const upgradedConfig = upgradeEncoderConfig(
+				baseConfig,
+				"avc1.640028",
+				2000000,
+				true,
+			);
 
 			assertEquals(upgradedConfig.codec, "avc1.640028");
-			assertEquals(upgradedConfig.hardwareAcceleration, "prefer-hardware");
+			assertEquals(
+				upgradedConfig.hardwareAcceleration,
+				"prefer-hardware",
+			);
 			assertEquals(upgradedConfig.avc, { format: "annexb" });
 			assertEquals(upgradedConfig.bitrate, 2000000);
 		});
@@ -228,7 +255,10 @@ Deno.test("VideoConfig", async (t) => {
 			);
 
 			assertEquals(upgradedConfig.codec, "hev1.1.6.L93.B0");
-			assertEquals(upgradedConfig.hardwareAcceleration, "prefer-hardware");
+			assertEquals(
+				upgradedConfig.hardwareAcceleration,
+				"prefer-hardware",
+			);
 			// @ts-expect-error Testing HEVC config
 			assertEquals(upgradedConfig.hevc, { format: "annexb" });
 			assertEquals(upgradedConfig.bitrate, 2000000);
@@ -248,15 +278,28 @@ Deno.test("VideoConfig", async (t) => {
 		});
 
 		await t2.step("configures AV01 codec with bitrate adjustment", () => {
-			const upgradedConfig = upgradeEncoderConfig(baseConfig, "av01.0.08M.08", 2000000, true);
+			const upgradedConfig = upgradeEncoderConfig(
+				baseConfig,
+				"av01.0.08M.08",
+				2000000,
+				true,
+			);
 
 			assertEquals(upgradedConfig.codec, "av01.0.08M.08");
-			assertEquals(upgradedConfig.hardwareAcceleration, "prefer-hardware");
+			assertEquals(
+				upgradedConfig.hardwareAcceleration,
+				"prefer-hardware",
+			);
 			assertEquals(upgradedConfig.bitrate, 2000000 * 0.6); // 1,200,000
 		});
 
 		await t2.step("configures VP8 codec with bitrate adjustment", () => {
-			const upgradedConfig = upgradeEncoderConfig(baseConfig, "vp8", 2000000, false);
+			const upgradedConfig = upgradeEncoderConfig(
+				baseConfig,
+				"vp8",
+				2000000,
+				false,
+			);
 
 			assertEquals(upgradedConfig.codec, "vp8");
 			assertEquals(upgradedConfig.hardwareAcceleration, undefined);
@@ -264,13 +307,23 @@ Deno.test("VideoConfig", async (t) => {
 		});
 
 		await t2.step("handles software encoding configuration", () => {
-			const upgradedConfig = upgradeEncoderConfig(baseConfig, "avc1.640028", 2000000, false);
+			const upgradedConfig = upgradeEncoderConfig(
+				baseConfig,
+				"avc1.640028",
+				2000000,
+				false,
+			);
 
 			assertEquals(upgradedConfig.hardwareAcceleration, undefined);
 		});
 
 		await t2.step("preserves base configuration properties", () => {
-			const upgradedConfig = upgradeEncoderConfig(baseConfig, "vp8", 2000000, true);
+			const upgradedConfig = upgradeEncoderConfig(
+				baseConfig,
+				"vp8",
+				2000000,
+				true,
+			);
 
 			assertEquals(upgradedConfig.width, baseConfig.width);
 			assertEquals(upgradedConfig.height, baseConfig.height);
@@ -278,28 +331,57 @@ Deno.test("VideoConfig", async (t) => {
 			assertEquals(upgradedConfig.framerate, baseConfig.framerate);
 		});
 
-		await t2.step("handles unknown codec without specific configuration", () => {
-			const unknownCodec = "unknown-codec";
-			const upgradedConfig = upgradeEncoderConfig(baseConfig, unknownCodec, 2000000, true);
+		await t2.step(
+			"handles unknown codec without specific configuration",
+			() => {
+				const unknownCodec = "unknown-codec";
+				const upgradedConfig = upgradeEncoderConfig(
+					baseConfig,
+					unknownCodec,
+					2000000,
+					true,
+				);
 
-			assertEquals(upgradedConfig.codec, unknownCodec);
-			assertEquals(upgradedConfig.bitrate, 2000000); // No adjustment
-			assertEquals(upgradedConfig.hardwareAcceleration, "prefer-hardware");
-			assertEquals(upgradedConfig.avc, undefined);
-		});
+				assertEquals(upgradedConfig.codec, unknownCodec);
+				assertEquals(upgradedConfig.bitrate, 2000000); // No adjustment
+				assertEquals(
+					upgradedConfig.hardwareAcceleration,
+					"prefer-hardware",
+				);
+				assertEquals(upgradedConfig.avc, undefined);
+			},
+		);
 
-		await t2.step("handles bitrate adjustments correctly for edge values", () => {
-			const lowBitrate = 100;
+		await t2.step(
+			"handles bitrate adjustments correctly for edge values",
+			() => {
+				const lowBitrate = 100;
 
-			const vp09Config = upgradeEncoderConfig(baseConfig, "vp09", lowBitrate, false);
-			assertEquals(vp09Config.bitrate, lowBitrate * 0.8);
+				const vp09Config = upgradeEncoderConfig(
+					baseConfig,
+					"vp09",
+					lowBitrate,
+					false,
+				);
+				assertEquals(vp09Config.bitrate, lowBitrate * 0.8);
 
-			const av01Config = upgradeEncoderConfig(baseConfig, "av01", lowBitrate, false);
-			assertEquals(av01Config.bitrate, lowBitrate * 0.6);
+				const av01Config = upgradeEncoderConfig(
+					baseConfig,
+					"av01",
+					lowBitrate,
+					false,
+				);
+				assertEquals(av01Config.bitrate, lowBitrate * 0.6);
 
-			const vp8Config = upgradeEncoderConfig(baseConfig, "vp8", lowBitrate, false);
-			assertEquals(vp8Config.bitrate, lowBitrate * 1.1);
-		});
+				const vp8Config = upgradeEncoderConfig(
+					baseConfig,
+					"vp8",
+					lowBitrate,
+					false,
+				);
+				assertEquals(vp8Config.bitrate, lowBitrate * 1.1);
+			},
+		);
 	});
 
 	await t.step("Integration Tests", async (t2) => {
@@ -348,7 +430,10 @@ Deno.test("VideoConfig", async (t) => {
 			// Both should work but may have different hardware acceleration settings
 			assertExists(hardwareConfig.codec);
 			assertExists(softwareConfig.codec);
-			assertEquals(hardwareConfig.hardwareAcceleration, "prefer-hardware");
+			assertEquals(
+				hardwareConfig.hardwareAcceleration,
+				"prefer-hardware",
+			);
 			assertEquals(softwareConfig.hardwareAcceleration, undefined);
 		});
 	});

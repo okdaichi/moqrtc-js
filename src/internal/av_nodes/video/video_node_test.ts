@@ -87,7 +87,10 @@ Deno.test("VideoNode", async (t) => {
 	});
 
 	await t.step("should create VideoNode with custom options", () => {
-		const customNode = new MockVideoNode({ numberOfInputs: 2, numberOfOutputs: 3 });
+		const customNode = new MockVideoNode({
+			numberOfInputs: 2,
+			numberOfOutputs: 3,
+		});
 		assertEquals(customNode.numberOfInputs, 2);
 		assertEquals(customNode.numberOfOutputs, 3);
 	});

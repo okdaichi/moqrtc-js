@@ -42,9 +42,13 @@ export class VideoDecodeNode extends VideoNode {
 		this.#decoder.configure(config);
 	}
 
-	decodeFrom(stream: ReadableStream<EncodedVideoChunk>): { done: Promise<void> } {
+	decodeFrom(
+		stream: ReadableStream<EncodedVideoChunk>,
+	): { done: Promise<void> } {
 		const done = (async () => {
-			let reader: ReadableStreamDefaultReader<EncodedVideoChunk> | undefined;
+			let reader:
+				| ReadableStreamDefaultReader<EncodedVideoChunk>
+				| undefined;
 			try {
 				reader = stream.getReader();
 				while (this.context.state === "running" && !this.disposed) {
@@ -83,7 +87,9 @@ export class VideoDecodeNode extends VideoNode {
 				void output.process(input);
 			} catch (e) {
 				// Handle closed frame or clone error
-				if (e instanceof DOMException && e.name === "InvalidStateError") {
+				if (
+					e instanceof DOMException && e.name === "InvalidStateError"
+				) {
 					console.warn("[VideoDecodeNode] Cannot clone closed frame");
 				} else {
 					console.error("[VideoDecodeNode] process error:", e);

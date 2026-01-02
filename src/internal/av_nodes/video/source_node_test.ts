@@ -110,7 +110,8 @@ Deno.test("MediaStreamVideoSourceNode", async (t) => {
 		});
 
 		// Store original MediaStreamTrackProcessor
-		originalMediaStreamTrackProcessor = (globalThis as any).MediaStreamTrackProcessor;
+		originalMediaStreamTrackProcessor =
+			(globalThis as any).MediaStreamTrackProcessor;
 
 		// Mock MediaStreamTrackProcessor
 		(globalThis as any).MediaStreamTrackProcessor = () => ({
@@ -118,14 +119,17 @@ Deno.test("MediaStreamVideoSourceNode", async (t) => {
 		});
 
 		try {
-			const { MediaStreamVideoSourceNode } = await import("./video_node.ts");
+			const { MediaStreamVideoSourceNode } = await import(
+				"./video_node.ts"
+			);
 			const node = new MediaStreamVideoSourceNode(mockTrack);
 
 			assertEquals(node.track, mockTrack);
 			// Note: Constructor call verification would need spy implementation
 		} finally {
 			// Restore original MediaStreamTrackProcessor
-			(globalThis as any).MediaStreamTrackProcessor = originalMediaStreamTrackProcessor;
+			(globalThis as any).MediaStreamTrackProcessor =
+				originalMediaStreamTrackProcessor;
 		}
 	});
 
@@ -140,7 +144,8 @@ Deno.test("MediaStreamVideoSourceNode", async (t) => {
 			} as any;
 
 			// Remove MediaStreamTrackProcessor
-			originalMediaStreamTrackProcessor = (globalThis as any).MediaStreamTrackProcessor;
+			originalMediaStreamTrackProcessor =
+				(globalThis as any).MediaStreamTrackProcessor;
 			delete (globalThis as any).MediaStreamTrackProcessor;
 
 			// Mock document.createElement
@@ -155,7 +160,9 @@ Deno.test("MediaStreamVideoSourceNode", async (t) => {
 			document.createElement = () => mockVideo as any;
 
 			try {
-				const { MediaStreamVideoSourceNode } = await import("./video_node.ts");
+				const { MediaStreamVideoSourceNode } = await import(
+					"./video_node.ts"
+				);
 				const node = new MediaStreamVideoSourceNode(mockTrack);
 
 				assertEquals(node.track, mockTrack);
@@ -164,7 +171,8 @@ Deno.test("MediaStreamVideoSourceNode", async (t) => {
 			} finally {
 				// Restore
 				document.createElement = originalCreateElement;
-				(globalThis as any).MediaStreamTrackProcessor = originalMediaStreamTrackProcessor;
+				(globalThis as any).MediaStreamTrackProcessor =
+					originalMediaStreamTrackProcessor;
 			}
 		},
 	);
@@ -186,19 +194,23 @@ Deno.test("MediaStreamVideoSourceNode", async (t) => {
 			},
 		});
 
-		originalMediaStreamTrackProcessor = (globalThis as any).MediaStreamTrackProcessor;
+		originalMediaStreamTrackProcessor =
+			(globalThis as any).MediaStreamTrackProcessor;
 		(globalThis as any).MediaStreamTrackProcessor = () => ({
 			readable: mockStream,
 		});
 
 		try {
-			const { MediaStreamVideoSourceNode } = await import("./video_node.ts");
+			const { MediaStreamVideoSourceNode } = await import(
+				"./video_node.ts"
+			);
 			const node = new MediaStreamVideoSourceNode(mockTrack);
 			node.dispose();
 
 			assert(stopCalled);
 		} finally {
-			(globalThis as any).MediaStreamTrackProcessor = originalMediaStreamTrackProcessor;
+			(globalThis as any).MediaStreamTrackProcessor =
+				originalMediaStreamTrackProcessor;
 		}
 	});
 

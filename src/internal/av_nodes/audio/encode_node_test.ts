@@ -53,7 +53,9 @@ class MockAudioEncoder {
 				const mockChunk = {
 					type: "key",
 					timestamp: data.timestamp,
-					duration: data.duration === undefined ? null : data.duration,
+					duration: data.duration === undefined
+						? null
+						: data.duration,
 					byteLength: 1024,
 				} as EncodedAudioChunk;
 				this.#outputCallback(mockChunk);
@@ -160,7 +162,9 @@ Deno.test("AudioEncodeNode", async (t) => {
 			assert(false, "Should have thrown error");
 		} catch (e) {
 			assert(e instanceof Error);
-			assert((e as Error).message.includes("does not support connections"));
+			assert(
+				(e as Error).message.includes("does not support connections"),
+			);
 		}
 	});
 
@@ -196,27 +200,30 @@ Deno.test("AudioEncodeNode", async (t) => {
 		assert(queueSize >= 0);
 	});
 
-	await t.step("should return 0 for encodeQueueSize when encoder not ready", () => {
-		// Create a separate broken node instance
-		const brokenNode = new AudioEncodeNode(context);
-		const brokenEncoder = lastMockEncoder!;
+	await t.step(
+		"should return 0 for encodeQueueSize when encoder not ready",
+		() => {
+			// Create a separate broken node instance
+			const brokenNode = new AudioEncodeNode(context);
+			const brokenEncoder = lastMockEncoder!;
 
-		// Save the original encoder for the main node
-		// const mainEncoder = lastMockEncoder;
+			// Save the original encoder for the main node
+			// const mainEncoder = lastMockEncoder;
 
-		// Break THIS encoder's queue size
-		Object.defineProperty(brokenEncoder, "encodeQueueSize", {
-			get() {
-				throw new Error("Encoder not ready");
-			},
-			configurable: true,
-		});
+			// Break THIS encoder's queue size
+			Object.defineProperty(brokenEncoder, "encodeQueueSize", {
+				get() {
+					throw new Error("Encoder not ready");
+				},
+				configurable: true,
+			});
 
-		assertEquals(brokenNode.encodeQueueSize, 0);
+			assertEquals(brokenNode.encodeQueueSize, 0);
 
-		// Restore for next tests by recreating the main node's encoder reference
-		// The next test will use the main encodeNode which still has its original encoder
-	});
+			// Restore for next tests by recreating the main node's encoder reference
+			// The next test will use the main encodeNode which still has its original encoder
+		},
+	);
 
 	await t.step("should process AudioData and encode", () => {
 		// Recreate node to get a fresh encoder after the broken one
@@ -451,66 +458,72 @@ Deno.test("AudioEncodeNode", async (t) => {
 		await encodePromise;
 	});
 
-	await t.step("should handle destination output errors gracefully", async () => {
-		const node = new AudioEncodeNode(context);
+	await t.step(
+		"should handle destination output errors gracefully",
+		async () => {
+			const node = new AudioEncodeNode(context);
 
-		let resolveDone: () => void;
-		const donePromise = new Promise<void>((resolve) => {
-			resolveDone = resolve;
-		});
+			let resolveDone: () => void;
+			const donePromise = new Promise<void>((resolve) => {
+				resolveDone = resolve;
+			});
 
-		const mockDest: AudioEncodeDestination = {
-			output: async () => {
-				throw new Error("Destination error");
-			},
-			done: donePromise,
-		};
+			const mockDest: AudioEncodeDestination = {
+				output: async () => {
+					throw new Error("Destination error");
+				},
+				done: donePromise,
+			};
 
-		const config: AudioEncoderConfig = {
-			codec: "opus",
-			sampleRate: 48000,
-			numberOfChannels: 2,
-		};
-		node.configure(config);
+			const config: AudioEncoderConfig = {
+				codec: "opus",
+				sampleRate: 48000,
+				numberOfChannels: 2,
+			};
+			node.configure(config);
 
-		const encodePromise = node.encodeTo(mockDest);
+			const encodePromise = node.encodeTo(mockDest);
 
-		// Simulate encoding
-		const audioData = new MockAudioData(1024, 2, 48000);
-		node.process(audioData);
+			// Simulate encoding
+			const audioData = new MockAudioData(1024, 2, 48000);
+			node.process(audioData);
 
-		// Wait for async encoding
-		await new Promise((resolve) => setTimeout(resolve, 10));
+			// Wait for async encoding
+			await new Promise((resolve) => setTimeout(resolve, 10));
 
-		// Resolve done to complete encodeTo
-		resolveDone!();
+			// Resolve done to complete encodeTo
+			resolveDone!();
 
-		// Should not throw
-		await encodePromise;
-	});
+			// Should not throw
+			await encodePromise;
+		},
+	);
 
-	await t.step("should remove destination after encodeTo completes", async () => {
-		const node = new AudioEncodeNode(context);
+	await t.step(
+		"should remove destination after encodeTo completes",
+		async () => {
+			const node = new AudioEncodeNode(context);
 
-		const mockDest: AudioEncodeDestination = {
-			output: async () => {
-				return undefined;
-			},
-			done: Promise.resolve(),
-		};
+			const mockDest: AudioEncodeDestination = {
+				output: async () => {
+					return undefined;
+				},
+				done: Promise.resolve(),
+			};
 
-		const config: AudioEncoderConfig = {
-			codec: "opus",
-			sampleRate: 48000,
-			numberOfChannels: 2,
-		};
-		node.configure(config);
+			const config: AudioEncoderConfig = {
+				codec: "opus",
+				sampleRate: 48000,
+				numberOfChannels: 2,
+			};
+			node.configure(config);
 
-		await node.encodeTo(mockDest);
+			await node.encodeTo(mockDest);
 
-		// Destination should be removed after done (verified internally)
-		// Success if no error thrown
-	});
+			// Destination should be removed after done (verified internally)
+			// Success if no error thrown
+		},
+	);
 
 	await t.step("cleanup", () => {
 		// Restore originals
@@ -613,29 +626,35 @@ Deno.test("AudioEncodeNode - backpressure management", async (t) => {
 		assertEquals(encoder.encodeCalls.length, 1);
 	});
 
-	await t.step("should drop frame when queue size exceeds MAX_ENCODE_QUEUE_SIZE", () => {
-		const encoder = lastMockEncoder!;
-		encoder.encodeQueueSize = 3; // > 2 (MAX_ENCODE_QUEUE_SIZE)
-		encoder.encodeCalls = [];
+	await t.step(
+		"should drop frame when queue size exceeds MAX_ENCODE_QUEUE_SIZE",
+		() => {
+			const encoder = lastMockEncoder!;
+			encoder.encodeQueueSize = 3; // > 2 (MAX_ENCODE_QUEUE_SIZE)
+			encoder.encodeCalls = [];
 
-		const audioData = new MockAudioData(1024, 2, 48000);
-		encodeNode.process(audioData);
+			const audioData = new MockAudioData(1024, 2, 48000);
+			encodeNode.process(audioData);
 
-		// Should not encode
-		assertEquals(encoder.encodeCalls.length, 0);
-	});
+			// Should not encode
+			assertEquals(encoder.encodeCalls.length, 0);
+		},
+	);
 
-	await t.step("should encode when queue size equals MAX_ENCODE_QUEUE_SIZE", () => {
-		const encoder = lastMockEncoder!;
-		encoder.encodeQueueSize = 2; // = MAX_ENCODE_QUEUE_SIZE
-		encoder.encodeCalls = [];
+	await t.step(
+		"should encode when queue size equals MAX_ENCODE_QUEUE_SIZE",
+		() => {
+			const encoder = lastMockEncoder!;
+			encoder.encodeQueueSize = 2; // = MAX_ENCODE_QUEUE_SIZE
+			encoder.encodeCalls = [];
 
-		const audioData = new MockAudioData(1024, 2, 48000);
-		encodeNode.process(audioData);
+			const audioData = new MockAudioData(1024, 2, 48000);
+			encodeNode.process(audioData);
 
-		// Should still encode at the limit
-		assertEquals(encoder.encodeCalls.length, 1);
-	});
+			// Should still encode at the limit
+			assertEquals(encoder.encodeCalls.length, 1);
+		},
+	);
 
 	await t.step("cleanup", () => {
 		globalThis.AudioEncoder = originalAudioEncoder;

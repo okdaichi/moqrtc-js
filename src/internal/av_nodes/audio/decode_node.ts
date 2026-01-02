@@ -1,8 +1,6 @@
 // Audio node API: AudioDecodeNode
 // Extends GainNode to enable standard connect() pattern while adding decoding capabilities
-import {
-	createWorkletBlobUrl as createOffloadWorkletBlobUrl,
-} from "./audio_offload_worklet_inline.ts";
+import { createWorkletBlobUrl as createOffloadWorkletBlobUrl } from "./audio_offload_worklet_inline.ts";
 
 const offloadWorkletName = "audio-offloader";
 
@@ -37,29 +35,36 @@ export class AudioDecodeNode extends GainNode {
 		super(context, { gain: 1.0 });
 
 		// Initialize worklet asynchronously
-		this.#workletReady = context.audioWorklet.addModule(createOffloadWorkletBlobUrl()).then(() => {
-			// Create AudioWorkletNode
-			const worklet = new AudioWorkletNode(
-				context,
-				offloadWorkletName,
-				{
-					channelCount: context.destination.channelCount,
-					numberOfInputs: 0,
-					numberOfOutputs: 1,
-					processorOptions: {
-						sampleRate: context.sampleRate,
-						latency: init.latency || 100, // Default to 100ms if not specified
+		this.#workletReady = context.audioWorklet.addModule(
+			createOffloadWorkletBlobUrl(),
+		).then(
+			() => {
+				// Create AudioWorkletNode
+				const worklet = new AudioWorkletNode(
+					context,
+					offloadWorkletName,
+					{
+						channelCount: context.destination.channelCount,
+						numberOfInputs: 0,
+						numberOfOutputs: 1,
+						processorOptions: {
+							sampleRate: context.sampleRate,
+							latency: init.latency || 100, // Default to 100ms if not specified
+						},
 					},
-				},
+				);
+
+				// Connect worklet to this GainNode (super)
+				// Audio flows: worklet → this GainNode → destination
+				worklet.connect(this as GainNode);
+
+				return worklet;
+			},
+		).catch((error) => {
+			console.error(
+				"[AudioDecodeNode] failed to load AudioWorklet module:",
+				error,
 			);
-
-			// Connect worklet to this GainNode (super)
-			// Audio flows: worklet → this GainNode → destination
-			worklet.connect(this as GainNode);
-
-			return worklet;
-		}).catch((error) => {
-			console.error("[AudioDecodeNode] failed to load AudioWorklet module:", error);
 			throw error;
 		});
 
@@ -95,9 +100,13 @@ export class AudioDecodeNode extends GainNode {
 		}
 	}
 
-	decodeFrom(stream: ReadableStream<EncodedAudioChunk>): { done: Promise<void> } {
+	decodeFrom(
+		stream: ReadableStream<EncodedAudioChunk>,
+	): { done: Promise<void> } {
 		const done = (async () => {
-			let reader: ReadableStreamDefaultReader<EncodedAudioChunk> | undefined;
+			let reader:
+				| ReadableStreamDefaultReader<EncodedAudioChunk>
+				| undefined;
 			try {
 				reader = stream.getReader();
 				while (this.context.state === "running" && !this.#disposed) {

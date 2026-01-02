@@ -105,7 +105,10 @@ Deno.test("VideoEncodeNode", async (t) => {
 		encoderNode.configure(config);
 
 		assert(mockEncoder.configureCalled);
-		if (mockEncoder.configureCalls.length > 0 && mockEncoder.configureCalls[0]) {
+		if (
+			mockEncoder.configureCalls.length > 0 &&
+			mockEncoder.configureCalls[0]
+		) {
 			const calledConfig = mockEncoder.configureCalls[0][0];
 			assertEquals(calledConfig.codec, "vp8");
 			assertEquals(calledConfig.width, 640);
@@ -252,29 +255,32 @@ Deno.test("VideoEncodeNode", async (t) => {
 		await encodePromise;
 	});
 
-	await t.step("should handle destination errors gracefully in encodeTo", async () => {
-		const config: VideoEncoderConfig = {
-			codec: "vp8",
-			width: 640,
-			height: 480,
-			bitrate: 1000000,
-			framerate: 30,
-		};
-		encoderNode.configure(config);
+	await t.step(
+		"should handle destination errors gracefully in encodeTo",
+		async () => {
+			const config: VideoEncoderConfig = {
+				codec: "vp8",
+				width: 640,
+				height: 480,
+				bitrate: 1000000,
+				framerate: 30,
+			};
+			encoderNode.configure(config);
 
-		const mockDestination: EncodeDestination = {
-			output: () => {
-				throw new Error("Destination error");
-			},
-			done: Promise.resolve(),
-		};
+			const mockDestination: EncodeDestination = {
+				output: () => {
+					throw new Error("Destination error");
+				},
+				done: Promise.resolve(),
+			};
 
-		const encodePromise = encoderNode.encodeTo(mockDestination);
+			const encodePromise = encoderNode.encodeTo(mockDestination);
 
-		// Simulate encoding a chunk
-		encoderNode.process(mockFrame);
+			// Simulate encoding a chunk
+			encoderNode.process(mockFrame);
 
-		// Should not throw despite destination error
-		await encodePromise;
-	});
+			// Should not throw despite destination error
+			await encodePromise;
+		},
+	);
 });

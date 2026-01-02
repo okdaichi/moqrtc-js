@@ -95,57 +95,63 @@ Deno.test("VideoDecodeNode", async (t) => {
 		assert(closeCalled);
 	});
 
-	await t.step("should pass decoded frames to outputs when decoder outputs frame", async () => {
-		const config: VideoDecoderConfig = {
-			codec: "vp8",
-			codedWidth: 640,
-			codedHeight: 480,
-		};
-		decoderNode.configure(config);
+	await t.step(
+		"should pass decoded frames to outputs when decoder outputs frame",
+		async () => {
+			const config: VideoDecoderConfig = {
+				codec: "vp8",
+				codedWidth: 640,
+				codedHeight: 480,
+			};
+			decoderNode.configure(config);
 
-		// Connect an output node
-		const outputNode = new MockVideoNode();
-		decoderNode.connect(outputNode);
-		let processCalled = false;
-		let processFrame: VideoFrame | undefined;
-		outputNode.process = (f: VideoFrame) => {
-			processCalled = true;
-			processFrame = f;
-		};
+			// Connect an output node
+			const outputNode = new MockVideoNode();
+			decoderNode.connect(outputNode);
+			let processCalled = false;
+			let processFrame: VideoFrame | undefined;
+			outputNode.process = (f: VideoFrame) => {
+				processCalled = true;
+				processFrame = f;
+			};
 
-		// Simulate decoder output
-		const mockFrame = new MockVideoFrame();
-		if (onFrame) onFrame(mockFrame);
+			// Simulate decoder output
+			const mockFrame = new MockVideoFrame();
+			if (onFrame) onFrame(mockFrame);
 
-		assert(processCalled);
-		assertEquals(processFrame, mockFrame);
-	});
+			assert(processCalled);
+			assertEquals(processFrame, mockFrame);
+		},
+	);
 
-	await t.step("should handle output processing errors gracefully in process", () => {
-		const config: VideoDecoderConfig = {
-			codec: "vp8",
-			codedWidth: 640,
-			codedHeight: 480,
-		};
-		decoderNode.configure(config);
+	await t.step(
+		"should handle output processing errors gracefully in process",
+		() => {
+			const config: VideoDecoderConfig = {
+				codec: "vp8",
+				codedWidth: 640,
+				codedHeight: 480,
+			};
+			decoderNode.configure(config);
 
-		// Connect an output node that throws an error
-		const outputNode = new MockVideoNode();
-		decoderNode.connect(outputNode);
-		let processCalled = false;
-		let processFrame: VideoFrame | undefined;
-		outputNode.process = (f: VideoFrame) => {
-			processCalled = true;
-			processFrame = f;
-			throw new Error("Output processing error");
-		};
+			// Connect an output node that throws an error
+			const outputNode = new MockVideoNode();
+			decoderNode.connect(outputNode);
+			let processCalled = false;
+			let processFrame: VideoFrame | undefined;
+			outputNode.process = (f: VideoFrame) => {
+				processCalled = true;
+				processFrame = f;
+				throw new Error("Output processing error");
+			};
 
-		const frame = new MockVideoFrame();
-		// Should not throw despite the error
-		assert(() => decoderNode.process(frame));
-		assert(processCalled);
-		assertEquals(processFrame, frame);
-	});
+			const frame = new MockVideoFrame();
+			// Should not throw despite the error
+			assert(() => decoderNode.process(frame));
+			assert(processCalled);
+			assertEquals(processFrame, frame);
+		},
+	);
 
 	await t.step("should close decoder", async () => {
 		const config: VideoDecoderConfig = {

@@ -75,7 +75,8 @@ export function cloneChunk(chunk: EncodedChunk): EncodedChunk {
 				view = dest;
 			} else if (
 				dest instanceof ArrayBuffer ||
-				(typeof SharedArrayBuffer !== "undefined" && dest instanceof SharedArrayBuffer)
+				(typeof SharedArrayBuffer !== "undefined" &&
+					dest instanceof SharedArrayBuffer)
 			) {
 				view = new Uint8Array(dest as ArrayBufferLike);
 			} else if (ArrayBuffer.isView(dest)) {

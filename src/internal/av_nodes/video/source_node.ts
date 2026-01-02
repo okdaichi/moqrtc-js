@@ -27,7 +27,9 @@ export class VideoSourceNode extends VideoNode {
 				output.process(input);
 			} catch (e) {
 				// Handle case where frame is already closed or clone fails
-				if (e instanceof DOMException && e.name === "InvalidStateError") {
+				if (
+					e instanceof DOMException && e.name === "InvalidStateError"
+				) {
 					console.warn("[VideoSourceNode] Cannot clone closed frame");
 				} else {
 					console.error("[VideoSourceNode] process error:", e);
@@ -112,14 +114,18 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 		const { mediaStream } = options;
 		const track = mediaStream.getVideoTracks()[0];
 		if (!track) {
-			throw new Error("[MediaStreamVideoSourceNode] No video track in MediaStream");
+			throw new Error(
+				"[MediaStreamVideoSourceNode] No video track in MediaStream",
+			);
 		}
 
 		let stream: ReadableStream<VideoFrame>;
 
 		if ("MediaStreamTrackProcessor" in globalThis) {
 			// deno-lint-ignore no-explicit-any
-			stream = new (globalThis as any).MediaStreamTrackProcessor({ track }).readable;
+			stream =
+				new (globalThis as any).MediaStreamTrackProcessor({ track })
+					.readable;
 		} else {
 			console.warn(
 				"[MediaStreamVideoSourceNode] MediaStreamTrackProcessor not available; using polyfill",
@@ -172,5 +178,7 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 }
 
 declare const MediaStreamTrackProcessor: {
-	new (options: { track: MediaStreamTrack }): { readable: ReadableStream<VideoFrame> };
+	new (
+		options: { track: MediaStreamTrack },
+	): { readable: ReadableStream<VideoFrame> };
 };

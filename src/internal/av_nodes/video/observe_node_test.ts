@@ -34,23 +34,26 @@ Deno.test("VideoObserveNode", async (t) => {
 		assertEquals(observeNode.isVisible, true);
 	});
 
-	await t.step("should process frames and pass to outputs when visible", () => {
-		const outputNode = new MockVideoNode();
-		observeNode.connect(outputNode);
+	await t.step(
+		"should process frames and pass to outputs when visible",
+		() => {
+			const outputNode = new MockVideoNode();
+			observeNode.connect(outputNode);
 
-		const frame = new MockVideoFrame();
-		let processCalled = false;
-		let processFrame: VideoFrame | undefined;
-		outputNode.process = (f: VideoFrame) => {
-			processCalled = true;
-			processFrame = f;
-		};
+			const frame = new MockVideoFrame();
+			let processCalled = false;
+			let processFrame: VideoFrame | undefined;
+			outputNode.process = (f: VideoFrame) => {
+				processCalled = true;
+				processFrame = f;
+			};
 
-		observeNode.process(frame);
+			observeNode.process(frame);
 
-		assert(processCalled);
-		assertEquals(processFrame, frame);
-	});
+			assert(processCalled);
+			assertEquals(processFrame, frame);
+		},
+	);
 
 	await t.step("should not process frames when not visible", () => {
 		const outputNode = new MockVideoNode();

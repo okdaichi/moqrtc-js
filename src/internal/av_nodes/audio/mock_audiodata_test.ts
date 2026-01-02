@@ -6,7 +6,11 @@ export class MockAudioData implements AudioData {
 	readonly duration: number;
 	readonly timestamp: number;
 
-	constructor(_frames: number = 1024, _channels: number = 2, _sampleRate: number = 44100) {
+	constructor(
+		_frames: number = 1024,
+		_channels: number = 2,
+		_sampleRate: number = 44100,
+	) {
 		this.numberOfFrames = _frames;
 		this.numberOfChannels = _channels;
 		this.sampleRate = _sampleRate;
@@ -15,7 +19,10 @@ export class MockAudioData implements AudioData {
 		this.timestamp = 0;
 	}
 
-	copyTo(_destination: AllowSharedBufferSource, _options?: AudioDataCopyToOptions): void {
+	copyTo(
+		_destination: AllowSharedBufferSource,
+		_options?: AudioDataCopyToOptions,
+	): void {
 		// Fill with test audio data
 		if (_destination instanceof Float32Array) {
 			for (let i = 0; i < _destination.length; i++) {
@@ -25,7 +32,11 @@ export class MockAudioData implements AudioData {
 	}
 
 	clone(): AudioData {
-		return new MockAudioData(this.numberOfFrames, this.numberOfChannels, this.sampleRate);
+		return new MockAudioData(
+			this.numberOfFrames,
+			this.numberOfChannels,
+			this.sampleRate,
+		);
 	}
 
 	close(): void {

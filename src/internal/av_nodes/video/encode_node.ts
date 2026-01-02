@@ -21,7 +21,10 @@ export class VideoEncodeNode extends VideoNode {
 		this.#encoder = new VideoEncoder({
 			output: async (chunk, meta) => {
 				if (meta?.decoderConfig) {
-					console.log("[VideoEncodeNode] Encoded chunk decoderConfig:", meta.decoderConfig);
+					console.log(
+						"[VideoEncodeNode] Encoded chunk decoderConfig:",
+						meta.decoderConfig,
+					);
 				}
 				// Pass encoded chunk to all registered destinations
 				await Promise.allSettled(
@@ -57,7 +60,9 @@ export class VideoEncodeNode extends VideoNode {
 
 		// Backpressure: Drop frames if encoder is overloaded
 		if (this.encodeQueueSize > MAX_QUEUE_SIZE) {
-			console.warn(`[VideoEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`);
+			console.warn(
+				`[VideoEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`,
+			);
 			return; // Drop frame without encoding
 		}
 

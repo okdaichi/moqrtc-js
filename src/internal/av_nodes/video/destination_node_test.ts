@@ -11,7 +11,10 @@ Deno.test("VideoDestinationNode", async (t) => {
 		assertEquals(destinationNode.numberOfInputs, 1);
 		assertEquals(destinationNode.numberOfOutputs, 0);
 		assertEquals(destinationNode.canvas, canvas as any);
-		assertEquals(destinationNode.resizeCallback, VideoRenderFunctions.contain);
+		assertEquals(
+			destinationNode.resizeCallback,
+			VideoRenderFunctions.contain,
+		);
 	});
 
 	await t.step("should create with custom render function", () => {
@@ -84,7 +87,10 @@ Deno.test("VideoDestinationNode", async (t) => {
 			return requestedId;
 		}) as any;
 
-		const destinationNode = new VideoDestinationNode(context, canvas as any);
+		const destinationNode = new VideoDestinationNode(
+			context,
+			canvas as any,
+		);
 
 		const frame = new MockVideoFrame(640, 480);
 		destinationNode.process(frame);
@@ -102,49 +108,58 @@ Deno.test("VideoDestinationNode", async (t) => {
 		globalThis.requestAnimationFrame = originalRequestAnimationFrame;
 	});
 
-	await t.step("should close pending frame when replaced before rAF runs", () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
+	await t.step(
+		"should close pending frame when replaced before rAF runs",
+		() => {
+			context = new VideoContext();
+			canvas = new MockHTMLCanvasElement();
 
-		// Mock global functions so rAF callback never runs (we only test pending replacement)
-		const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
-		const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+			// Mock global functions so rAF callback never runs (we only test pending replacement)
+			const originalCancelAnimationFrame =
+				globalThis.cancelAnimationFrame;
+			const originalRequestAnimationFrame =
+				globalThis.requestAnimationFrame;
 
-		let nextId = 1;
-		globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
-			// Intentionally do not invoke cb
-			void cb;
-			return nextId++;
-		}) as any;
-		globalThis.cancelAnimationFrame = (() => {}) as any;
+			let nextId = 1;
+			globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+				// Intentionally do not invoke cb
+				void cb;
+				return nextId++;
+			}) as any;
+			globalThis.cancelAnimationFrame = (() => {}) as any;
 
-		try {
-			const destinationNode = new VideoDestinationNode(context, canvas as any);
+			try {
+				const destinationNode = new VideoDestinationNode(
+					context,
+					canvas as any,
+				);
 
-			let closed = 0;
-			const frame1 = new MockVideoFrame(640, 480);
-			frame1.clone = () => {
-				const f = new MockVideoFrame(640, 480);
-				f.close = () => {
-					closed++;
+				let closed = 0;
+				const frame1 = new MockVideoFrame(640, 480);
+				frame1.clone = () => {
+					const f = new MockVideoFrame(640, 480);
+					f.close = () => {
+						closed++;
+					};
+					return f;
 				};
-				return f;
-			};
 
-			const frame2 = new MockVideoFrame(640, 480);
-			frame2.clone = () => new MockVideoFrame(640, 480);
+				const frame2 = new MockVideoFrame(640, 480);
+				frame2.clone = () => new MockVideoFrame(640, 480);
 
-			destinationNode.process(frame1);
-			// Second process call replaces the pending frame; the previous pending clone MUST be closed
-			destinationNode.process(frame2);
+				destinationNode.process(frame1);
+				// Second process call replaces the pending frame; the previous pending clone MUST be closed
+				destinationNode.process(frame2);
 
-			assertEquals(closed, 1);
-		} finally {
-			// Restore globals
-			globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-			globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-		}
-	});
+				assertEquals(closed, 1);
+			} finally {
+				// Restore globals
+				globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+				globalThis.requestAnimationFrame =
+					originalRequestAnimationFrame;
+			}
+		},
+	);
 
 	await t.step("should handle frames with zero dimensions", () => {
 		context = new VideoContext();
@@ -184,21 +199,27 @@ Deno.test("VideoDestinationNode", async (t) => {
 });
 
 Deno.test("VideoRenderFunctions", async (t) => {
-	await t.step("contain should fit frame within canvas maintaining aspect ratio", () => {
-		const result = VideoRenderFunctions.contain(640, 480, 800, 600);
-		assertEquals(result.width, 800);
-		assertEquals(result.height, 600);
-		assertEquals(result.x, 0);
-		assertEquals(result.y, 0);
-	});
+	await t.step(
+		"contain should fit frame within canvas maintaining aspect ratio",
+		() => {
+			const result = VideoRenderFunctions.contain(640, 480, 800, 600);
+			assertEquals(result.width, 800);
+			assertEquals(result.height, 600);
+			assertEquals(result.x, 0);
+			assertEquals(result.y, 0);
+		},
+	);
 
-	await t.step("cover should cover entire canvas maintaining aspect ratio", () => {
-		const result = VideoRenderFunctions.cover(640, 480, 800, 600);
-		assertEquals(result.width, 800);
-		assertEquals(result.height, 600);
-		assertEquals(result.x, 0);
-		assertEquals(result.y, 0);
-	});
+	await t.step(
+		"cover should cover entire canvas maintaining aspect ratio",
+		() => {
+			const result = VideoRenderFunctions.cover(640, 480, 800, 600);
+			assertEquals(result.width, 800);
+			assertEquals(result.height, 600);
+			assertEquals(result.x, 0);
+			assertEquals(result.y, 0);
+		},
+	);
 
 	await t.step("fill should fill entire canvas", () => {
 		const result = VideoRenderFunctions.fill(640, 480, 800, 600);

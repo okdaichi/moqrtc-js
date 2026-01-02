@@ -4,7 +4,8 @@ WebCodecs-based video and audio processing nodes with MoQ Transport support.
 
 ## Features
 
-- 🎥 **Video Processing**: WebCodecs-based encoding/decoding with hardware acceleration
+- 🎥 **Video Processing**: WebCodecs-based encoding/decoding with hardware
+  acceleration
 - 🎵 **Audio Processing**: AudioWorklet-based capture and playback
 - 🔄 **Media Streaming**: Real-time media transport over MoQ
 - 📦 **Zero Dependencies**: Self-contained worklet code (no external JS files)
@@ -24,10 +25,10 @@ import { VideoEncodeNode, AudioEncodeNode } from "jsr:@okdaichi/video-nodes";
 
 ```typescript
 import {
-	VideoContext,
-	MediaStreamVideoSourceNode,
-	VideoEncodeNode,
 	AudioEncodeNode,
+	MediaStreamVideoSourceNode,
+	VideoContext,
+	VideoEncodeNode,
 } from "jsr:@okdaichi/video-nodes";
 
 // Create video context
@@ -113,7 +114,8 @@ deno task build:worklets
 deno publish
 ```
 
-**Important**: Always run `build:worklets` before publishing to ensure the inline worklet code is up-to-date.
+**Important**: Always run `build:worklets` before publishing to ensure the
+inline worklet code is up-to-date.
 
 ## Architecture
 
@@ -133,4 +135,5 @@ MIT © okdaichi
 ## Related
 
 - [@okudai/moq](https://jsr.io/@okudai/moq) - MoQ Transport implementation
-- [moqrtc-js](https://github.com/okdaichi/moqrtc-js) - Complete MoQ-RTC implementation
+- [moqrtc-js](https://github.com/okdaichi/moqrtc-js) - Complete MoQ-RTC
+  implementation

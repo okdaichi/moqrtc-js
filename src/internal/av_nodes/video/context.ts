@@ -36,7 +36,8 @@ export class VideoContext {
 
 	get currentTime(): number {
 		if (this.#state === "running") {
-			return (performance.now() - this.startTime) / 1000 - this.#pausedTime;
+			return (performance.now() - this.startTime) / 1000 -
+				this.#pausedTime;
 		}
 		return this.#currentTime;
 	}
@@ -110,7 +111,8 @@ export class VideoContext {
 		if (this.#state === "closed") return Promise.resolve();
 		if (this.#state === "suspended") {
 			// Add the suspended duration to pausedTime
-			const suspendedDuration = (performance.now() - this.#suspendTime) / 1000;
+			const suspendedDuration = (performance.now() - this.#suspendTime) /
+				1000;
 			this.#pausedTime += suspendedDuration;
 			// Reset frame timing for fresh start
 			this.#nextFrameTime = 0;

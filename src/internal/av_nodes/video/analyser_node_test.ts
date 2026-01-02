@@ -132,8 +132,13 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		assert(analysis.motionEnergy >= 0 && analysis.motionEnergy <= 1);
 		assert(analysis.activityLevel >= 0 && analysis.activityLevel <= 1);
 		assert(analysis.edgeDensity >= 0 && analysis.edgeDensity <= 1);
-		assert(analysis.highFrequencyRatio >= 0 && analysis.highFrequencyRatio <= 1);
-		assert(analysis.spatialComplexity >= 0 && analysis.spatialComplexity <= 1);
+		assert(
+			analysis.highFrequencyRatio >= 0 &&
+				analysis.highFrequencyRatio <= 1,
+		);
+		assert(
+			analysis.spatialComplexity >= 0 && analysis.spatialComplexity <= 1,
+		);
 
 		// Check timestamp fields
 		assert(analysis.timestamp > 0);

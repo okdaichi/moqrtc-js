@@ -10,7 +10,11 @@ export class MockVideoFrame implements VideoFrame {
 	codedRect: DOMRectReadOnly | null;
 	format: VideoPixelFormat | null;
 
-	constructor(width: number = 640, height: number = 480, timestamp: number = 0) {
+	constructor(
+		width: number = 640,
+		height: number = 480,
+		timestamp: number = 0,
+	) {
 		this.displayWidth = width;
 		this.displayHeight = height;
 		this.codedWidth = width;
@@ -40,7 +44,11 @@ export class MockVideoFrame implements VideoFrame {
 	}
 
 	clone(): VideoFrame {
-		return new MockVideoFrame(this.displayWidth, this.displayHeight, this.timestamp);
+		return new MockVideoFrame(
+			this.displayWidth,
+			this.displayHeight,
+			this.timestamp,
+		);
 	}
 
 	close(): void {
