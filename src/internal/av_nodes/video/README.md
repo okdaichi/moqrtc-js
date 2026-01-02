@@ -34,7 +34,12 @@ await source.start();
 ### Encode → Decode Pipeline
 
 ```typescript
-import { MediaStreamVideoSourceNode, VideoContext, VideoDecodeNode, VideoEncodeNode } from "@okudai/video-nodes";
+import {
+	MediaStreamVideoSourceNode,
+	VideoContext,
+	VideoDecodeNode,
+	VideoEncodeNode,
+} from "@okudai/video-nodes";
 import { videoEncoderConfig } from "@okudai/video-nodes/config";
 
 // Source

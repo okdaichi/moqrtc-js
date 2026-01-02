@@ -1,4 +1,3 @@
-import type { EncodeDestination } from "./container.ts";
 import type { VideoContext } from "./context.ts";
 import { VideoNode } from "./video_node.ts";
 
@@ -8,7 +7,7 @@ export class VideoEncodeNode extends VideoNode {
 	readonly context: VideoContext;
 	#encoder: VideoEncoder;
 	#isKey: IsKeyFunction;
-	#dests: Set<EncodeDestination> = new Set();
+	#dests: Set<VideoEncodeDestination> = new Set();
 
 	constructor(
 		context: VideoContext,
@@ -67,7 +66,9 @@ export class VideoEncodeNode extends VideoNode {
 
 		// Encode the frame
 		try {
-			this.#encoder.encode(clonedFrame, { keyFrame: this.#isKey(input.timestamp, this.encodeQueueSize) });
+			this.#encoder.encode(clonedFrame, {
+				keyFrame: this.#isKey(input.timestamp, this.encodeQueueSize),
+			});
 		} catch (e) {
 			console.error("[VideoEncodeNode] encode error:", e);
 		}
@@ -104,7 +105,7 @@ export class VideoEncodeNode extends VideoNode {
 		super.dispose();
 	}
 
-	encodeTo(dest: EncodeDestination): { done: Promise<void> } {
+	encodeTo(dest: VideoEncodeDestination): { done: Promise<void> } {
 		this.#dests.add(dest);
 		const done = dest.done.finally(() => {
 			this.#dests.delete(dest);
@@ -114,3 +115,8 @@ export class VideoEncodeNode extends VideoNode {
 }
 
 type IsKeyFunction = (timestamp: number, count: number) => boolean;
+
+export interface VideoEncodeDestination {
+	output: (chunk: EncodedVideoChunk) => Promise<Error | undefined>;
+	done: Promise<void>;
+}

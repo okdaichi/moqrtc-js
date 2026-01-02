@@ -5,12 +5,12 @@ import { serveDir } from "jsr:@std/http/file-server";
 const port = 8000;
 
 Deno.serve({ port }, (req) => {
-  return serveDir(req, {
-    fsRoot: ".",
-    urlRoot: "",
-    showDirListing: true,
-    enableCors: true,
-  });
+	return serveDir(req, {
+		fsRoot: ".",
+		urlRoot: "",
+		showDirListing: true,
+		enableCors: true,
+	});
 });
 
 console.log(`\n🚀 Demo server running at http://localhost:${port}/\n`);

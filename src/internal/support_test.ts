@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { isChrome, isFirefox } from "./support.ts";
+import { isChrome, isFirefox } from "./av_nodes/support.ts";
 
 Deno.test("browser detection", async (t) => {
 	await t.step("isChrome", async (t) => {

@@ -1,6 +1,6 @@
 import {
-    importWorkletUrl as importOffloadWorkletUrl,
-    workletName as offloadWorkletName,
+	importWorkletUrl as importOffloadWorkletUrl,
+	workletName as offloadWorkletName,
 } from "./audio_offload_worklet.ts";
 
 const MAX_DECODE_QUEUE_SIZE = 3;
@@ -175,26 +175,34 @@ export class AudioDecodeNode implements AudioNode {
 		this.#decoder.configure(config);
 	}
 
-	async decodeFrom(stream: ReadableStream<EncodedAudioChunk>): Promise<void> {
-		try {
-			const reader = stream.getReader();
+	decodeFrom(stream: ReadableStream<EncodedAudioChunk>): { done: Promise<void> } {
+		const done = (async () => {
+			try {
+				const reader = stream.getReader();
 
-			const { done, value: chunk } = await reader.read();
-			if (done) {
-				reader.releaseLock();
-				return;
+				const { done, value: chunk } = await reader.read();
+				if (done) {
+					reader.releaseLock();
+					return;
+				}
+
+				// Backpressure: Drop chunk if queue is overloaded
+				if (this.decodeQueueSize > MAX_DECODE_QUEUE_SIZE) {
+					console.warn(
+						`[AudioDecodeNode] Dropping chunk, queue size: ${this.decodeQueueSize}`,
+					);
+					return;
+				}
+
+				this.#decoder.decode(chunk);
+			} catch (e) {
+				console.error("[AudioDecodeNode] decodeFrom error:", e);
 			}
+		})();
 
-			// Backpressure: Drop chunk if queue is overloaded
-			if (this.decodeQueueSize > MAX_DECODE_QUEUE_SIZE) {
-				console.warn(`[AudioDecodeNode] Dropping chunk, queue size: ${this.decodeQueueSize}`);
-				return;
-			}
-
-			this.#decoder.decode(chunk);
-		} catch (e) {
-			console.error("[AudioDecodeNode] decodeFrom error:", e);
-		}
+		return {
+			done,
+		};
 	}
 
 	process(input: AudioData): void {

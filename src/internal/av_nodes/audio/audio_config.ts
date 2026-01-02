@@ -1,4 +1,4 @@
-import { isChrome, isFirefox } from "./browser.ts";
+import { isChrome, isFirefox } from "../support.ts";
 
 // Exported defaults so callers can reuse instead of recreating per-call.
 export const DEFAULT_AUDIO_CODECS = ["opus", "isac", "g722", "pcmu", "pcma"] as const;

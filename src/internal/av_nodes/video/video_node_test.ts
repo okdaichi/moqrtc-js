@@ -1,10 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 import { MockHTMLCanvasElement } from "./mock_htmlcanvaselement_test.ts";
-import {
-	VideoContext,
-	VideoDestinationNode,
-	VideoNode
-} from "./video_node.ts";
+import { VideoContext, VideoDestinationNode, VideoNode } from "./video_node.ts";
 
 // Using shared MockVideoEncoder from test-stubs
 

@@ -1,10 +1,9 @@
 // Audio node API: AudioNode, AudioEncodeNode, AudioDecodeNode
 // Based on VideoEncodeNode and VideoDecodeNode patterns
 // Uses Web Audio API AudioEncoder/AudioDecoder for encoding/decoding
-import type { EncodeDestination } from "../container.ts";
 import {
-	workletName as hijackWorkletName,
 	importWorkletUrl as importHijackWorkletUrl,
+	workletName as hijackWorkletName,
 } from "./audio_hijack_worklet.ts";
 
 // Backpressure management: Maximum queue size before dropping frames
@@ -16,7 +15,7 @@ export class AudioEncodeNode implements AudioNode {
 	#worklet?: AudioWorkletNode;
 	#disposed = false;
 
-	#dests: Set<EncodeDestination> = new Set();
+	#dests: Set<AudioEncodeDestination> = new Set();
 
 	// Event listeners storage
 	#eventListeners: Map<string, Set<EventListenerOrEventListenerObject>> = new Map();
@@ -28,7 +27,7 @@ export class AudioEncodeNode implements AudioNode {
 			output: async (chunk) => {
 				// Use allSettled to ensure one destination error doesn't affect others
 				await Promise.allSettled(
-					Array.from(this.#dests, (dest) => dest.output(chunk))
+					Array.from(this.#dests, (dest) => dest.output(chunk)),
 				);
 			},
 			error: (e) => {
@@ -259,15 +258,18 @@ export class AudioEncodeNode implements AudioNode {
 		}
 	}
 
-	async encodeTo(callbacks: EncodeDestination): Promise<void> {
-		this.#dests.add(callbacks);
+	encodeTo(dest: AudioEncodeDestination): { done: Promise<void> } {
+		this.#dests.add(dest);
 
-		await Promise.race([
-			callbacks.done,
-		]);
+		const done = dest.done.finally(() => {
+			this.#dests.delete(dest);
+		});
 
-		this.#dests.delete(callbacks);
+		return { done };
 	}
 }
 
-
+export interface AudioEncodeDestination {
+	output: (chunk: EncodedAudioChunk) => Promise<Error | undefined>;
+	done: Promise<void>;
+}

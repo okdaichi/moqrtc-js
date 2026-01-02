@@ -1,4 +1,3 @@
-
 Deno.test("VideoObserveNode", async (t) => {
 	let context: VideoContext;
 	let observeNode: VideoObserveNode;
