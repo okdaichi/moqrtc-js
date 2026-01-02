@@ -1,4 +1,5 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write --allow-env --allow-net
+/// <reference lib="deno.ns" />
 /**
  * Build script for AudioWorklet processors
  * 
@@ -8,8 +9,8 @@
  * 3. Allows importing worklets as inline code instead of external files
  */
 
-import * as esbuild from "https://deno.land/x/esbuild@v0.20.1/mod.js";
 import { basename, dirname, fromFileUrl, join } from "https://deno.land/std@0.208.0/path/mod.ts";
+import * as esbuild from "https://deno.land/x/esbuild@v0.20.1/mod.js";
 
 // Get the directory where this script is located
 const __dirname = dirname(fromFileUrl(import.meta.url));
