@@ -93,9 +93,16 @@ export class VideoDecodeNode extends VideoNode {
 	}
 
 	async flush(): Promise<void> {
+		if (this.#decoder.state === "closed") {
+			return;
+		}
 		try {
 			await this.#decoder.flush();
 		} catch (e) {
+			// AbortError during close is expected, don't log it
+			if (e instanceof DOMException && e.name === "AbortError") {
+				return;
+			}
 			console.error("[VideoDecodeNode] flush error:", e);
 		}
 	}

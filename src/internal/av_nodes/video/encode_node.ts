@@ -20,8 +20,8 @@ export class VideoEncodeNode extends VideoNode {
 
 		this.#encoder = new VideoEncoder({
 			output: async (chunk, meta) => {
-				if (meta) {
-					console.log("[VideoEncodeNode] Encoded chunk metadata:", meta);
+				if (meta?.decoderConfig) {
+					console.log("[VideoEncodeNode] Encoded chunk decoderConfig:", meta.decoderConfig);
 				}
 				// Pass encoded chunk to all registered destinations
 				await Promise.allSettled(
@@ -51,7 +51,7 @@ export class VideoEncodeNode extends VideoNode {
 	}
 
 	process(input: VideoFrame): void {
-		if (this.disposed) {
+		if (this.disposed || this.#encoder.state === "closed") {
 			return;
 		}
 
@@ -70,7 +70,10 @@ export class VideoEncodeNode extends VideoNode {
 				keyFrame: this.#isKey(input.timestamp, this.encodeQueueSize),
 			});
 		} catch (e) {
-			console.error("[VideoEncodeNode] encode error:", e);
+			// Only log if not a closed codec error during shutdown
+			if (!this.disposed) {
+				console.error("[VideoEncodeNode] encode error:", e);
+			}
 		}
 
 		// Ownership: We own the clone, so we close it
@@ -78,9 +81,16 @@ export class VideoEncodeNode extends VideoNode {
 	}
 
 	async flush(): Promise<void> {
+		if (this.#encoder.state === "closed") {
+			return;
+		}
 		try {
 			await this.#encoder.flush();
 		} catch (e) {
+			// AbortError during close is expected, don't log it
+			if (e instanceof DOMException && e.name === "AbortError") {
+				return;
+			}
 			console.error("[VideoEncodeNode] flush error:", e);
 		}
 	}

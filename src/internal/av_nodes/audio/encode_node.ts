@@ -1,27 +1,38 @@
-// Audio node API: AudioNode, AudioEncodeNode, AudioDecodeNode
-// Based on VideoEncodeNode and VideoDecodeNode patterns
-// Uses Web Audio API AudioEncoder/AudioDecoder for encoding/decoding
+// Audio node API: AudioEncodeNode
+// Extends GainNode to enable standard connect() pattern while adding encoding capabilities
 import {
-	importWorkletUrl as importHijackWorkletUrl,
 	workletName as hijackWorkletName,
+	importWorkletUrl as importHijackWorkletUrl,
 } from "./audio_hijack_worklet.ts";
 
 // Backpressure management: Maximum queue size before dropping frames
 const MAX_ENCODE_QUEUE_SIZE = 2;
 
-export class AudioEncodeNode implements AudioNode {
+/**
+ * AudioEncodeNode extends GainNode to capture audio from the Web Audio graph
+ * and encode it using WebCodecs AudioEncoder.
+ *
+ * Usage:
+ * ```typescript
+ * const encodeNode = new AudioEncodeNode(audioContext);
+ * encodeNode.configure(audioEncoderConfig);
+ *
+ * // Standard Web Audio connect() works directly
+ * sourceNode.connect(encodeNode);
+ *
+ * // Start encoding
+ * encodeNode.encodeTo(destination);
+ * ```
+ */
+export class AudioEncodeNode extends GainNode {
 	#encoder: AudioEncoder;
-	context: AudioContext;
-	#worklet?: AudioWorkletNode;
+	#workletReady: Promise<AudioWorkletNode>;
 	#disposed = false;
-
 	#dests: Set<AudioEncodeDestination> = new Set();
 
-	// Event listeners storage
-	#eventListeners: Map<string, Set<EventListenerOrEventListenerObject>> = new Map();
-
 	constructor(context: AudioContext) {
-		this.context = context;
+		// Initialize as a passthrough GainNode
+		super(context, { gain: 1.0 });
 
 		this.#encoder = new AudioEncoder({
 			output: async (chunk) => {
@@ -35,102 +46,48 @@ export class AudioEncodeNode implements AudioNode {
 			},
 		});
 
-		const readable = new ReadableStream<AudioData>({
-			start: async (controller) => {
-				await context.audioWorklet.addModule(importHijackWorkletUrl());
-
-				const worklet = new AudioWorkletNode(
-					context,
-					hijackWorkletName,
-					{
-						numberOfInputs: 1,
-						numberOfOutputs: 0,
-						channelCount: context.destination.channelCount,
-						processorOptions: {
-							sampleRate: context.sampleRate,
-							targetChannels: context.destination.channelCount || 1,
-						},
+		// Initialize worklet and connect this GainNode to it
+		this.#workletReady = context.audioWorklet.addModule(importHijackWorkletUrl()).then(() => {
+			const worklet = new AudioWorkletNode(
+				context,
+				hijackWorkletName,
+				{
+					numberOfInputs: 1,
+					numberOfOutputs: 1,
+					channelCount: context.destination.channelCount,
+					processorOptions: {
+						sampleRate: context.sampleRate,
+						targetChannels: context.destination.channelCount,
 					},
-				);
-				this.#worklet = worklet;
+				},
+			);
 
-				worklet.port.onmessage = ({ data }: { data: AudioDataInit }) => {
-					const frame = new AudioData(data);
-					controller.enqueue(frame);
-				};
-			},
-			cancel() {
-				// TODO: Clean up worklet if needed
-			},
+			const readable = new ReadableStream<AudioData>({
+				start: (controller) => {
+					worklet.port.onmessage = ({ data }: { data: AudioDataInit }) => {
+						try {
+							const frame = new AudioData(data);
+							controller.enqueue(frame);
+						} catch (e) {
+							console.error("[AudioEncodeNode] Failed to create AudioData:", e);
+						}
+					};
+				},
+				cancel() {
+					// Clean up when stream is cancelled
+				},
+			});
+
+			// Connect this GainNode (super) to the worklet
+			// This captures all audio flowing into this node
+			super.connect(worklet);
+
+			this.#next(readable.getReader());
+			return worklet;
+		}).catch((e) => {
+			console.error("[AudioEncodeNode] Failed to initialize worklet:", e);
+			throw e;
 		});
-
-		queueMicrotask(() => this.#next(readable.getReader()));
-	}
-
-	// Dummy AudioNode methods for interface compatibility
-	connect(destinationNode: AudioNode, output?: number, input?: number): AudioNode;
-	connect(destinationParam: AudioParam, output?: number): void;
-	connect(
-		_destination: AudioNode | AudioParam,
-		_output?: number,
-		_input?: number,
-	): AudioNode | void {
-		// This node does not output audio to the graph, so connections are not supported
-		throw new Error("AudioEncodeNode does not support connections as it does not output audio");
-	}
-
-	disconnect(): void;
-	disconnect(output: number): void;
-	disconnect(destinationNode: AudioNode): void;
-	disconnect(destinationNode: AudioNode, output: number): void;
-	disconnect(destinationNode: AudioNode, output: number, input: number): void;
-	disconnect(destinationParam: AudioParam): void;
-	disconnect(destinationParam: AudioParam, output: number): void;
-	disconnect(
-		_destinationOrOutput?: number | AudioNode | AudioParam,
-		_output?: number,
-		_input?: number,
-	): void {
-		// No-op
-	}
-
-	addEventListener(
-		type: string,
-		listener: EventListenerOrEventListenerObject,
-		_options?: boolean | AddEventListenerOptions,
-	): void {
-		if (!this.#eventListeners.has(type)) {
-			this.#eventListeners.set(type, new Set());
-		}
-		this.#eventListeners.get(type)!.add(listener);
-	}
-
-	removeEventListener(
-		type: string,
-		listener: EventListenerOrEventListenerObject,
-		_options?: boolean | EventListenerOptions,
-	): void {
-		const listeners = this.#eventListeners.get(type);
-		if (listeners) {
-			listeners.delete(listener);
-			if (listeners.size === 0) {
-				this.#eventListeners.delete(type);
-			}
-		}
-	}
-
-	dispatchEvent(event: Event): boolean {
-		const listeners = this.#eventListeners.get(event.type);
-		if (listeners) {
-			for (const listener of listeners) {
-				if (typeof listener === "function") {
-					listener(event);
-				} else {
-					listener.handleEvent(event);
-				}
-			}
-		}
-		return !event.defaultPrevented;
 	}
 
 	configure(config: AudioEncoderConfig): void {
@@ -138,8 +95,21 @@ export class AudioEncodeNode implements AudioNode {
 	}
 
 	async #next(stream: ReadableStreamDefaultReader<AudioData>): Promise<void> {
+		// Stop processing if disposed
+		if (this.#disposed) {
+			stream.releaseLock();
+			return;
+		}
+
 		const { done, value } = await stream.read();
 		if (done) {
+			stream.releaseLock();
+			return;
+		}
+
+		// Check again after await - state may have changed
+		if (this.#disposed) {
+			value.close();
 			stream.releaseLock();
 			return;
 		}
@@ -147,101 +117,28 @@ export class AudioEncodeNode implements AudioNode {
 		// Backpressure: Drop frame if queue is overloaded
 		if (this.encodeQueueSize > MAX_ENCODE_QUEUE_SIZE) {
 			console.warn(`[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`);
+			value.close();
 			queueMicrotask(() => this.#next(stream));
 			return;
 		}
 
 		// Ownership: Stream owns value, so we clone for our use
 		const clonedData = value.clone();
+		value.close(); // Close original since we cloned it
 
 		try {
 			this.#encoder.encode(clonedData);
 		} catch (e) {
-			console.error("[AudioEncodeNode] encode error:", e);
+			// Only log if not a closed codec error during shutdown
+			if (!this.#disposed) {
+				console.error("[AudioEncodeNode] encode error:", e);
+			}
 		}
 
 		// Ownership: We own the clone, so we close it
 		clonedData.close();
 
 		queueMicrotask(() => this.#next(stream));
-	}
-
-	process(input: AudioData): void {
-		if (this.#disposed) return;
-
-		// Backpressure: Drop frame if queue is overloaded
-		if (this.encodeQueueSize > MAX_ENCODE_QUEUE_SIZE) {
-			console.warn(`[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`);
-			return; // Drop frame without encoding
-		}
-
-		// Ownership: Caller owns input, so we clone for our use
-		const clonedData = input.clone();
-
-		// Encode the audio data
-		try {
-			this.#encoder.encode(clonedData);
-		} catch (e) {
-			console.error("[AudioEncodeNode] encode error:", e);
-		}
-
-		// Ownership: We own the clone, so we close it
-		clonedData.close();
-	}
-
-	async close(): Promise<void> {
-		try {
-			this.#encoder.close();
-		} catch (_) {
-			/* ignore */
-		}
-	}
-
-	// Unified disposal pattern following video pattern
-	dispose(): void {
-		if (this.#disposed) return;
-		this.#disposed = true;
-
-		// Clean up encoder
-		try {
-			this.#encoder.close();
-		} catch (_) {
-			/* ignore */
-		}
-
-		// Clean up worklet
-		if (this.#worklet) {
-			try {
-				this.#worklet.disconnect();
-			} catch (_) {
-				/* ignore */
-			}
-		}
-
-		// Clear destinations
-		this.#dests.clear();
-		this.#eventListeners.clear();
-	}
-
-	// Implement required AudioNode properties for compatibility
-	get channelCount(): number {
-		return this.#worklet?.channelCount || 1;
-	}
-
-	get channelCountMode(): ChannelCountMode {
-		return this.#worklet?.channelCountMode || "explicit";
-	}
-
-	get channelInterpretation(): ChannelInterpretation {
-		return this.#worklet?.channelInterpretation || "speakers";
-	}
-
-	get numberOfInputs(): number {
-		return this.#worklet?.numberOfInputs || 1;
-	}
-
-	get numberOfOutputs(): number {
-		return this.#worklet?.numberOfOutputs || 0;
 	}
 
 	// Codec state monitoring
@@ -266,6 +163,48 @@ export class AudioEncodeNode implements AudioNode {
 		});
 
 		return { done };
+	}
+
+	async close(): Promise<void> {
+		try {
+			this.#encoder.close();
+		} catch (_) {
+			/* ignore */
+		}
+	}
+
+	// Unified disposal pattern following video pattern
+	dispose(): void {
+		if (this.#disposed) return;
+		this.#disposed = true;
+
+		// Clean up encoder
+		try {
+			this.#encoder.close();
+		} catch (_) {
+			/* ignore */
+		}
+
+		// Disconnect this GainNode
+		try {
+			super.disconnect();
+		} catch (_) {
+			/* ignore */
+		}
+
+		// Clean up worklet
+		this.#workletReady.then((worklet) => {
+			try {
+				worklet.disconnect();
+			} catch (_) {
+				/* ignore */
+			}
+		}).catch(() => {
+			/* ignore */
+		});
+
+		// Clear destinations
+		this.#dests.clear();
 	}
 }
 

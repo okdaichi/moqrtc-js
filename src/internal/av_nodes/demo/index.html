@@ -3,7 +3,7 @@
 	<head>
 		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<title>@okudai/video-nodes Demo</title>
+		<title>@okudai/av-nodes Demo</title>
 		<style>
 			* {
 				margin: 0;
@@ -367,7 +367,9 @@
 				</div>
 
 				<div class="metrics">
-					<h3 style="margin-bottom: 1rem; color: #333">📊 Pipeline Metrics</h3>
+					<h3 style="margin-bottom: 1rem; color: #333">
+						📊 Video Pipeline Metrics
+					</h3>
 					<div class="metrics-grid">
 						<div class="metric-item">
 							<div class="metric-label">Frames Encoded</div>
@@ -386,31 +388,55 @@
 							<div class="metric-value" id="decodeQueue">0</div>
 						</div>
 					</div>
+				</div>
 
-					<div class="analysis-section">
-						<h3 style="margin-bottom: 1rem; color: #333">🎨 Video Analysis</h3>
-						<div class="analysis-grid">
-							<div class="analysis-item">
-								<div class="analysis-label">Luma Average</div>
-								<div class="analysis-value" id="brightness">0.00</div>
-							</div>
-							<div class="analysis-item">
-								<div class="analysis-label">Luma Variance</div>
-								<div class="analysis-value" id="contrast">0.00</div>
-							</div>
-							<div class="analysis-item">
-								<div class="analysis-label">Chroma Variance</div>
-								<div class="analysis-value" id="saturation">0.00</div>
-							</div>
-							<div class="analysis-item">
-								<div class="analysis-label">Frame Energy</div>
-								<div id="dominantColor" class="dominant-color-box"></div>
-							</div>
+				<div class="metrics">
+					<h3 style="margin-bottom: 1rem; color: #333">
+						🔊 Audio Pipeline Metrics
+					</h3>
+					<div class="metrics-grid">
+						<div class="metric-item">
+							<div class="metric-label">Audio Frames Encoded</div>
+							<div class="metric-value" id="audioEncodedFrames">0</div>
+						</div>
+						<div class="metric-item">
+							<div class="metric-label">Audio Frames Decoded</div>
+							<div class="metric-value" id="audioDecodedFrames">0</div>
+						</div>
+						<div class="metric-item">
+							<div class="metric-label">Audio Encode Queue</div>
+							<div class="metric-value" id="audioEncodeQueue">0</div>
+						</div>
+						<div class="metric-item">
+							<div class="metric-label">Audio Decode Queue</div>
+							<div class="metric-value" id="audioDecodeQueue">0</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="metrics">
+					<h3 style="margin-bottom: 1rem; color: #333">🎨 Video Analysis</h3>
+					<div class="analysis-grid">
+						<div class="analysis-item">
+							<div class="analysis-label">Luma Average</div>
+							<div class="analysis-value" id="brightness">0.00</div>
 						</div>
 						<div class="analysis-item">
-							<div class="analysis-label">Motion & Complexity Metrics</div>
-							<div id="colorBar" class="color-bar"></div>
+							<div class="analysis-label">Luma Variance</div>
+							<div class="analysis-value" id="contrast">0.00</div>
 						</div>
+						<div class="analysis-item">
+							<div class="analysis-label">Chroma Variance</div>
+							<div class="analysis-value" id="saturation">0.00</div>
+						</div>
+						<div class="analysis-item">
+							<div class="analysis-label">Frame Energy</div>
+							<div id="dominantColor" class="dominant-color-box"></div>
+						</div>
+					</div>
+					<div class="analysis-item">
+						<div class="analysis-label">Motion & Complexity Metrics</div>
+						<div id="colorBar" class="color-bar"></div>
 					</div>
 				</div>
 

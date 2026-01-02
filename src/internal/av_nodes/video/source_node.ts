@@ -45,16 +45,30 @@ export class VideoSourceNode extends VideoNode {
 				this.#reader = this.#stream.getReader();
 
 				while (this.#running && this.context.state === "running") {
+					// Use context's frame pacing for consistent timing
+					const timestamp = await this.context._waitNextFrame();
+
+					// Check if still running after await
+					if (!this.#running || !this.#reader) break;
+
 					const { done, value: frame } = await this.#reader.read();
 					if (done) break;
 
-					// Pass frame to outputs (they will clone if needed)
-					this.process(frame);
+					// Create new frame with context's timestamp (single source of truth)
+					const retimedFrame = new VideoFrame(frame, {
+						timestamp, // Use context's μs timestamp
+					});
+					frame.close(); // Close original frame
 
-					// Ownership: We own the frame from stream, so we close it
-					frame.close();
+					// Pass retimedFrame to outputs (they will clone if needed)
+					this.process(retimedFrame);
+
+					// Ownership: We own the retimedFrame, so we close it
+					retimedFrame.close();
 				}
 			} catch (e) {
+				// Ignore expected errors during shutdown
+				if (!this.#running || this.disposed) return;
 				console.error("[VideoSourceNode] read error:", e);
 			} finally {
 				this.#running = false;
@@ -94,12 +108,12 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 	readonly track: MediaStreamTrack;
 	#stream: ReadableStream<VideoFrame>;
 
-	constructor(track: MediaStreamTrack, context?: VideoContext) {
-		const settings = track.getSettings();
-		const frameRate = settings?.frameRate ?? 30;
-
-		// Use provided context or create new one
-		const videoContext = context ?? new VideoContext({ frameRate });
+	constructor(context: VideoContext, options: { mediaStream: MediaStream }) {
+		const { mediaStream } = options;
+		const track = mediaStream.getVideoTracks()[0];
+		if (!track) {
+			throw new Error("[MediaStreamVideoSourceNode] No video track in MediaStream");
+		}
 
 		let stream: ReadableStream<VideoFrame>;
 
@@ -111,12 +125,7 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 				"[MediaStreamVideoSourceNode] MediaStreamTrackProcessor not available; using polyfill",
 			);
 
-			if (!settings) {
-				throw new Error("[MediaStreamVideoSourceNode] track has no settings");
-			}
-
 			const video = document.createElement("video");
-			let lastTimestamp: DOMHighResTimeStamp = performance.now();
 
 			stream = new ReadableStream<VideoFrame>({
 				async start() {
@@ -127,17 +136,14 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 							video.onloadedmetadata = () => resolve();
 						}),
 					]);
-					lastTimestamp = performance.now();
 				},
 				async pull(controller) {
-					const frameInterval = 1000 / frameRate;
-					while (performance.now() - lastTimestamp < frameInterval) {
-						await new Promise((resolve) => requestAnimationFrame(resolve));
-					}
-					lastTimestamp = performance.now();
+					// Use context's frame pacing - single source of truth for timing
+					const timestamp = await context._waitNextFrame();
+
 					controller.enqueue(
 						new VideoFrame(video, {
-							timestamp: lastTimestamp * 1000,
+							timestamp, // μs from context
 						}),
 					);
 				},
@@ -147,7 +153,7 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 			});
 		}
 
-		super(videoContext, stream);
+		super(context, stream);
 		this.track = track;
 		this.#stream = stream;
 	}
@@ -164,3 +170,7 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 		super.dispose();
 	}
 }
+
+declare const MediaStreamTrackProcessor: {
+	new (options: { track: MediaStreamTrack }): { readable: ReadableStream<VideoFrame> };
+};

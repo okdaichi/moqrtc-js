@@ -1,3 +1,5 @@
+// Audio node API: AudioDecodeNode
+// Extends GainNode to enable standard connect() pattern while adding decoding capabilities
 import {
 	importWorkletUrl as importOffloadWorkletUrl,
 	workletName as offloadWorkletName,
@@ -5,18 +7,38 @@ import {
 
 const MAX_DECODE_QUEUE_SIZE = 3;
 
-export class AudioDecodeNode implements AudioNode {
+/**
+ * AudioDecodeNode extends GainNode to decode audio using WebCodecs AudioDecoder
+ * and output it to the Web Audio graph.
+ *
+ * Usage:
+ * ```typescript
+ * const decodeNode = new AudioDecodeNode(audioContext);
+ * decodeNode.configure(audioDecoderConfig);
+ *
+ * // Standard Web Audio connect() works directly
+ * decodeNode.connect(audioContext.destination);
+ *
+ * // Start decoding from stream
+ * decodeNode.decodeFrom(encodedAudioStream);
+ * ```
+ */
+export class AudioDecodeNode extends GainNode {
 	#decoder: AudioDecoder;
-	context: AudioContext;
-	#worklet?: AudioWorkletNode;
+	#workletReady: Promise<AudioWorkletNode>;
 	#disposed = false;
 
-	constructor(context: AudioContext, init: { latency?: number } = {}) {
-		this.context = context;
+	// Callback for decoded output (for metrics)
+	onoutput: (() => void) | null = null;
 
-		context.audioWorklet.addModule(importOffloadWorkletUrl()).then(() => {
+	constructor(context: AudioContext, init: { latency?: number } = {}) {
+		// Initialize as a passthrough GainNode
+		super(context, { gain: 1.0 });
+
+		// Initialize worklet asynchronously
+		this.#workletReady = context.audioWorklet.addModule(importOffloadWorkletUrl()).then(() => {
 			// Create AudioWorkletNode
-			this.#worklet = new AudioWorkletNode(
+			const worklet = new AudioWorkletNode(
 				context,
 				offloadWorkletName,
 				{
@@ -29,14 +51,21 @@ export class AudioDecodeNode implements AudioNode {
 					},
 				},
 			);
+
+			// Connect worklet to this GainNode (super)
+			// Audio flows: worklet → this GainNode → destination
+			worklet.connect(this as GainNode);
+
+			return worklet;
 		}).catch((error) => {
 			console.error("[AudioDecodeNode] failed to load AudioWorklet module:", error);
+			throw error;
 		});
 
 		this.#decoder = new AudioDecoder({
 			output: async (frame) => {
 				// Pass audio frame to processing
-				this.process(frame);
+				this.#process(frame);
 
 				// Close the decoded frame after processing
 				frame.close();
@@ -47,88 +76,8 @@ export class AudioDecodeNode implements AudioNode {
 		});
 	}
 
-	// Implement missing AudioNode methods
-	disconnect(): void;
-	disconnect(output: number): void;
-	disconnect(destinationNode: AudioNode): void;
-	disconnect(destinationNode: AudioNode, output: number): void;
-	disconnect(destinationNode: AudioNode, output: number, input: number): void;
-	disconnect(destinationParam: AudioParam): void;
-	disconnect(destinationParam: AudioParam, output: number): void;
-	disconnect(
-		destinationOrOutput?: number | AudioNode | AudioParam,
-		output?: number,
-		input?: number,
-	): void {
-		if (arguments.length === 0) {
-			this.#worklet?.disconnect();
-		} else if (typeof destinationOrOutput === "number") {
-			this.#worklet?.disconnect(destinationOrOutput);
-		} else if (
-			typeof window !== "undefined" &&
-			typeof AudioNode !== "undefined" &&
-			destinationOrOutput instanceof AudioNode
-		) {
-			if (output !== undefined && input !== undefined) {
-				this.#worklet?.disconnect(destinationOrOutput, output, input);
-			} else if (output !== undefined) {
-				this.#worklet?.disconnect(destinationOrOutput, output);
-			} else {
-				this.#worklet?.disconnect(destinationOrOutput);
-			}
-		} else if (
-			typeof globalThis !== "undefined" &&
-			typeof AudioParam !== "undefined" &&
-			destinationOrOutput instanceof AudioParam
-		) {
-			if (output !== undefined) {
-				this.#worklet?.disconnect(destinationOrOutput, output);
-			} else {
-				this.#worklet?.disconnect(destinationOrOutput);
-			}
-		} else {
-			this.#worklet?.disconnect();
-		}
-	}
-
-	addEventListener(
-		type: string,
-		listener: EventListenerOrEventListenerObject,
-		options?: boolean | AddEventListenerOptions,
-	): void {
-		this.#worklet?.addEventListener(type, listener, options);
-	}
-
-	removeEventListener(
-		type: string,
-		listener: EventListenerOrEventListenerObject,
-		options?: boolean | EventListenerOptions,
-	): void {
-		this.#worklet?.removeEventListener(type, listener, options);
-	}
-
-	dispatchEvent(event: Event): boolean {
-		return this.#worklet?.dispatchEvent(event) || false;
-	}
-
-	get numberOfInputs(): number {
-		return this.#worklet?.numberOfInputs || 1;
-	}
-
-	get numberOfOutputs(): number {
-		return this.#worklet?.numberOfOutputs || 1;
-	}
-
-	get channelCount(): number {
-		return this.#worklet?.channelCount || 1;
-	}
-
-	get channelCountMode(): ChannelCountMode {
-		return "explicit";
-	}
-
-	get channelInterpretation(): ChannelInterpretation {
-		return "speakers";
+	configure(config: AudioDecoderConfig): void {
+		this.#decoder.configure(config);
 	}
 
 	// Codec state monitoring
@@ -145,58 +94,37 @@ export class AudioDecodeNode implements AudioNode {
 		}
 	}
 
-	connect(destinationNode: AudioNode, output?: number, input?: number): AudioNode;
-	connect(destinationParam: AudioParam, output?: number): void;
-	connect(
-		destination: AudioNode | AudioParam,
-		output?: number,
-		input?: number,
-	): AudioNode | void {
-		if (
-			(globalThis.AudioNode && destination instanceof globalThis.AudioNode) ||
-			(typeof AudioNode !== "undefined" && destination instanceof AudioNode)
-		) {
-			// Connect to another AudioNode
-			this.#worklet?.connect(destination, output, input);
-			return destination as AudioNode;
-		} else if (
-			(globalThis.AudioParam && destination instanceof globalThis.AudioParam) ||
-			(typeof AudioParam !== "undefined" && destination instanceof AudioParam)
-		) {
-			// Connect to an AudioParam
-			this.#worklet?.connect(destination, output);
-			return;
-		} else {
-			throw new TypeError("Invalid destination for connect()");
-		}
-	}
-
-	configure(config: AudioDecoderConfig): void {
-		this.#decoder.configure(config);
-	}
-
 	decodeFrom(stream: ReadableStream<EncodedAudioChunk>): { done: Promise<void> } {
 		const done = (async () => {
+			let reader: ReadableStreamDefaultReader<EncodedAudioChunk> | undefined;
 			try {
-				const reader = stream.getReader();
+				reader = stream.getReader();
+				while (this.context.state === "running" && !this.#disposed) {
+					// Backpressure: Wait if decoder queue is overloaded
+					if (this.decodeQueueSize > MAX_DECODE_QUEUE_SIZE) {
+						await new Promise<void>((resolve) => {
+							queueMicrotask(() => resolve());
+						});
+						continue;
+					}
 
-				const { done, value: chunk } = await reader.read();
-				if (done) {
-					reader.releaseLock();
-					return;
+					const { done, value: chunk } = await reader.read();
+					if (done) {
+						break;
+					}
+
+					this.#decoder.decode(chunk);
 				}
-
-				// Backpressure: Drop chunk if queue is overloaded
-				if (this.decodeQueueSize > MAX_DECODE_QUEUE_SIZE) {
-					console.warn(
-						`[AudioDecodeNode] Dropping chunk, queue size: ${this.decodeQueueSize}`,
-					);
-					return;
-				}
-
-				this.#decoder.decode(chunk);
 			} catch (e) {
-				console.error("[AudioDecodeNode] decodeFrom error:", e);
+				// AbortError during close is expected, don't log it
+				if (e instanceof DOMException && e.name === "AbortError") {
+					return;
+				}
+				if (!this.#disposed) {
+					console.error("[AudioDecodeNode] decodeFrom error:", e);
+				}
+			} finally {
+				reader?.releaseLock();
 			}
 		})();
 
@@ -205,11 +133,15 @@ export class AudioDecodeNode implements AudioNode {
 		};
 	}
 
-	process(input: AudioData): void {
+	#process(input: AudioData): void {
 		if (this.#disposed) return;
 
-		// Ownership: Caller (decoder callback) owns input
-		// No longer drops frames when muted; gain handles silence for continuity.
+		// Call output callback for metrics
+		if (this.onoutput) {
+			this.onoutput();
+		}
+
+		// Extract audio channels from AudioData
 		const channels: Float32Array[] = [];
 		for (let i = 0; i < input.numberOfChannels; i++) {
 			const data = new Float32Array(input.numberOfFrames);
@@ -219,19 +151,30 @@ export class AudioDecodeNode implements AudioNode {
 
 		// Send AudioData to the worklet
 		// Ownership: Transfer buffer ownership to worklet
-		this.#worklet?.port.postMessage(
-			{
-				channels: channels,
-				timestamp: input.timestamp,
-			},
-			channels.map((d) => d.buffer), // Transfer ownership of the buffers
-		);
+		this.#workletReady.then((worklet) => {
+			worklet.port.postMessage(
+				{
+					channels: channels,
+					timestamp: input.timestamp,
+				},
+				channels.map((d) => d.buffer), // Transfer ownership of the buffers
+			);
+		}).catch(() => {
+			/* ignore */
+		});
 	}
 
 	async flush(): Promise<void> {
+		if (this.#decoder.state === "closed") {
+			return;
+		}
 		try {
 			await this.#decoder.flush();
 		} catch (e) {
+			// AbortError during close is expected, don't log it
+			if (e instanceof DOMException && e.name === "AbortError") {
+				return;
+			}
 			console.error("[AudioDecodeNode] flush error:", e);
 		}
 	}
@@ -250,26 +193,29 @@ export class AudioDecodeNode implements AudioNode {
 		if (this.#disposed) return;
 		this.#disposed = true;
 
-		// Flush and close decoder
-		try {
-			this.#decoder.flush();
-		} catch (_) {
-			/* ignore */
-		}
-
+		// Close decoder directly (skip flush to avoid AbortError)
 		try {
 			this.#decoder.close();
 		} catch (_) {
 			/* ignore */
 		}
 
+		// Disconnect this GainNode
+		try {
+			super.disconnect();
+		} catch (_) {
+			/* ignore */
+		}
+
 		// Disconnect worklet
-		if (this.#worklet) {
+		this.#workletReady.then((worklet) => {
 			try {
-				this.#worklet.disconnect();
+				worklet.disconnect();
 			} catch (_) {
 				/* ignore */
 			}
-		}
+		}).catch(() => {
+			/* ignore */
+		});
 	}
 }

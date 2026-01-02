@@ -1,3 +1,5 @@
+import { audioEncoderConfig } from "../audio/audio_config.ts";
+import { AudioDecodeNode, AudioEncodeDestination, AudioEncodeNode } from "../audio/mod.ts";
 import {
 	MediaStreamVideoSourceNode,
 	VideoAnalyserNode,
@@ -6,14 +8,15 @@ import {
 	VideoEncodeDestination,
 	VideoEncodeNode,
 	VideoOverlayNode,
-} from "../mod.ts";
-import { videoEncoderConfig } from "../video_config.ts";
+} from "../video/mod.ts";
+import { videoEncoderConfig } from "../video/video_config.ts";
 
 // ============================================================================
 // Types
 // ============================================================================
 
 interface PipelineState {
+	// Video pipeline
 	sourceNode: MediaStreamVideoSourceNode | null;
 	analyserNode: VideoAnalyserNode | null;
 	encodeNode: VideoEncodeNode | null;
@@ -22,15 +25,28 @@ interface PipelineState {
 	outputContext: VideoContext | null;
 	stream: MediaStream | null;
 	running: boolean;
+
+	// Audio pipeline (using browser's native Web Audio API)
+	audioSourceNode: MediaStreamAudioSourceNode | null;
+	audioEncodeNode: AudioEncodeNode | null;
+	audioDecodeNode: AudioDecodeNode | null;
+	audioContext: AudioContext | null;
 }
 
 interface Metrics {
+	// Video metrics
 	encodedFrames: number;
 	decodedFrames: number;
 	encodeQueueSize: number;
 	decodeQueueSize: number;
 	startTime: number;
 	fps: number;
+
+	// Audio metrics
+	audioEncodedFrames: number;
+	audioDecodedFrames: number;
+	audioEncodeQueueSize: number;
+	audioDecodeQueueSize: number;
 }
 
 // ============================================================================
@@ -38,6 +54,7 @@ interface Metrics {
 // ============================================================================
 
 const pipeline: PipelineState = {
+	// Video pipeline
 	sourceNode: null,
 	analyserNode: null,
 	encodeNode: null,
@@ -46,15 +63,28 @@ const pipeline: PipelineState = {
 	outputContext: null,
 	stream: null,
 	running: false,
+
+	// Audio pipeline
+	audioSourceNode: null,
+	audioEncodeNode: null,
+	audioDecodeNode: null,
+	audioContext: null,
 };
 
 const metrics: Metrics = {
+	// Video metrics
 	encodedFrames: 0,
 	decodedFrames: 0,
 	encodeQueueSize: 0,
 	decodeQueueSize: 0,
 	startTime: 0,
 	fps: 0,
+
+	// Audio metrics
+	audioEncodedFrames: 0,
+	audioDecodedFrames: 0,
+	audioEncodeQueueSize: 0,
+	audioDecodeQueueSize: 0,
 };
 
 const DEBUG_METRICS = false;
@@ -92,6 +122,7 @@ function getOverlayText(): string {
 
 const elements = {
 	status: () => document.getElementById("status"),
+	// Video metrics
 	encodedFrames: () => document.getElementById("encodedFrames"),
 	decodedFrames: () => document.getElementById("decodedFrames"),
 	encodeQueue: () => document.getElementById("encodeQueue"),
@@ -104,6 +135,13 @@ const elements = {
 	saturation: () => document.getElementById("saturation"),
 	dominantColor: () => document.getElementById("dominantColor"),
 	colorBar: () => document.getElementById("colorBar"),
+	// Audio metrics
+	audioEncodedFrames: () => document.getElementById("audioEncodedFrames"),
+	audioDecodedFrames: () => document.getElementById("audioDecodedFrames"),
+	audioEncodeQueue: () => document.getElementById("audioEncodeQueue"),
+	audioDecodeQueue: () => document.getElementById("audioDecodeQueue"),
+	audioCodecConfig: () => document.getElementById("audioCodecConfig"),
+	// Buttons
 	startCameraBtn: () => document.getElementById("startCameraBtn") as HTMLButtonElement,
 	startScreenBtn: () => document.getElementById("startScreenBtn") as HTMLButtonElement,
 	stopBtn: () => document.getElementById("stopBtn") as HTMLButtonElement,
@@ -125,7 +163,7 @@ function setStatus(
 }
 
 function renderMetrics() {
-	// Update DOM elements with current metrics
+	// Update DOM elements with current video metrics
 	const encodedEl = elements.encodedFrames();
 	const decodedEl = elements.decodedFrames();
 	const encodeQueueEl = elements.encodeQueue();
@@ -138,6 +176,25 @@ function renderMetrics() {
 	}
 	if (decodeQueueEl) {
 		decodeQueueEl.textContent = metrics.decodeQueueSize.toString();
+	}
+
+	// Update DOM elements with current audio metrics
+	const audioEncodedEl = elements.audioEncodedFrames();
+	const audioDecodedEl = elements.audioDecodedFrames();
+	const audioEncodeQueueEl = elements.audioEncodeQueue();
+	const audioDecodeQueueEl = elements.audioDecodeQueue();
+
+	if (audioEncodedEl) {
+		audioEncodedEl.textContent = metrics.audioEncodedFrames.toString();
+	}
+	if (audioDecodedEl) {
+		audioDecodedEl.textContent = metrics.audioDecodedFrames.toString();
+	}
+	if (audioEncodeQueueEl) {
+		audioEncodeQueueEl.textContent = metrics.audioEncodeQueueSize.toString();
+	}
+	if (audioDecodeQueueEl) {
+		audioDecodeQueueEl.textContent = metrics.audioDecodeQueueSize.toString();
 	}
 }
 
@@ -156,6 +213,7 @@ function updateButtons(running: boolean) {
 // ============================================================================
 
 function collectMetrics() {
+	// Video metrics
 	if (pipeline.encodeNode) {
 		try {
 			metrics.encodeQueueSize = pipeline.encodeNode.encodeQueueSize;
@@ -169,6 +227,23 @@ function collectMetrics() {
 			metrics.decodeQueueSize = pipeline.decodeNode.decodeQueueSize;
 		} catch (_e) {
 			metrics.decodeQueueSize = 0;
+		}
+	}
+
+	// Audio metrics
+	if (pipeline.audioEncodeNode) {
+		try {
+			metrics.audioEncodeQueueSize = pipeline.audioEncodeNode.encodeQueueSize;
+		} catch (_e) {
+			metrics.audioEncodeQueueSize = 0;
+		}
+	}
+
+	if (pipeline.audioDecodeNode) {
+		try {
+			metrics.audioDecodeQueueSize = pipeline.audioDecodeNode.decodeQueueSize;
+		} catch (_e) {
+			metrics.audioDecodeQueueSize = 0;
 		}
 	}
 
@@ -213,6 +288,10 @@ async function startPipeline(sourceType: "camera" | "screen") {
 		metrics.decodedFrames = 0;
 		metrics.encodeQueueSize = 0;
 		metrics.decodeQueueSize = 0;
+		metrics.audioEncodedFrames = 0;
+		metrics.audioDecodedFrames = 0;
+		metrics.audioEncodeQueueSize = 0;
+		metrics.audioDecodeQueueSize = 0;
 		metrics.startTime = performance.now();
 		metrics.fps = 0;
 		renderMetrics();
@@ -233,7 +312,9 @@ async function startPipeline(sourceType: "camera" | "screen") {
 			frameRate: 30,
 			canvas: elements.sourceCanvas(),
 		});
-		pipeline.sourceNode = new MediaStreamVideoSourceNode(track, sourceContext);
+		pipeline.sourceNode = new MediaStreamVideoSourceNode(sourceContext, {
+			mediaStream: pipeline.stream,
+		});
 
 		// Branching architecture:
 		// 1. Source → Destination (input display)
@@ -254,10 +335,14 @@ async function startPipeline(sourceType: "camera" | "screen") {
 				if (lumaEl) lumaEl.textContent = analysis.lumaAverage.toFixed(2);
 
 				const contrastEl = elements.contrast();
-				if (contrastEl) contrastEl.textContent = analysis.lumaVariance.toFixed(2);
+				if (contrastEl) {
+					contrastEl.textContent = analysis.lumaVariance.toFixed(2);
+				}
 
 				const saturationEl = elements.saturation();
-				if (saturationEl) saturationEl.textContent = analysis.chromaVariance.toFixed(2);
+				if (saturationEl) {
+					saturationEl.textContent = analysis.chromaVariance.toFixed(2);
+				}
 
 				// Update dominant color with frame energy visualization
 				const dominantColorEl = elements.dominantColor();
@@ -404,6 +489,85 @@ async function startPipeline(sourceType: "camera" | "screen") {
 		void pipeline.encodeNode.encodeTo(destination);
 		void pipeline.decodeNode.decodeFrom(readable);
 
+		// ==================================================================
+		// Audio Pipeline Setup
+		// ==================================================================
+		setStatus("🔊 Initializing audio pipeline...", "info");
+
+		try {
+			// Create audio context
+			pipeline.audioContext = new AudioContext();
+
+			// Create audio source node using browser's native Web Audio API
+			pipeline.audioSourceNode = new MediaStreamAudioSourceNode(
+				pipeline.audioContext,
+				{ mediaStream: pipeline.stream },
+			);
+
+			// Create audio encode node
+			pipeline.audioEncodeNode = new AudioEncodeNode(pipeline.audioContext);
+
+			// Get audio encoder config
+			const audioConfig = await audioEncoderConfig({
+				sampleRate: pipeline.audioContext.sampleRate,
+				channels: 2,
+				bitrate: 128000,
+			});
+			pipeline.audioEncodeNode.configure(audioConfig);
+
+			// Connect audio source to encode node (worklet initialization is handled internally)
+			pipeline.audioSourceNode.connect(pipeline.audioEncodeNode);
+
+			// Create audio decode node
+			pipeline.audioDecodeNode = new AudioDecodeNode(pipeline.audioContext, {
+				latency: 100, // 100ms latency
+			});
+			pipeline.audioDecodeNode.configure({
+				codec: audioConfig.codec,
+				sampleRate: audioConfig.sampleRate,
+				numberOfChannels: audioConfig.numberOfChannels,
+			});
+
+			// Set up decoded frame counter
+			pipeline.audioDecodeNode.onoutput = () => {
+				metrics.audioDecodedFrames++;
+			};
+
+			// Connect decode to speakers (worklet initialization is handled internally)
+			pipeline.audioDecodeNode.connect(pipeline.audioContext.destination);
+
+			// Create stream for encoded audio chunks
+			const {
+				readable: audioReadable,
+				writable: audioWritable,
+			} = new TransformStream<EncodedAudioChunk>();
+
+			// Setup audio encode destination
+			const audioDestination: AudioEncodeDestination = {
+				output: async (chunk: EncodedAudioChunk) => {
+					metrics.audioEncodedFrames++;
+					const writer = audioWritable.getWriter();
+					await writer.write(chunk);
+					writer.releaseLock();
+					return undefined;
+				},
+				done: new Promise(() => {}), // Never resolves
+			};
+
+			// Start audio encoding and decoding
+			void pipeline.audioEncodeNode.encodeTo(audioDestination);
+			void pipeline.audioDecodeNode.decodeFrom(audioReadable);
+
+			// Note: Native MediaStreamAudioSourceNode starts automatically when connected
+		} catch (audioError) {
+			console.warn("Audio pipeline setup failed:", audioError);
+			// Continue without audio
+		}
+
+		// ==================================================================
+		// Start Video Pipeline
+		// ==================================================================
+
 		// Start source
 		await pipeline.sourceNode.start();
 
@@ -467,6 +631,29 @@ function stopPipeline() {
 		pipeline.outputContext = null;
 	}
 
+	// Cleanup audio nodes
+	if (pipeline.audioSourceNode) {
+		pipeline.audioSourceNode.disconnect();
+		pipeline.audioSourceNode = null;
+	}
+
+	if (pipeline.audioEncodeNode) {
+		void pipeline.audioEncodeNode.close().catch(() => {});
+		pipeline.audioEncodeNode.dispose();
+		pipeline.audioEncodeNode = null;
+	}
+
+	if (pipeline.audioDecodeNode) {
+		void pipeline.audioDecodeNode.close().catch(() => {});
+		pipeline.audioDecodeNode.dispose();
+		pipeline.audioDecodeNode = null;
+	}
+
+	if (pipeline.audioContext) {
+		void pipeline.audioContext.close().catch(() => {});
+		pipeline.audioContext = null;
+	}
+
 	updateButtons(false);
 	setStatus("⏹️ Pipeline stopped", "info");
 }
@@ -492,6 +679,7 @@ async function getMediaStream(
 				height: { ideal: 1080 },
 				frameRate: { ideal: 30 },
 			},
+			audio: true,
 		});
 	}
 
@@ -507,10 +695,15 @@ async function getMediaStream(
 				height: { ideal: 720 },
 				frameRate: { ideal: 30 },
 			},
+			audio: {
+				echoCancellation: true,
+				noiseSuppression: true,
+				autoGainControl: true,
+			},
 		});
 	} catch {
 		// Fallback to basic constraints
-		return navigator.mediaDevices.getUserMedia({ video: true });
+		return navigator.mediaDevices.getUserMedia({ video: true, audio: true });
 	}
 }
 

@@ -62,35 +62,45 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 				this.#channelsBuffer[0] === undefined
 			) return;
 
+			const bufferLength = this.#channelsBuffer[0].length;
 			const numberOfFrames = channels[0].length;
 
-			// Advance read index for discarded samples
-			const discard = this.#writeIndex - this.#readIndex + numberOfFrames -
-				this.#channelsBuffer[0].length;
-			if (discard >= 0) {
+			// Advance read index for discarded samples (if buffer would overflow)
+			const discard = this.#writeIndex - this.#readIndex + numberOfFrames - bufferLength;
+			if (discard > 0) {
 				this.#readIndex += discard;
 			}
 
-			// Write new samples to buffer
+			// Write new samples to buffer (ring buffer)
 			for (let channel = 0; channel < this.#channelsBuffer.length; channel++) {
 				const src = channels[channel];
 				const dst = this.#channelsBuffer[channel];
 
 				if (!dst) continue;
 				if (!src) {
-					dst.fill(0, 0, numberOfFrames);
+					// Fill with silence if no source data
+					const writeStart = this.#writeIndex % bufferLength;
+					const firstPart = Math.min(numberOfFrames, bufferLength - writeStart);
+					dst.fill(0, writeStart, writeStart + firstPart);
+					if (firstPart < numberOfFrames) {
+						dst.fill(0, 0, numberOfFrames - firstPart);
+					}
 					continue;
 				}
 
-				let readPos = this.#writeIndex % dst.length;
-				let offset = 0;
+				// Copy source data to ring buffer
+				let writePos = this.#writeIndex % bufferLength;
+				let srcOffset = 0;
 
-				let n: number;
-				while (numberOfFrames - offset > 0) { // Still data remaining to copy
-					n = Math.min(numberOfFrames - offset, numberOfFrames - readPos);
-					dst.set(src.subarray(readPos, readPos + n), offset);
-					readPos = (readPos + n) % numberOfFrames;
-					offset += n;
+				while (srcOffset < numberOfFrames) {
+					const remaining = numberOfFrames - srcOffset;
+					const spaceToEnd = bufferLength - writePos;
+					const toCopy = Math.min(remaining, spaceToEnd);
+
+					dst.set(src.subarray(srcOffset, srcOffset + toCopy), writePos);
+
+					srcOffset += toCopy;
+					writePos = (writePos + toCopy) % bufferLength;
 				}
 			}
 
@@ -111,13 +121,22 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 				return true;
 			}
 
-			const available =
-				(this.#writeIndex - this.#readIndex + this.#channelsBuffer[0].length) %
-				this.#channelsBuffer[0].length;
-			const numberOfFrames = Math.min(available, outputs[0].length);
+			const bufferLength = this.#channelsBuffer[0].length;
 
-			// No data to read
-			if (numberOfFrames <= 0) return true;
+			// Calculate available samples (handle wrap-around)
+			const available = this.#writeIndex - this.#readIndex;
+			const outputLength = outputs[0][0]?.length ?? 128;
+			const numberOfFrames = Math.min(Math.max(0, available), outputLength);
+
+			// Fill output with silence if no data available
+			if (numberOfFrames <= 0) {
+				for (const output of outputs) {
+					for (const channel of output) {
+						if (channel) channel.fill(0);
+					}
+				}
+				return true;
+			}
 
 			for (const output of outputs) {
 				for (let channel = 0; channel < output.length; channel++) {
@@ -125,29 +144,34 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 					const dst = output[channel];
 					if (!dst) continue;
 					if (!src) {
-						dst.fill(0, 0, numberOfFrames);
+						dst.fill(0);
 						continue;
 					}
 
-					let readPos = this.#readIndex;
-					let offset = 0;
+					// Read from ring buffer
+					let readPos = this.#readIndex % bufferLength;
+					let dstOffset = 0;
 
-					let n: number;
-					while (numberOfFrames - offset > 0) { // Still data remaining to copy
-						n = Math.min(numberOfFrames - offset, numberOfFrames - readPos);
-						dst.set(src.subarray(readPos, readPos + n), offset);
-						readPos = (readPos + n) % numberOfFrames;
-						offset += n;
+					while (dstOffset < numberOfFrames) {
+						const remaining = numberOfFrames - dstOffset;
+						const availableToEnd = bufferLength - readPos;
+						const toCopy = Math.min(remaining, availableToEnd);
+
+						dst.set(src.subarray(readPos, readPos + toCopy), dstOffset);
+
+						dstOffset += toCopy;
+						readPos = (readPos + toCopy) % bufferLength;
+					}
+
+					// Fill remaining with silence
+					if (dstOffset < dst.length) {
+						dst.fill(0, dstOffset);
 					}
 				}
 			}
 
 			// Advance read index
 			this.#readIndex += numberOfFrames;
-			if (this.#readIndex >= this.#channelsBuffer[0].length) {
-				this.#readIndex -= this.#channelsBuffer[0].length;
-				this.#writeIndex -= this.#channelsBuffer[0].length;
-			}
 
 			return true;
 		}
