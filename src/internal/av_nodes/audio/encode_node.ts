@@ -166,7 +166,7 @@ export class AudioEncodeNode extends GainNode {
 		return { done };
 	}
 
-	async close(): Promise<void> {
+	close(): void {
 		try {
 			this.#encoder.close();
 		} catch (_) {

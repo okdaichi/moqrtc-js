@@ -1,5 +1,20 @@
 {
   "version": "5",
+  "specifiers": {
+    "jsr:@std/assert@^1.0.16": "1.0.16",
+    "jsr:@std/internal@^1.0.12": "1.0.12"
+  },
+  "jsr": {
+    "@std/assert@1.0.16": {
+      "integrity": "6a7272ed1eaa77defe76e5ff63ca705d9c495077e2d5fd0126d2b53fc5bd6532",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/internal@1.0.12": {
+      "integrity": "972a634fd5bc34b242024402972cd5143eac68d8dffaca5eaa4dba30ce17b027"
+    }
+  },
   "remote": {
     "https://deno.land/std@0.208.0/assert/assert.ts": "9a97dad6d98c238938e7540736b826440ad8c1c1e54430ca4c4e623e585607ee",
     "https://deno.land/std@0.208.0/assert/assertion_error.ts": "4d0bde9b374dfbcbe8ac23f54f567b77024fb67dbb1906a852d67fe050d42f56",
@@ -84,5 +99,10 @@
     "https://deno.land/x/denoflate@1.2.1/pkg/denoflate.js": "b9f9ad9457d3f12f28b1fb35c555f57443427f74decb403113d67364e4f2caf4",
     "https://deno.land/x/denoflate@1.2.1/pkg/denoflate_bg.wasm.js": "d581956245407a2115a3d7e8d85a9641c032940a8e810acbd59ca86afd34d44d",
     "https://deno.land/x/esbuild@v0.20.1/mod.js": "d50e500b53ce67e31116beba3916b0f9275c0e1cc20bc5cadc0fc1b7a3b06fd9"
+  },
+  "workspace": {
+    "dependencies": [
+      "jsr:@std/assert@^1.0.16"
+    ]
   }
 }

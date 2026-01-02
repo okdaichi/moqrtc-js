@@ -102,13 +102,18 @@ deno task test
 
 ### Publish
 
-The package automatically builds worklets before publishing:
+Build worklets before publishing:
 
 ```bash
+# Build and publish in one command
+deno task publish
+
+# Or manually:
+deno task build:worklets
 deno publish
 ```
 
-The `prepublish` task ensures `*_inline.ts` files are up-to-date.
+**Important**: Always run `build:worklets` before publishing to ensure the inline worklet code is up-to-date.
 
 ## Architecture
 

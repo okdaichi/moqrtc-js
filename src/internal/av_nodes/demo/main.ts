@@ -638,7 +638,7 @@ function stopPipeline() {
 	}
 
 	if (pipeline.audioEncodeNode) {
-		void pipeline.audioEncodeNode.close().catch(() => {});
+		void pipeline.audioEncodeNode.close();
 		pipeline.audioEncodeNode.dispose();
 		pipeline.audioEncodeNode = null;
 	}

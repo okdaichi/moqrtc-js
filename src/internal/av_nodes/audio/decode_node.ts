@@ -64,7 +64,7 @@ export class AudioDecodeNode extends GainNode {
 		});
 
 		this.#decoder = new AudioDecoder({
-			output: async (frame) => {
+			output: (frame) => {
 				// Pass audio frame to processing
 				this.#process(frame);
 
