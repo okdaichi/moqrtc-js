@@ -6,8 +6,7 @@ This directory contains build and utility scripts for the AV nodes.
 
 ### `build_worklets.ts`
 
-Builds AudioWorklet processors from TypeScript into inline JavaScript code
-strings.
+Builds AudioWorklet processors from TypeScript into inline JavaScript code strings.
 
 **Usage:**
 

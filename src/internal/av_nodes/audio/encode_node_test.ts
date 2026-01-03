@@ -53,9 +53,7 @@ class MockAudioEncoder {
 				const mockChunk = {
 					type: "key",
 					timestamp: data.timestamp,
-					duration: data.duration === undefined
-						? null
-						: data.duration,
+					duration: data.duration === undefined ? null : data.duration,
 					byteLength: 1024,
 				} as EncodedAudioChunk;
 				this.#outputCallback(mockChunk);

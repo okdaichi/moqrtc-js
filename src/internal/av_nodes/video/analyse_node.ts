@@ -176,8 +176,7 @@ export class VideoAnalyserNode extends VideoNode {
 	): void {
 		const length = Math.min(array.length, this.#historyBuffer.length);
 		for (let i = 0; i < length; i++) {
-			const idx =
-				(this.#historyWriteIndex - length + i + this.#historySize) %
+			const idx = (this.#historyWriteIndex - length + i + this.#historySize) %
 				this.#historySize;
 			const analysis = this.#historyBuffer[idx];
 			if (analysis) {
@@ -191,8 +190,7 @@ export class VideoAnalyserNode extends VideoNode {
 		const result: VideoFrameAnalysis[] = [];
 		const length = Math.min(count, this.#historyBuffer.length);
 		for (let i = 0; i < length; i++) {
-			const idx =
-				(this.#historyWriteIndex - length + i + this.#historySize) %
+			const idx = (this.#historyWriteIndex - length + i + this.#historySize) %
 				this.#historySize;
 			const analysis = this.#historyBuffer[idx];
 			if (analysis) {

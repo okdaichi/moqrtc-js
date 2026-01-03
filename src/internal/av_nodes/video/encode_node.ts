@@ -19,17 +19,25 @@ export class VideoEncodeNode extends VideoNode {
 		this.context._register(this);
 
 		this.#encoder = new VideoEncoder({
-			output: async (chunk, meta) => {
+			output: (chunk, meta) => {
 				if (meta?.decoderConfig) {
 					console.log(
 						"[VideoEncodeNode] Encoded chunk decoderConfig:",
 						meta.decoderConfig,
 					);
 				}
+
 				// Pass encoded chunk to all registered destinations
-				await Promise.allSettled(
-					Array.from(this.#dests, (dest) => dest.output(chunk)),
-				);
+				Promise.allSettled(Array.from(this.#dests, (dest) => {
+					return new Promise<void>((resolve) => {
+						const err = dest.output(chunk);
+						// If failed, delete it from the set
+						if (err !== undefined) {
+							this.#dests.delete(dest);
+						}
+						resolve();
+					});
+				}));
 			},
 			error: (e) => {
 				console.error("[VideoEncodeNode] encoder error:", e);
@@ -120,18 +128,13 @@ export class VideoEncodeNode extends VideoNode {
 		super.dispose();
 	}
 
-	encodeTo(dest: VideoEncodeDestination): { done: Promise<void> } {
+	encodeTo(dest: VideoEncodeDestination): void {
 		this.#dests.add(dest);
-		const done = dest.done.finally(() => {
-			this.#dests.delete(dest);
-		});
-		return { done };
 	}
 }
 
 type IsKeyFunction = (timestamp: number, count: number) => boolean;
 
 export interface VideoEncodeDestination {
-	output: (chunk: EncodedVideoChunk) => (Error | undefined) | Promise<Error | undefined>;
-	done: Promise<void>;
+	output: (chunk: EncodedVideoChunk) => Error | undefined;
 }

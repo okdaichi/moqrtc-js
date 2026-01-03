@@ -15,7 +15,10 @@ class MockVideoNode extends VideoNode {
 
 Deno.test("VideoContext", async (t) => {
 	const canvas = new MockHTMLCanvasElement();
-	const context = new VideoContext({ frameRate: 30, canvas: canvas as unknown as HTMLCanvasElement });
+	const context = new VideoContext({
+		frameRate: 30,
+		canvas: canvas as unknown as HTMLCanvasElement,
+	});
 
 	await t.step("should create VideoContext with default options", () => {
 		const defaultContext = new VideoContext();

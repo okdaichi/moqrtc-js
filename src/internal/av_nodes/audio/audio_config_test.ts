@@ -82,8 +82,7 @@ Deno.test("audioEncoderConfig: returns supported config for valid options", asyn
 		assertEquals(result.bitrate, 64000);
 		// Check the config passed
 		assertEquals(mockAudioEncoder.isConfigSupported.calls.length, 1);
-		const calledConfig =
-			(mockAudioEncoder.isConfigSupported as any).calls[0].args[0];
+		const calledConfig = (mockAudioEncoder.isConfigSupported as any).calls[0].args[0];
 		assertExists(calledConfig.opus);
 		assertEquals(calledConfig.opus.application, "audio");
 		assertEquals(calledConfig.opus.signal, "music");
@@ -107,8 +106,7 @@ Deno.test("audioEncoderConfig: uses default bitrate when not provided", async ()
 		};
 		await audioEncoderConfig(options);
 		assertEquals(mockAudioEncoder.isConfigSupported.calls.length, 1);
-		const calledConfig =
-			mockAudioEncoder.isConfigSupported.calls[0].args[0];
+		const calledConfig = mockAudioEncoder.isConfigSupported.calls[0].args[0];
 		assertEquals(calledConfig.bitrate, DEFAULT_AUDIO_CONFIG.bitrate);
 	} finally {
 		restoreMocks();
@@ -126,8 +124,7 @@ Deno.test("audioEncoderConfig: uses custom bitrate when provided", async () => {
 		};
 		await audioEncoderConfig(options);
 		assertEquals(mockAudioEncoder.isConfigSupported.calls.length, 1);
-		const calledConfig =
-			(mockAudioEncoder.isConfigSupported as any).calls[0].args[0];
+		const calledConfig = (mockAudioEncoder.isConfigSupported as any).calls[0].args[0];
 		assertEquals(calledConfig.bitrate, customBitrate);
 	} finally {
 		restoreMocks();
@@ -143,8 +140,7 @@ Deno.test("audioEncoderConfig: uses default codecs when preferredCodecs not prov
 		};
 		await audioEncoderConfig(options);
 		assertEquals(mockAudioEncoder.isConfigSupported.calls.length, 1);
-		const calledConfig =
-			mockAudioEncoder.isConfigSupported.calls[0].args[0];
+		const calledConfig = mockAudioEncoder.isConfigSupported.calls[0].args[0];
 		assertEquals(calledConfig.codec, "opus");
 	} finally {
 		restoreMocks();
@@ -211,9 +207,7 @@ Deno.test("audioEncoderConfig: tries all codecs until one is supported", async (
 Deno.test("audioEncoderConfig: throws error when no codec is supported", async () => {
 	setupMocks();
 	try {
-		mockAudioEncoder.isConfigSupported = spy(() =>
-			Promise.resolve({ supported: false })
-		);
+		mockAudioEncoder.isConfigSupported = spy(() => Promise.resolve({ supported: false }));
 		const options: AudioEncoderOptions = {
 			sampleRate: 48000,
 			channels: 2,
@@ -561,9 +555,7 @@ Deno.test("Advanced Configuration Tests: handles malformed codec responses grace
 			{ supported: true, config: null },
 		];
 		for (const response of malformedResponses) {
-			mockAudioEncoder.isConfigSupported = spy(() =>
-				Promise.resolve(response)
-			);
+			mockAudioEncoder.isConfigSupported = spy(() => Promise.resolve(response));
 			await assertRejects(
 				async () =>
 					await audioEncoderConfig({

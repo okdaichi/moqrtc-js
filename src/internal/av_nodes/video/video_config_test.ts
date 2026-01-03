@@ -161,8 +161,7 @@ Deno.test("VideoConfig", async (t) => {
 
 		await t2.step("throws error when no codec is supported", async () => {
 			// Mock VideoEncoder to return no supported codecs
-			const originalIsConfigSupported =
-				MockVideoEncoder.isConfigSupported;
+			const originalIsConfigSupported = MockVideoEncoder.isConfigSupported;
 			MockVideoEncoder.isConfigSupported = async () => ({
 				supported: false,
 				config: null,

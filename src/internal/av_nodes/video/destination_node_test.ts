@@ -115,10 +115,8 @@ Deno.test("VideoDestinationNode", async (t) => {
 			canvas = new MockHTMLCanvasElement();
 
 			// Mock global functions so rAF callback never runs (we only test pending replacement)
-			const originalCancelAnimationFrame =
-				globalThis.cancelAnimationFrame;
-			const originalRequestAnimationFrame =
-				globalThis.requestAnimationFrame;
+			const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+			const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
 
 			let nextId = 1;
 			globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
@@ -155,8 +153,7 @@ Deno.test("VideoDestinationNode", async (t) => {
 			} finally {
 				// Restore globals
 				globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-				globalThis.requestAnimationFrame =
-					originalRequestAnimationFrame;
+				globalThis.requestAnimationFrame = originalRequestAnimationFrame;
 			}
 		},
 	);

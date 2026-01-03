@@ -14,10 +14,8 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		() => {
 			// Setup mocks
 			const mockRegisterProcessor = { calls: [] as any[] };
-			const originalRegisterProcessor =
-				(globalThis as any).registerProcessor;
-			const originalAudioWorkletProcessor =
-				(globalThis as any).AudioWorkletProcessor;
+			const originalRegisterProcessor = (globalThis as any).registerProcessor;
+			const originalAudioWorkletProcessor = (globalThis as any).AudioWorkletProcessor;
 
 			(globalThis as any).AudioWorkletProcessor = class {};
 			(globalThis as any).registerProcessor = (
@@ -34,8 +32,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 						"undefined"
 				) {
 					// Worklet code
-					class AudioHijackProcessor
-						extends (globalThis as any).AudioWorkletProcessor {
+					class AudioHijackProcessor extends (globalThis as any).AudioWorkletProcessor {
 						#currentFrame: number = 0;
 						#sampleRate: number;
 						#targetChannels: number;
@@ -43,12 +40,10 @@ Deno.test("audio_hijack_worklet", async (t) => {
 						constructor(options: AudioWorkletNodeOptions) {
 							super();
 							// Get sampleRate from processorOptions or fall back to global sampleRate
-							this.#sampleRate =
-								options.processorOptions?.sampleRate ||
+							this.#sampleRate = options.processorOptions?.sampleRate ||
 								(globalThis as any).sampleRate;
 							// Get target number of channels from processorOptions
-							this.#targetChannels =
-								options.processorOptions?.targetChannels || 1;
+							this.#targetChannels = options.processorOptions?.targetChannels || 1;
 						}
 
 						process(inputs: Float32Array[][]) {
@@ -157,10 +152,8 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				assertEquals(typeof processorCtor, "function");
 			} finally {
 				// Cleanup
-				(globalThis as any).AudioWorkletProcessor =
-					originalAudioWorkletProcessor;
-				(globalThis as any).registerProcessor =
-					originalRegisterProcessor;
+				(globalThis as any).AudioWorkletProcessor = originalAudioWorkletProcessor;
+				(globalThis as any).registerProcessor = originalRegisterProcessor;
 			}
 		},
 	);
@@ -178,15 +171,12 @@ Deno.test("audio_hijack_worklet", async (t) => {
 			};
 
 			// Mock AudioWorkletProcessor
-			const originalAudioWorkletProcessor =
-				(globalThis as any).AudioWorkletProcessor;
-			const originalRegisterProcessor =
-				(globalThis as any).registerProcessor;
+			const originalAudioWorkletProcessor = (globalThis as any).AudioWorkletProcessor;
+			const originalRegisterProcessor = (globalThis as any).registerProcessor;
 
-			(globalThis as any).AudioWorkletProcessor =
-				class MockAudioWorkletProcessor {
-					port = mockPort;
-				};
+			(globalThis as any).AudioWorkletProcessor = class MockAudioWorkletProcessor {
+				port = mockPort;
+			};
 
 			// Mock registerProcessor
 			const mockRegisterProcessor = { calls: [] as any[] };
@@ -213,12 +203,10 @@ Deno.test("audio_hijack_worklet", async (t) => {
 						constructor(options: AudioWorkletNodeOptions) {
 							super();
 							// Get sampleRate from processorOptions or fall back to global sampleRate
-							this.#sampleRate =
-								options.processorOptions?.sampleRate ||
+							this.#sampleRate = options.processorOptions?.sampleRate ||
 								(globalThis as any).sampleRate;
 							// Get target number of channels from processorOptions
-							this.#targetChannels =
-								options.processorOptions?.targetChannels || 1;
+							this.#targetChannels = options.processorOptions?.targetChannels || 1;
 						}
 
 						process(inputs: Float32Array[][]) {
@@ -323,8 +311,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				}
 
 				// Create processor instance
-				const TestAudioHijackProcessor =
-					mockRegisterProcessor.calls[0][1];
+				const TestAudioHijackProcessor = mockRegisterProcessor.calls[0][1];
 				processor = new TestAudioHijackProcessor({
 					processorOptions: {
 						sampleRate: 44100,
@@ -333,18 +320,14 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				});
 			} finally {
 				// Restore globals
-				(globalThis as any).AudioWorkletProcessor =
-					originalAudioWorkletProcessor;
-				(globalThis as any).registerProcessor =
-					originalRegisterProcessor;
+				(globalThis as any).AudioWorkletProcessor = originalAudioWorkletProcessor;
+				(globalThis as any).registerProcessor = originalRegisterProcessor;
 			}
 		});
 
 		await t.step("initializes with default values", () => {
-			const originalAudioWorkletProcessor =
-				(globalThis as any).AudioWorkletProcessor;
-			const originalRegisterProcessor =
-				(globalThis as any).registerProcessor;
+			const originalAudioWorkletProcessor = (globalThis as any).AudioWorkletProcessor;
+			const originalRegisterProcessor = (globalThis as any).registerProcessor;
 
 			const mockRegisterProcessor = { calls: [] as any[] };
 			(globalThis as any).AudioWorkletProcessor = class {};
@@ -373,10 +356,8 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				});
 				assertExists(proc);
 			} finally {
-				(globalThis as any).AudioWorkletProcessor =
-					originalAudioWorkletProcessor;
-				(globalThis as any).registerProcessor =
-					originalRegisterProcessor;
+				(globalThis as any).AudioWorkletProcessor = originalAudioWorkletProcessor;
+				(globalThis as any).registerProcessor = originalRegisterProcessor;
 			}
 		});
 

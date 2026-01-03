@@ -9,12 +9,7 @@
  * 3. Allows importing worklets as inline code instead of external files
  */
 
-import {
-	basename,
-	dirname,
-	fromFileUrl,
-	join,
-} from "https://deno.land/std@0.208.0/path/mod.ts";
+import { basename, dirname, fromFileUrl, join } from "https://deno.land/std@0.208.0/path/mod.ts";
 import * as esbuild from "https://deno.land/x/esbuild@v0.20.1/mod.js";
 
 // Get the directory where this script is located
@@ -47,9 +42,7 @@ function getWorkletInfo(sourceFile: string): WorkletInfo {
 		// Fallback: convert audio_hijack_worklet -> audioHijackWorkletCode
 		exportName = baseName
 			.split("_")
-			.map((part, i) =>
-				i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)
-			)
+			.map((part, i) => i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1))
 			.join("") + "Code";
 	}
 
@@ -84,9 +77,7 @@ async function buildWorklet(info: WorkletInfo): Promise<void> {
 
 	// Extract worklet name before modifications
 	const workletNameMatch = code.match(/var\s+(\w+)="([\w-]+)"/);
-	const workletName = workletNameMatch
-		? workletNameMatch[2]
-		: "audio-worklet";
+	const workletName = workletNameMatch ? workletNameMatch[2] : "audio-worklet";
 
 	// Remove export statements - worklet doesn't need them
 	code = code.replace(/export\s*\{[^}]*\}\s*;?\s*$/gm, "");
