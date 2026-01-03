@@ -132,6 +132,6 @@ export class VideoEncodeNode extends VideoNode {
 type IsKeyFunction = (timestamp: number, count: number) => boolean;
 
 export interface VideoEncodeDestination {
-	output: (chunk: EncodedVideoChunk) => Promise<Error | undefined>;
+	output: (chunk: EncodedVideoChunk) => (Error | undefined) | Promise<Error | undefined>;
 	done: Promise<void>;
 }
