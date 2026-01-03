@@ -1,49 +1,58 @@
-import { Channel } from "golikejs";
-
-export interface DeviceProps {
-	preferred?: string;
-}
-
-export class Device {
-	kind: "audio" | "video";
-	preferred: string | undefined;
-	available: MediaDeviceInfo[] | undefined;
-	default: string | undefined;
-	activeDeviceId: string | undefined;
-	hasPermission: boolean = false;
-
-	// internal listener ref so we can remove it on close
+/**
+ * MediaDeviceContext manages shared state for all media devices.
+ * Context pattern allows explicit dependency injection and clear boundaries.
+ * 
+ * @example
+ * ```typescript
+ * // Create a context for managing media devices
+ * const deviceContext = new MediaDeviceContext();
+ * 
+ * // Use it with Camera and Microphone
+ * const camera = new Camera(deviceContext, { enabled: true });
+ * const microphone = new Microphone(deviceContext, { enabled: true });
+ * 
+ * // Subscribe to device changes
+ * const unsubscribe = deviceContext.subscribe((devices) => {
+ *   console.log('Available devices:', devices);
+ * });
+ * 
+ * // Cleanup when done
+ * deviceContext.close();
+ * ```
+ */
+export class MediaDeviceContext {
+	#devices: MediaDeviceInfo[] = [];
+	#permissions: Map<"audio" | "video", boolean> = new Map();
+	#permissionRequests: Map<"audio" | "video", Promise<boolean>> = new Map();
+	#listeners: Set<(devices: MediaDeviceInfo[]) => void> = new Set();
 	#onchange: (() => void) | undefined;
-
-	// external listeners to notify on devicechange
-	#chan: Channel<void> = new Channel();
-
-	// debounce timer id for devicechange
 	#debounceTimer: number | undefined;
-	// fallback timeout for getUserMedia in ms
+	#updateInProgress: Promise<void> | undefined;
+	
 	static GET_USER_MEDIA_TIMEOUT = 8000; // 8s
-
-	constructor(kind: "audio" | "video", props?: DeviceProps) {
-		this.kind = kind;
-		this.preferred = props?.preferred;
-
-		// initial enumeration
+	
+	/** Get all available devices (readonly) */
+	get devices(): readonly MediaDeviceInfo[] {
+		return this.#devices;
+	}
+	
+	constructor() {
+		// Initial device enumeration
 		void this.updateDevices();
-
-		// keep availability up to date
+		
+		// Set up devicechange listener once for all Device instances
 		this.#onchange = () => {
-			// debounce rapid devicechange events
+			// Debounce rapid devicechange events
 			if (typeof this.#debounceTimer !== "undefined") {
 				clearTimeout(this.#debounceTimer);
 			}
-			// schedule update slightly later to aggregate rapid changes
+			// Schedule update slightly later to aggregate rapid changes
 			this.#debounceTimer = globalThis.setTimeout(() => {
 				this.#debounceTimer = undefined;
 				void this.updateDevices();
-				// notify external listeners
-				this.#chan.send();
 			}, 200);
 		};
+		
 		// Only set up event listeners if mediaDevices is available
 		if (navigator && navigator.mediaDevices) {
 			try {
@@ -52,169 +61,118 @@ export class Device {
 					this.#onchange as EventListener,
 				);
 			} catch (e) {
-				// some environments may not support addEventListener on mediaDevices
-				// fall back to assigning onchange if available
+				// Some environments may not support addEventListener on mediaDevices
+				// Fall back to assigning onchange if available
 				if (typeof navigator.mediaDevices.ondevicechange !== "undefined") {
 					navigator.mediaDevices.ondevicechange = this.#onchange;
 				}
 			}
 		}
 	}
-
+	
 	async updateDevices(): Promise<void> {
+		// Prevent duplicate concurrent updates
+		if (this.#updateInProgress) {
+			return this.#updateInProgress;
+		}
+		
 		if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-			// Not running in a supported environment
-			this.available = undefined;
-			this.hasPermission = false;
+			this.#devices = [];
 			return;
 		}
-
-		try {
-			const devices = await navigator.mediaDevices.enumerateDevices();
-			this.available = devices.filter((d) => d.kind === `${this.kind}input`);
-			this.hasPermission = this.available.some((d) => d.deviceId !== "");
-
-			if (this.available.length > 0) {
-				// Find default device using heuristics
-				let defaultDevice = this.available.find((d) => d.deviceId === "default");
-				if (!defaultDevice) {
-					if (this.kind === "audio") {
-						defaultDevice = this.available.find((d) =>
-							d.label.toLowerCase().includes("default") ||
-							d.label.toLowerCase().includes("communications")
-						);
-					} else {
-						defaultDevice = this.available.find((d) =>
-							d.label.toLowerCase().includes("front") ||
-							d.label.toLowerCase().includes("external") ||
-							d.label.toLowerCase().includes("usb")
-						);
-					}
-				}
-				if (!defaultDevice) {
-					defaultDevice = this.available[0];
-				}
-				this.default = defaultDevice?.deviceId;
-			}
-
-			this.activeDeviceId = this.preferred || this.default;
-		} catch (error) {
-			console.warn(`Failed to update ${this.kind} devices:`, error);
-		}
-	}
-
-	async requestPermission(): Promise<boolean> {
-		if (this.hasPermission) return true;
-
-		if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-			console.warn("getUserMedia is not available in this environment");
-			return false;
-		}
-
-		// wrap getUserMedia with a timeout to avoid hanging
-		const controller = new AbortController();
-		const timeoutId = globalThis.setTimeout(
-			() => controller.abort(),
-			Device.GET_USER_MEDIA_TIMEOUT,
-		);
-		try {
-			const stream = await navigator.mediaDevices.getUserMedia(
-				{ [this.kind]: true } as MediaStreamConstraints,
-			);
-			this.hasPermission = true;
-			const deviceId = stream.getTracks()[0]?.getSettings().deviceId;
-			if (deviceId) {
-				this.preferred = deviceId;
-				this.activeDeviceId = deviceId;
-			}
-			stream.getTracks().forEach((track) => track.stop());
-			await this.updateDevices();
-			return true;
-		} catch (error) {
-			// getUserMedia can fail for many reasons; be conservative
-			console.warn(`Failed to request ${this.kind} permission:`, error);
-			return false;
-		} finally {
-			clearTimeout(timeoutId);
-			controller.abort();
-		}
-	}
-
-	// Get a single MediaStreamTrack for this device kind using preferred/default deviceId.
-	// Returns undefined on failure.
-	async getTrack(options?: MediaTrackConstraints): Promise<MediaStreamTrack | undefined> {
-		// Ensure permissions/availability are checked first
-		try {
-			await this.requestPermission();
-		} catch {
-			// requestPermission is best-effort; continue to try
-		}
-
-		const deviceIdConstraint = this.activeDeviceId
-			? { deviceId: { exact: this.activeDeviceId } }
-			: {};
-
-		const constraints: MediaStreamConstraints = this.kind === "video"
-			? { video: { ...(deviceIdConstraint as any), ...(options ?? {}) } }
-			: { audio: { ...(deviceIdConstraint as any), ...(options ?? {}) } };
-
-		if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-			console.warn("getUserMedia is not available in this environment");
-			return undefined;
-		}
-
-		// timeout wrapper to avoid hanging getUserMedia
-		const timeoutId = globalThis.setTimeout(() => {
-			// no-op; we will check elapsed time after awaiting
-		}, Device.GET_USER_MEDIA_TIMEOUT + 1000);
-
-		let stream: MediaStream | undefined;
-		try {
-			stream = await navigator.mediaDevices.getUserMedia(constraints);
-			const track = this.kind === "video"
-				? stream.getVideoTracks()[0]
-				: stream.getAudioTracks()[0];
-			if (!track) {
-				stream.getTracks().forEach((t) => t.stop());
-				return undefined;
-			}
-
-			const settings = track.getSettings();
-			if (settings && settings.deviceId) {
-				this.activeDeviceId = settings.deviceId;
-			}
-
-			// Caller is responsible for stopping the returned track. But to avoid leaks when callers forget,
-			// attach a small finalizer: if the track is still live after a long timeout, stop it. This is a
-			// conservative fallback and will not run in normal usage.
-			const t = track;
-			globalThis.setTimeout(() => {
-				try {
-					if (!t.muted && !t.enabled) return; // some heuristics — avoid stopping intentionally disabled tracks
-					if (t.readyState !== "ended") {
-						// leave it — we don't forcibly stop within short time
-					}
-				} catch {
-					// Ignore errors when checking track state
-				}
-			}, 60000);
-
-			return track;
-		} catch (error) {
-			console.warn(`Failed to get ${this.kind} track:`, error);
-			// ensure any partial stream is stopped
+		
+		this.#updateInProgress = (async () => {
 			try {
-				stream?.getTracks().forEach((t) => t.stop());
-			} catch {
-				// ignore
-				// TODO: consider logging
+				const devices = await navigator.mediaDevices.enumerateDevices();
+				this.#devices = devices;
+				
+				// Check if we have permission by looking for devices with IDs
+				const hasAudioPermission = devices.some(d => 
+					d.kind === "audioinput" && d.deviceId !== ""
+				);
+				const hasVideoPermission = devices.some(d => 
+					d.kind === "videoinput" && d.deviceId !== ""
+				);
+				
+				if (hasAudioPermission) this.#permissions.set("audio", true);
+				if (hasVideoPermission) this.#permissions.set("video", true);
+				
+				// Notify all listeners
+				this.#listeners.forEach(fn => fn(devices));
+			} catch (error) {
+				console.warn("Failed to update devices:", error);
 			}
-			return undefined;
-		} finally {
-			clearTimeout(timeoutId);
-		}
+		})();
+		
+		await this.#updateInProgress;
+		this.#updateInProgress = undefined;
 	}
-
+	
+	getDevices(kind: "audio" | "video"): MediaDeviceInfo[] {
+		return this.#devices.filter(d => d.kind === `${kind}input`);
+	}
+	
+	hasPermission(kind: "audio" | "video"): boolean {
+		return this.#permissions.get(kind) ?? false;
+	}
+	
+	async requestPermission(kind: "audio" | "video"): Promise<boolean> {
+		// Return cached permission state if already granted
+		if (this.hasPermission(kind)) {
+			return true;
+		}
+		
+		// Return in-flight request if one exists (prevents duplicate getUserMedia calls)
+		const existingRequest = this.#permissionRequests.get(kind);
+		if (existingRequest) {
+			return existingRequest;
+		}
+		
+		if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+			console.warn("getUserMedia is not available in this environment");
+			return false;
+		}
+		
+		// Create new permission request
+		const request = (async () => {
+			const controller = new AbortController();
+			const timeoutId = globalThis.setTimeout(
+				() => controller.abort(),
+				MediaDeviceContext.GET_USER_MEDIA_TIMEOUT,
+			);
+			
+			try {
+				const stream = await navigator.mediaDevices.getUserMedia(
+					{ [kind]: true } as MediaStreamConstraints,
+				);
+				this.#permissions.set(kind, true);
+				
+				// Clean up the temporary stream
+				stream.getTracks().forEach((track) => track.stop());
+				
+				// Update device list to get fresh data with labels
+				await this.updateDevices();
+				
+				return true;
+			} catch (error) {
+				console.warn(`Failed to request ${kind} permission:`, error);
+				return false;
+			} finally {
+				clearTimeout(timeoutId);
+				controller.abort();
+				this.#permissionRequests.delete(kind);
+			}
+		})();
+		
+		this.#permissionRequests.set(kind, request);
+		return request;
+	}
+	
+	subscribe(listener: (devices: MediaDeviceInfo[]) => void): () => void {
+		this.#listeners.add(listener);
+		return () => this.#listeners.delete(listener);
+	}
+	
 	close(): void {
 		if (this.#onchange && navigator && navigator.mediaDevices) {
 			try {
@@ -224,18 +182,18 @@ export class Device {
 					navigator.mediaDevices.ondevicechange = null;
 				}
 			} catch (e) {
-				// ignore
+				// Ignore
 			}
 			this.#onchange = undefined;
 		}
-		// clear debounce timer
+		
 		if (typeof this.#debounceTimer !== "undefined") {
 			clearTimeout(this.#debounceTimer);
 			this.#debounceTimer = undefined;
 		}
-	}
-
-	updated(): Promise<[undefined, false] | [void, true]> {
-		return this.#chan.receive();
+		
+		this.#listeners.clear();
+		this.#permissions.clear();
+		this.#permissionRequests.clear();
 	}
 }

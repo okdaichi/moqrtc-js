@@ -1,5 +1,6 @@
 // filepath: src/media/mock_device_test.ts
 // Mock Device for testing
+
 export class MockDevice {
 	kind: "audio" | "video" = "video";
 	preferred: string | undefined;

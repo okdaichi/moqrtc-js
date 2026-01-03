@@ -30,7 +30,9 @@ export class Screen {
 			if (t !== video && t !== audio) {
 				try {
 					t.stop();
-				} catch {}
+				} catch {
+					// Ignore errors when stopping track
+				}
 			}
 		}
 

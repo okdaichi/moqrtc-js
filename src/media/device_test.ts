@@ -351,13 +351,32 @@ Deno.test("Device", async (t) => {
 				activeTimers,
 			} = setupTestEnvironment();
 			try {
+				// First request to grant permission
+				mockMediaDevices.getUserMedia = async () => {
+					mockMediaDevices.getUserMediaCallCount++;
+					const mockTrack = {
+						kind: "audio",
+						stop: () => {},
+						getSettings: () => ({ deviceId: "mock-device-id" }),
+					};
+					return {
+						getTracks: () => [mockTrack],
+						getAudioTracks: () => [mockTrack],
+						getVideoTracks: () => [],
+					} as any;
+				};
+				
 				const device = new Device("audio");
-				device.hasPermission = true;
-
+				await device.requestPermission(); // First call grants permission
+				
+				// Reset call count
+				const callCountAfterFirst = mockMediaDevices.getUserMediaCallCount;
+				
+				// Second call should skip getUserMedia
 				const result = await device.requestPermission();
 
 				assertEquals(result, true);
-				assertEquals(mockMediaDevices.getUserMediaCallCount, 0);
+				assertEquals(mockMediaDevices.getUserMediaCallCount, callCountAfterFirst); // No additional calls
 			} finally {
 				cleanupTestEnvironment(
 					originalNavigator,

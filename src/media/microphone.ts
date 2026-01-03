@@ -1,21 +1,65 @@
-import type { DeviceProps } from "./device.ts";
-import { Device } from "./device.ts";
+import { MediaDeviceContext } from "./device.ts";
 
-export interface MicrophoneProps extends DeviceProps {
+export interface MicrophoneProps {
 	enabled?: boolean;
 	constraints?: MediaTrackConstraints;
+	preferred?: string;
 }
 
+/**
+ * Microphone manages audio input from microphone devices.
+ * 
+ * @example
+ * ```typescript
+ * const deviceContext = new MediaDeviceContext();
+ * const microphone = new Microphone(deviceContext, { enabled: true });
+ * const track = await microphone.getAudioTrack();
+ * ```
+ */
 export class Microphone {
-	device: Device;
+	readonly context: MediaDeviceContext;
+	readonly kind: "audio" = "audio";
 	enabled: boolean;
 	constraints: MediaTrackConstraints | undefined;
+	preferred: string | undefined;
+	activeDeviceId: string | undefined;
 	#stream: MediaStreamTrack | undefined;
+	#unsubscribe: (() => void) | undefined;
 
-	constructor(props?: MicrophoneProps) {
-		this.device = new Device("audio", props);
+	constructor(context: MediaDeviceContext, props?: MicrophoneProps) {
+		this.context = context;
 		this.enabled = props?.enabled ?? false;
 		this.constraints = props?.constraints;
+		this.preferred = props?.preferred;
+
+		// Subscribe to device changes
+		this.#unsubscribe = this.context.subscribe(() => {
+			this.activeDeviceId = this.preferred || this.#getDefaultDeviceId();
+		});
+
+		// Set initial activeDeviceId
+		this.activeDeviceId = this.preferred || this.#getDefaultDeviceId();
+	}
+
+	#getDefaultDeviceId(): string | undefined {
+		const devices = this.context.getDevices(this.kind);
+		
+		if (devices.length === 0) {
+			return undefined;
+		}
+
+		// Find default device using heuristics
+		let defaultDevice = devices.find((d) => d.deviceId === "default");
+		if (!defaultDevice) {
+			defaultDevice = devices.find((d) =>
+				d.label.toLowerCase().includes("default") ||
+				d.label.toLowerCase().includes("communications")
+			);
+		}
+		if (!defaultDevice) {
+			defaultDevice = devices[0];
+		}
+		return defaultDevice?.deviceId;
 	}
 
 	/**
@@ -30,13 +74,50 @@ export class Microphone {
 
 		if (this.#stream) return this.#stream;
 
-		const track = await this.device.getTrack(this.constraints);
-		if (!track) {
-			throw new Error("Failed to obtain microphone track");
+		// Ensure permissions are granted
+		try {
+			await this.context.requestPermission(this.kind);
+		} catch {
+			// requestPermission is best-effort; continue to try
 		}
 
-		this.#stream = track;
-		return this.#stream;
+		const deviceIdConstraint = this.activeDeviceId
+			? { deviceId: { exact: this.activeDeviceId } }
+			: {};
+
+		const constraints: MediaStreamConstraints = {
+			audio: { ...(deviceIdConstraint as any), ...(this.constraints ?? {}) }
+		};
+
+		if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+			throw new Error("getUserMedia is not available in this environment");
+		}
+
+		let stream: MediaStream | undefined;
+		try {
+			stream = await navigator.mediaDevices.getUserMedia(constraints);
+			const track = stream.getAudioTracks()[0];
+			if (!track) {
+				stream.getTracks().forEach((t) => t.stop());
+				throw new Error("Failed to obtain microphone track");
+			}
+
+			const settings = track.getSettings();
+			if (settings && settings.deviceId) {
+				this.activeDeviceId = settings.deviceId;
+			}
+
+			this.#stream = track;
+			return this.#stream;
+		} catch (error) {
+			// Ensure any partial stream is stopped
+			try {
+				stream?.getTracks().forEach((t) => t.stop());
+			} catch {
+				// Ignore cleanup errors
+			}
+			throw error instanceof Error ? error : new Error("Failed to obtain microphone track");
+		}
 	}
 
 	async getSettings(): Promise<MediaTrackSettings> {
@@ -53,10 +134,9 @@ export class Microphone {
 			}
 			this.#stream = undefined;
 		}
-		try {
-			this.device.close();
-		} catch (error) {
-			// Ignore errors when closing device
+		if (this.#unsubscribe) {
+			this.#unsubscribe();
+			this.#unsubscribe = undefined;
 		}
 	}
 }

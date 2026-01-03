@@ -1,8 +1,6 @@
 // filepath: src/media/camera_test.ts
 import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
 import { Camera } from "./camera.ts";
-import { Device } from "./device.ts";
-import { MockDevice } from "./mock_device_test.ts";
 import { MockMediaStreamTrack } from "./mock_media_stream_track_test.ts";
 
 Deno.test("Camera", async (t) => {
@@ -12,8 +10,7 @@ Deno.test("Camera", async (t) => {
 
 			assertEquals(camera.enabled, false);
 			assertEquals(camera.constraints, undefined);
-			assert(camera.device instanceof Device);
-			assertEquals(camera.device.kind, "video");
+			assertEquals(camera.preferred, undefined);
 		});
 
 		await t.step("creates camera with enabled=true", () => {
@@ -27,7 +24,7 @@ Deno.test("Camera", async (t) => {
 			const camera = new Camera({ preferred: "camera-device-id" });
 
 			assertEquals(camera.enabled, false);
-			assertEquals(camera.device.preferred, "camera-device-id");
+			assertEquals(camera.preferred, "camera-device-id");
 		});
 
 		await t.step("creates camera with constraints", () => {
@@ -48,7 +45,7 @@ Deno.test("Camera", async (t) => {
 
 			assertEquals(camera.enabled, true);
 			assertEquals(camera.constraints, constraints);
-			assertEquals(camera.device.preferred, "camera-device-id");
+			assertEquals(camera.preferred, "camera-device-id");
 		});
 	});
 	await t.step("getVideoTrack", async (t) => {

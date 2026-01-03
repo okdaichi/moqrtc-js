@@ -1,21 +1,66 @@
-import type { DeviceProps } from "./device.ts";
-import { Device } from "./device.ts";
+import { MediaDeviceContext } from "./device.ts";
 
-export interface CameraProps extends DeviceProps {
+export interface CameraProps {
 	enabled?: boolean;
 	constraints?: MediaTrackConstraints;
+	preferred?: string;
 }
 
+/**
+ * Camera manages video input from camera devices.
+ * 
+ * @example
+ * ```typescript
+ * const deviceContext = new MediaDeviceContext();
+ * const camera = new Camera(deviceContext, { enabled: true });
+ * const track = await camera.getVideoTrack();
+ * ```
+ */
 export class Camera {
-	device: Device;
+	readonly context: MediaDeviceContext;
+	readonly kind: "video" = "video";
 	enabled: boolean;
 	constraints: MediaTrackConstraints | undefined;
+	preferred: string | undefined;
+	activeDeviceId: string | undefined;
 	#stream: MediaStreamTrack | undefined;
+	#unsubscribe: (() => void) | undefined;
 
-	constructor(props?: CameraProps) {
-		this.device = new Device("video", props);
+	constructor(context: MediaDeviceContext, props?: CameraProps) {
+		this.context = context;
 		this.enabled = props?.enabled ?? false;
 		this.constraints = props?.constraints;
+		this.preferred = props?.preferred;
+
+		// Subscribe to device changes
+		this.#unsubscribe = this.context.subscribe(() => {
+			this.activeDeviceId = this.preferred || this.#getDefaultDeviceId();
+		});
+
+		// Set initial activeDeviceId
+		this.activeDeviceId = this.preferred || this.#getDefaultDeviceId();
+	}
+
+	#getDefaultDeviceId(): string | undefined {
+		const devices = this.context.getDevices(this.kind);
+		
+		if (devices.length === 0) {
+			return undefined;
+		}
+
+		// Find default device using heuristics
+		let defaultDevice = devices.find((d) => d.deviceId === "default");
+		if (!defaultDevice) {
+			defaultDevice = devices.find((d) =>
+				d.label.toLowerCase().includes("front") ||
+				d.label.toLowerCase().includes("external") ||
+				d.label.toLowerCase().includes("usb")
+			);
+		}
+		if (!defaultDevice) {
+			defaultDevice = devices[0];
+		}
+		return defaultDevice?.deviceId;
 	}
 
 	/**
@@ -30,27 +75,51 @@ export class Camera {
 
 		if (this.#stream) return this.#stream;
 
-		const track = await this.device.getTrack(this.constraints);
-		if (!track) {
-			throw new Error("Failed to obtain camera track");
+		// Ensure permissions are granted
+		try {
+			await this.context.requestPermission(this.kind);
+		} catch {
+			// requestPermission is best-effort; continue to try
 		}
 
-		this.#stream = track;
+		const deviceIdConstraint = this.activeDeviceId
+			? { deviceId: { exact: this.activeDeviceId } }
+			: {};
 
-		return this.#stream;
+		const constraints: MediaStreamConstraints = {
+			video: { ...(deviceIdConstraint as any), ...(this.constraints ?? {}) }
+		};
+
+		if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+			throw new Error("getUserMedia is not available in this environment");
+		}
+
+		let stream: MediaStream | undefined;
+		try {
+			stream = await navigator.mediaDevices.getUserMedia(constraints);
+			const track = stream.getVideoTracks()[0];
+			if (!track) {
+				stream.getTracks().forEach((t) => t.stop());
+				throw new Error("Failed to obtain camera track");
+			}
+
+			const settings = track.getSettings();
+			if (settings && settings.deviceId) {
+				this.activeDeviceId = settings.deviceId;
+			}
+
+			this.#stream = track;
+			return this.#stream;
+		} catch (error) {
+			// Ensure any partial stream is stopped
+			try {
+				stream?.getTracks().forEach((t) => t.stop());
+			} catch {
+				// Ignore cleanup errors
+			}
+			throw error instanceof Error ? error : new Error("Failed to obtain camera track");
+		}
 	}
-
-	// async videoEncoder(config: VideoEncoderConfig, onDecoderConfig: (config: VideoDecoderConfig) => void): Promise<VideoEncodeStream> {
-	//     const track = await this.getVideoTrack();
-	//     const encoder = new VideoEncodeStream({
-	//         source: new VideoTrackProcessor(track).readable,
-	//         onDecoderConfig: onDecoderConfig,
-	//     });
-
-	//     encoder.configure(config);
-
-	//     return encoder;
-	// }
 
 	close(): void {
 		if (this.#stream) {
@@ -61,10 +130,9 @@ export class Camera {
 			}
 			this.#stream = undefined;
 		}
-		try {
-			this.device.close();
-		} catch (error) {
-			// Ignore errors when closing device
+		if (this.#unsubscribe) {
+			this.#unsubscribe();
+			this.#unsubscribe = undefined;
 		}
 	}
 }
