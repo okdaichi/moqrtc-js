@@ -1,5 +1,6 @@
 // Audio node API: AudioEncodeNode
 // Extends GainNode to enable standard connect() pattern while adding encoding capabilities
+import type { CancelFunc } from "@okdaichi/golikejs/context";
 import { createWorkletBlobUrl as createHijackWorkletBlobUrl } from "./audio_hijack_worklet_inline.ts";
 
 const hijackWorkletName = "audio-hijacker";
@@ -27,7 +28,7 @@ export class AudioEncodeNode extends GainNode {
 	#encoder: AudioEncoder;
 	#workletReady: Promise<AudioWorkletNode>;
 	#disposed = false;
-	#dests: Set<AudioEncodeDestination> = new Set();
+	#dests: Map<AudioEncodeDestination, CancelFunc> = new Map();
 
 	constructor(context: AudioContext) {
 		// Initialize as a passthrough GainNode
@@ -36,11 +37,12 @@ export class AudioEncodeNode extends GainNode {
 		this.#encoder = new AudioEncoder({
 			output: async (chunk) => {
 				// Use allSettled to ensure one destination error doesn't affect others
-				await Promise.allSettled(Array.from(this.#dests, (dest) => {
+				await Promise.allSettled(Array.from(this.#dests, ([dest, cancel]) => {
 					return new Promise<void>((resolve) => {
 						const err = dest.output(chunk);
 						if (err !== undefined) {
 							this.#dests.delete(dest);
+							cancel();
 						}
 						resolve();
 					});
@@ -171,22 +173,40 @@ export class AudioEncodeNode extends GainNode {
 		}
 	}
 
-	encodeTo(dest: AudioEncodeDestination): void {
-		this.#dests.add(dest);
+	encodeTo(dest: AudioEncodeDestination): { done: Promise<void> } {
+		const promise = new Promise<void>((resolve) => {
+			this.#dests.set(dest, resolve);
+		});
+
+		return { done: promise };
 	}
 
-	close(): void {
+	async flush(): Promise<void> {
+		if (this.#encoder.state === "closed") {
+			return;
+		}
 		try {
-			this.#encoder.close();
-		} catch (_) {
-			/* ignore */
+			await this.#encoder.flush();
+		} catch (e) {
+			// AbortError during close is expected, don't log it
+			if (e instanceof DOMException && e.name === "AbortError") {
+				return;
+			}
+			console.error("[AudioEncodeNode] flush error:", e);
 		}
 	}
 
 	// Unified disposal pattern following video pattern
-	dispose(): void {
+	async dispose(): Promise<void> {
 		if (this.#disposed) return;
 		this.#disposed = true;
+
+		// Flush encoder before closing
+		try {
+			await this.flush();
+		} catch (_) {
+			/* ignore */
+		}
 
 		// Clean up encoder
 		try {
@@ -213,7 +233,10 @@ export class AudioEncodeNode extends GainNode {
 			/* ignore */
 		});
 
-		// Clear destinations
+		// Cleanup all destinations
+		for (const [_, cancel] of this.#dests) {
+			cancel();
+		}
 		this.#dests.clear();
 	}
 }

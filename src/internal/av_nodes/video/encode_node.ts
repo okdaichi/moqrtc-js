@@ -1,3 +1,4 @@
+import type { CancelFunc } from "@okdaichi/golikejs/context";
 import type { VideoContext } from "./context.ts";
 import { VideoNode } from "./video_node.ts";
 
@@ -7,7 +8,7 @@ export class VideoEncodeNode extends VideoNode {
 	readonly context: VideoContext;
 	#encoder: VideoEncoder;
 	#isKey: IsKeyFunction;
-	#dests: Set<VideoEncodeDestination> = new Set();
+	#dests: Map<VideoEncodeDestination, CancelFunc> = new Map();
 
 	constructor(
 		context: VideoContext,
@@ -28,12 +29,13 @@ export class VideoEncodeNode extends VideoNode {
 				}
 
 				// Pass encoded chunk to all registered destinations
-				Promise.allSettled(Array.from(this.#dests, (dest) => {
+				Promise.allSettled(Array.from(this.#dests, ([dest, cancel]) => {
 					return new Promise<void>((resolve) => {
 						const err = dest.output(chunk);
 						// If failed, delete it from the set
 						if (err !== undefined) {
 							this.#dests.delete(dest);
+							cancel();
 						}
 						resolve();
 					});
@@ -108,28 +110,33 @@ export class VideoEncodeNode extends VideoNode {
 		}
 	}
 
-	async close(): Promise<void> {
-		try {
-			await this.flush();
-			this.#encoder.close();
-		} catch (_) {
-			/* ignore */
-		}
-	}
-
-	override dispose(): void {
+	override async dispose(): Promise<void> {
 		if (this.disposed) return;
 		try {
+			await this.flush();
+		} catch (_) {
+			/* ignore */
+		}
+		try {
 			this.#encoder.close();
 		} catch (_) {
 			/* ignore */
 		}
+		// Cleanup all destinations
+		for (const [_, cancel] of this.#dests) {
+			cancel();
+		}
+		this.#dests.clear();
 		this.context._unregister(this);
 		super.dispose();
 	}
 
-	encodeTo(dest: VideoEncodeDestination): void {
-		this.#dests.add(dest);
+	encodeTo(dest: VideoEncodeDestination): { done: Promise<void> } {
+		const promise = new Promise<void>((resolve) =>{
+			this.#dests.set(dest, resolve);
+		});
+
+		return { done: promise };
 	}
 }
 

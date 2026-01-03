@@ -113,17 +113,13 @@ export class VideoDecodeNode extends VideoNode {
 		}
 	}
 
-	async close(): Promise<void> {
+	override async dispose(): Promise<void> {
+		if (this.disposed) return;
 		try {
 			await this.flush();
-			this.#decoder.close();
 		} catch (_) {
 			/* ignore */
 		}
-	}
-
-	override dispose(): void {
-		if (this.disposed) return;
 		try {
 			this.#decoder.close();
 		} catch (_) {
