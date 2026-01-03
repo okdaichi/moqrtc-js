@@ -112,6 +112,42 @@ export class MediaDeviceContext {
 		return this.#devices.filter(d => d.kind === `${kind}input`);
 	}
 	
+	/**
+	 * Find a specific device by label, deviceId, or groupId.
+	 */
+	findDevice(kind: "audio" | "video", query: {
+		label?: string;
+		deviceId?: string;
+		groupId?: string;
+	}): MediaDeviceInfo | undefined {
+		const devices = this.getDevices(kind);
+		return devices.find(d => {
+			if (query.deviceId && d.deviceId === query.deviceId) return true;
+			if (query.groupId && d.groupId === query.groupId) return true;
+			if (query.label && d.label.toLowerCase().includes(query.label.toLowerCase())) return true;
+			return false;
+		});
+	}
+	
+	/**
+	 * Get statistics about devices and permissions.
+	 */
+	getStats(): {
+		audioDevices: number;
+		videoDevices: number;
+		hasAudioPermission: boolean;
+		hasVideoPermission: boolean;
+		activeListeners: number;
+	} {
+		return {
+			audioDevices: this.getDevices("audio").length,
+			videoDevices: this.getDevices("video").length,
+			hasAudioPermission: this.hasPermission("audio"),
+			hasVideoPermission: this.hasPermission("video"),
+			activeListeners: this.#listeners.size,
+		};
+	}
+	
 	hasPermission(kind: "audio" | "video"): boolean {
 		return this.#permissions.get(kind) ?? false;
 	}
@@ -195,5 +231,122 @@ export class MediaDeviceContext {
 		this.#listeners.clear();
 		this.#permissions.clear();
 		this.#permissionRequests.clear();
+	}
+}
+
+/**
+ * Options for creating a Device instance.
+ */
+export interface DeviceOptions {
+	enabled?: boolean;
+	constraints?: MediaTrackConstraints;
+	preferred?: string;
+	onTrackEnded?: (reason: string) => void;
+	getDefaultDeviceId: (devices: MediaDeviceInfo[]) => string | undefined;
+}
+
+/**
+ * Device manages media input (audio/video) track lifecycle.
+ * Designed to be embedded in Camera/Microphone classes.
+ */
+export class Device<K extends "audio" | "video"> {
+	readonly context: MediaDeviceContext;
+	readonly kind: K;
+	enabled: boolean;
+	constraints: MediaTrackConstraints | undefined;
+	preferred: string | undefined;
+	activeDeviceId: string | undefined;
+	onTrackEnded?: (reason: string) => void;
+	
+	#stream: MediaStreamTrack | undefined;
+	#unsubscribe: (() => void) | undefined;
+	#getDefaultDeviceId: (devices: MediaDeviceInfo[]) => string | undefined;
+	
+	constructor(
+		context: MediaDeviceContext,
+		kind: K,
+		options: DeviceOptions
+	) {
+		this.context = context;
+		this.kind = kind;
+		this.enabled = options.enabled ?? false;
+		this.constraints = options.constraints;
+		this.preferred = options.preferred;
+		this.onTrackEnded = options.onTrackEnded;
+		this.#getDefaultDeviceId = options.getDefaultDeviceId;
+		
+		// Subscribe to device changes
+		this.#unsubscribe = this.context.subscribe(() => {
+			this.activeDeviceId = this.preferred || this.defaultDeviceId;
+		});
+		
+		// Set initial activeDeviceId
+		this.activeDeviceId = this.preferred || this.defaultDeviceId;
+	}
+	
+	/** Get default device ID using provided heuristics */
+	get defaultDeviceId(): string | undefined {
+		const devices = this.context.getDevices(this.kind);
+		return this.#getDefaultDeviceId(devices);
+	}
+	
+	/** Get current stream */
+	get stream(): MediaStreamTrack | undefined {
+		return this.#stream;
+	}
+	
+	/** Set current stream */
+	set stream(track: MediaStreamTrack | undefined) {
+		this.#stream = track;
+	}
+	
+	/**
+	 * Stop current track.
+	 */
+	stop(): void {
+		if (this.#stream) {
+			try {
+				this.#stream.stop();
+			} catch {
+				// Ignore errors when stopping track
+			}
+			this.#stream = undefined;
+		}
+	}
+	
+	/**
+	 * Switch to a different device.
+	 * If currently streaming, stops and restarts with the new device.
+	 */
+	async switchDevice(deviceId: string): Promise<void> {
+		this.preferred = deviceId;
+		this.activeDeviceId = deviceId;
+		
+		// Stop current stream
+		this.stop();
+	}
+	
+	/**
+	 * Update track constraints dynamically.
+	 * Applies to active track if streaming.
+	 */
+	async updateConstraints(constraints: MediaTrackConstraints): Promise<void> {
+		this.constraints = constraints;
+		
+		if (this.#stream) {
+			await this.#stream.applyConstraints(constraints);
+		}
+	}
+	
+	/**
+	 * Close and cleanup resources.
+	 */
+	close(): void {
+		this.stop();
+		
+		if (this.#unsubscribe) {
+			this.#unsubscribe();
+			this.#unsubscribe = undefined;
+		}
 	}
 }
