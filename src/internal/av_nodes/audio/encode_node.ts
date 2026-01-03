@@ -219,6 +219,6 @@ export class AudioEncodeNode extends GainNode {
 }
 
 export interface AudioEncodeDestination {
-	output: (chunk: EncodedAudioChunk) => Promise<Error | undefined>;
+	output: (chunk: EncodedAudioChunk) => (Error | undefined) | Promise<Error | undefined>;
 	done: Promise<void>;
 }
