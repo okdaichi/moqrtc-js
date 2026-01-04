@@ -203,40 +203,6 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		// Note: close is called on cloned frame, not input
 	});
 
-	await t.step("should close encoder", async () => {
-		const config: VideoEncoderConfig = {
-			codec: "vp8",
-			width: 640,
-			height: 480,
-			bitrate: 1000000,
-			framerate: 30,
-		};
-		encoderNode.configure(config);
-
-		await encoderNode.close();
-		assert(mockEncoder.closeCalled);
-	});
-
-	await t.step("should handle close errors gracefully", async () => {
-		const config: VideoEncoderConfig = {
-			codec: "vp8",
-			width: 640,
-			height: 480,
-			bitrate: 1000000,
-			framerate: 30,
-		};
-		encoderNode.configure(config);
-
-		// Mock encoder.close to throw an error
-		mockEncoder.close = () => {
-			throw new Error("Close error");
-		};
-
-		// Should not throw despite the error
-		await encoderNode.close();
-		assert(mockEncoder.closeCalled);
-	});
-
 	await t.step("should dispose encoder node", () => {
 		encoderNode.dispose();
 		// dispose should disconnect and unregister from context
@@ -254,23 +220,18 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		};
 		encoderNode.configure(config);
 
-		let resolveDone: (value?: any) => void = () => {};
 		const mockDestination: VideoEncodeDestination = {
-			output: (_chunk: any) => Promise.resolve(undefined),
-			done: new Promise((resolve) => resolveDone = resolve),
+			output: (_chunk: any, _decoderConfig?: VideoDecoderConfig) => Promise.resolve(undefined),
 		};
 
-		// Add destination first
-		const encodePromise = encoderNode.encodeTo(mockDestination);
+		// Add destination
+		encoderNode.encodeTo(mockDestination);
 
 		// Simulate encoding a chunk
 		encoderNode.process(mockFrame);
 
-		// Resolve done to complete the encodeTo
-		resolveDone();
-
-		// Wait for the encode promise to resolve
-		await encodePromise;
+		// Wait a bit for async processing
+		await new Promise((resolve) => setTimeout(resolve, 10));
 	});
 
 	await t.step(
@@ -286,19 +247,18 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 			encoderNode.configure(config);
 
 			const mockDestination: VideoEncodeDestination = {
-				output: () => {
+				output: (_chunk: any, _decoderConfig?: VideoDecoderConfig) => {
 					throw new Error("Destination error");
 				},
-				done: Promise.resolve(),
 			};
 
-			const encodePromise = encoderNode.encodeTo(mockDestination);
+			encoderNode.encodeTo(mockDestination);
 
 			// Simulate encoding a chunk
 			encoderNode.process(mockFrame);
 
-			// Should not throw despite destination error
-			await encodePromise;
+			// Wait a bit for async processing
+			await new Promise((resolve) => setTimeout(resolve, 10));
 		},
 	);
 });

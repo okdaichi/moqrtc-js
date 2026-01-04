@@ -1,8 +1,53 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
+import type { EncodedChunk } from "../container.ts";
 import { AudioEncodeDestination, AudioEncodeNode } from "./encode_node.ts";
 import { MockAudioData } from "./mock_audiodata_test.ts";
 
-import type { EncodedChunk } from "../container.ts";
+// Mock GainNode (base class for AudioEncodeNode)
+// MUST be set globally BEFORE importing AudioEncodeNode
+class MockGainNode {
+	context: AudioContext;
+	channelCount = 2;
+	channelCountMode: ChannelCountMode = "max";
+	channelInterpretation: ChannelInterpretation = "speakers";
+	numberOfInputs = 1;
+	numberOfOutputs = 0; // AudioEncodeNode has no outputs (terminal node)
+	gain = {
+		value: 1.0,
+	};
+	#internalConnectionAllowed = false;
+
+	constructor(context: AudioContext, _options?: { gain?: number }) {
+		this.context = context;
+		if (_options?.gain !== undefined) {
+			this.gain.value = _options.gain;
+		}
+	}
+
+	connect(_destination: AudioNode | AudioParam): AudioNode | void {
+		// Allow internal connection to worklet during construction
+		// Check if destination is an AudioWorkletNode (has a 'port' property)
+		if (_destination && typeof _destination === "object" && "port" in _destination) {
+			// This is an internal connection to AudioWorkletNode, allow it
+			return _destination as AudioNode;
+		}
+		// AudioEncodeNode does not support external connections (it's a terminal node)
+		throw new Error("AudioEncodeNode does not support connections. Use encodeTo() instead.");
+	}
+
+	disconnect(): void {
+		// Mock implementation - no-op
+	}
+}
+
+// Set GainNode globally before importing AudioEncodeNode
+const originalGainNode = (globalThis as any).GainNode;
+(globalThis as any).GainNode = MockGainNode;
+
+// Restore original if it existed
+if (originalGainNode !== undefined) {
+	(globalThis as any).GainNode = originalGainNode;
+}
 
 // Global tracker for mock instances
 let lastMockEncoder: MockAudioEncoder | null = null;
@@ -66,6 +111,11 @@ class MockAudioEncoder {
 		this.state = "closed";
 	}
 
+	async flush(): Promise<void> {
+		// Mock flush does nothing but can be awaited
+		return Promise.resolve();
+	}
+
 	triggerError(error: DOMException): void {
 		if (this.#errorCallback) {
 			this.#errorCallback(error);
@@ -126,6 +176,7 @@ class MockAudioContext {
 Deno.test("AudioEncodeNode", async (t) => {
 	let originalAudioEncoder: any;
 	let originalAudioWorkletNode: any;
+	let originalGainNode: any;
 	let context: AudioContext;
 	let encodeNode: AudioEncodeNode;
 
@@ -133,10 +184,12 @@ Deno.test("AudioEncodeNode", async (t) => {
 		// Store originals
 		originalAudioEncoder = globalThis.AudioEncoder;
 		originalAudioWorkletNode = globalThis.AudioWorkletNode;
+		originalGainNode = (globalThis as any).GainNode;
 
 		// Setup mocks
 		(globalThis as any).AudioEncoder = MockAudioEncoder;
 		(globalThis as any).AudioWorkletNode = MockAudioWorkletNode;
+		(globalThis as any).GainNode = MockGainNode;
 
 		context = new MockAudioContext() as any;
 		encodeNode = new AudioEncodeNode(context);
@@ -309,7 +362,7 @@ Deno.test("AudioEncodeNode", async (t) => {
 		const node = new AudioEncodeNode(context);
 		const encoder = lastMockEncoder!;
 
-		await node.close();
+		await node.dispose();
 		assert(encoder.closeCalled);
 	});
 
@@ -322,7 +375,7 @@ Deno.test("AudioEncodeNode", async (t) => {
 		};
 
 		// Should not throw
-		await node.close();
+		await node.dispose();
 	});
 
 	await t.step("should dispose correctly", () => {
@@ -425,11 +478,10 @@ Deno.test("AudioEncodeNode", async (t) => {
 		});
 
 		const mockDest: AudioEncodeDestination = {
-			output: async (chunk: EncodedChunk) => {
+			output: async (chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => {
 				outputChunk = chunk;
 				return undefined;
 			},
-			done: donePromise,
 		};
 
 		const config: AudioEncoderConfig = {
@@ -467,10 +519,9 @@ Deno.test("AudioEncodeNode", async (t) => {
 			});
 
 			const mockDest: AudioEncodeDestination = {
-				output: async () => {
+				output: async (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => {
 					throw new Error("Destination error");
 				},
-				done: donePromise,
 			};
 
 			const config: AudioEncoderConfig = {
@@ -503,10 +554,9 @@ Deno.test("AudioEncodeNode", async (t) => {
 			const node = new AudioEncodeNode(context);
 
 			const mockDest: AudioEncodeDestination = {
-				output: async () => {
+				output: async (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => {
 					return undefined;
 				},
-				done: Promise.resolve(),
 			};
 
 			const config: AudioEncoderConfig = {
@@ -527,6 +577,7 @@ Deno.test("AudioEncodeNode", async (t) => {
 		// Restore originals
 		globalThis.AudioEncoder = originalAudioEncoder;
 		globalThis.AudioWorkletNode = originalAudioWorkletNode;
+		(globalThis as any).GainNode = originalGainNode;
 
 		encodeNode.dispose();
 	});
@@ -536,14 +587,21 @@ Deno.test("AudioEncodeNode", async (t) => {
 Deno.test("AudioEncodeNode - edge cases", async (t) => {
 	let originalAudioEncoder: any;
 	let originalAudioWorkletNode: any;
+	let originalGainNode: any;
 	let context: AudioContext;
 
 	await t.step("setup", () => {
 		originalAudioEncoder = globalThis.AudioEncoder;
 		originalAudioWorkletNode = globalThis.AudioWorkletNode;
+		originalGainNode = (globalThis as any).GainNode;
+
+		originalAudioEncoder = globalThis.AudioEncoder;
+		originalAudioWorkletNode = globalThis.AudioWorkletNode;
+		originalGainNode = (globalThis as any).GainNode;
 
 		(globalThis as any).AudioEncoder = MockAudioEncoder;
 		(globalThis as any).AudioWorkletNode = MockAudioWorkletNode;
+		(globalThis as any).GainNode = MockGainNode;
 
 		context = new MockAudioContext() as any;
 	});
@@ -592,22 +650,27 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 	await t.step("cleanup", () => {
 		globalThis.AudioEncoder = originalAudioEncoder;
 		globalThis.AudioWorkletNode = originalAudioWorkletNode;
+		(globalThis as any).GainNode = originalGainNode;
 	});
 });
 
-// Backpressure management tests
-Deno.test("AudioEncodeNode - backpressure management", async (t) => {
+// Backpressure tests
+Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 	let originalAudioEncoder: any;
 	let originalAudioWorkletNode: any;
+	let originalGainNode: any;
 	let context: AudioContext;
 	let encodeNode: AudioEncodeNode;
 
 	await t.step("setup", () => {
 		originalAudioEncoder = globalThis.AudioEncoder;
 		originalAudioWorkletNode = globalThis.AudioWorkletNode;
+		originalGainNode = (globalThis as any).GainNode;
 
 		(globalThis as any).AudioEncoder = MockAudioEncoder;
+		(globalThis as any).AudioEncoder = MockAudioEncoder;
 		(globalThis as any).AudioWorkletNode = MockAudioWorkletNode;
+		(globalThis as any).GainNode = MockGainNode;
 
 		context = new MockAudioContext() as any;
 		encodeNode = new AudioEncodeNode(context);
@@ -657,6 +720,7 @@ Deno.test("AudioEncodeNode - backpressure management", async (t) => {
 	await t.step("cleanup", () => {
 		globalThis.AudioEncoder = originalAudioEncoder;
 		globalThis.AudioWorkletNode = originalAudioWorkletNode;
+		(globalThis as any).GainNode = originalGainNode;
 		encodeNode.dispose();
 	});
 });

@@ -35,11 +35,11 @@ export class AudioEncodeNode extends GainNode {
 		super(context, { gain: 1.0 });
 
 		this.#encoder = new AudioEncoder({
-			output: async (chunk) => {
+			output: async (chunk, meta) => {
 				// Use allSettled to ensure one destination error doesn't affect others
 				await Promise.allSettled(Array.from(this.#dests, ([dest, cancel]) => {
 					return new Promise<void>((resolve) => {
-						const err = dest.output(chunk);
+						const err = dest.output(chunk, meta?.decoderConfig);
 						if (err !== undefined) {
 							this.#dests.delete(dest);
 							cancel();
@@ -108,6 +108,40 @@ export class AudioEncodeNode extends GainNode {
 
 	configure(config: AudioEncoderConfig): void {
 		this.#encoder.configure(config);
+	}
+
+	/**
+	 * Directly process an AudioData frame for encoding.
+	 * Useful for testing or bypassing the Web Audio worklet pipeline.
+	 */
+	process(input: AudioData): void {
+		if (this.#disposed || this.#encoder.state === "closed") {
+			return;
+		}
+
+		// Backpressure: Drop frame if encoder is overloaded
+		if (this.encodeQueueSize > MAX_ENCODE_QUEUE_SIZE) {
+			console.warn(
+				`[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`,
+			);
+			return; // Drop frame without encoding
+		}
+
+		// Ownership: Caller owns input, so we clone for our use
+		const clonedData = input.clone();
+
+		// Encode the data
+		try {
+			this.#encoder.encode(clonedData);
+		} catch (e) {
+			// Only log if not a closed codec error during shutdown
+			if (!this.#disposed) {
+				console.error("[AudioEncodeNode] encode error:", e);
+			}
+		}
+
+		// Ownership: We own the clone, so we close it
+		clonedData.close();
 	}
 
 	async #next(stream: ReadableStreamDefaultReader<AudioData>): Promise<void> {
@@ -242,5 +276,5 @@ export class AudioEncodeNode extends GainNode {
 }
 
 export interface AudioEncodeDestination {
-	output: (chunk: EncodedAudioChunk) => (Error | undefined) | Promise<Error | undefined>;
+	output: (chunk: EncodedAudioChunk, decoderConfig?: AudioDecoderConfig) => (Error | undefined) | Promise<Error | undefined>;
 }

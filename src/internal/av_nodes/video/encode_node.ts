@@ -21,17 +21,10 @@ export class VideoEncodeNode extends VideoNode {
 
 		this.#encoder = new VideoEncoder({
 			output: (chunk, meta) => {
-				if (meta?.decoderConfig) {
-					console.log(
-						"[VideoEncodeNode] Encoded chunk decoderConfig:",
-						meta.decoderConfig,
-					);
-				}
-
 				// Pass encoded chunk to all registered destinations
 				Promise.allSettled(Array.from(this.#dests, ([dest, cancel]) => {
 					return new Promise<void>((resolve) => {
-						const err = dest.output(chunk);
+						const err = dest.output(chunk, meta?.decoderConfig);
 						// If failed, delete it from the set
 						if (err !== undefined) {
 							this.#dests.delete(dest);
@@ -143,5 +136,5 @@ export class VideoEncodeNode extends VideoNode {
 type IsKeyFunction = (timestamp: number, count: number) => boolean;
 
 export interface VideoEncodeDestination {
-	output: (chunk: EncodedVideoChunk) => (Error | undefined) | Promise<Error | undefined>;
+	output: (chunk: EncodedVideoChunk, decoderConfig?: VideoDecoderConfig) => (Error | undefined) | Promise<Error | undefined>;
 }

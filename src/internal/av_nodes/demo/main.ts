@@ -475,14 +475,13 @@ async function startPipeline(sourceType: "camera" | "screen") {
 
 		// Setup encode destination
 		const destination: VideoEncodeDestination = {
-			output: async (chunk: EncodedVideoChunk) => {
+			output: async (chunk: EncodedVideoChunk, _decoderConfig?: VideoDecoderConfig) => {
 				metrics.encodedFrames++;
 				const writer = writable.getWriter();
 				await writer.write(chunk);
 				writer.releaseLock();
 				return undefined;
 			},
-			done: new Promise(() => {}), // Never resolves
 		};
 
 		// Start encoding and decoding
@@ -544,14 +543,13 @@ async function startPipeline(sourceType: "camera" | "screen") {
 
 			// Setup audio encode destination
 			const audioDestination: AudioEncodeDestination = {
-				output: async (chunk: EncodedAudioChunk) => {
+				output: async (chunk: EncodedAudioChunk, _decoderConfig?: AudioDecoderConfig) => {
 					metrics.audioEncodedFrames++;
 					const writer = audioWritable.getWriter();
 					await writer.write(chunk);
 					writer.releaseLock();
 					return undefined;
 				},
-				done: new Promise(() => {}), // Never resolves
 			};
 
 			// Start audio encoding and decoding
@@ -610,13 +608,13 @@ function stopPipeline() {
 	}
 
 	if (pipeline.encodeNode) {
-		void pipeline.encodeNode.close().catch(() => {});
+		void pipeline.encodeNode.dispose().catch(() => {});
 		pipeline.encodeNode.dispose();
 		pipeline.encodeNode = null;
 	}
 
 	if (pipeline.decodeNode) {
-		void pipeline.decodeNode.close().catch(() => {});
+		void pipeline.decodeNode.dispose().catch(() => {});
 		pipeline.decodeNode.dispose();
 		pipeline.decodeNode = null;
 	}
@@ -638,7 +636,7 @@ function stopPipeline() {
 	}
 
 	if (pipeline.audioEncodeNode) {
-		void pipeline.audioEncodeNode.close();
+		void pipeline.audioEncodeNode.dispose().catch(() => {});
 		pipeline.audioEncodeNode.dispose();
 		pipeline.audioEncodeNode = null;
 	}
