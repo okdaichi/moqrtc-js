@@ -301,12 +301,16 @@ var AudioEncodeNode = class extends GainNode {
     __privateAdd(this, _encoder, void 0);
     __privateAdd(this, _workletReady2, void 0);
     __privateAdd(this, _disposed2, false);
-    __privateAdd(this, _dests, /* @__PURE__ */ new Set());
+    __privateAdd(this, _dests, /* @__PURE__ */ new Map());
     __privateSet(this, _encoder, new AudioEncoder({
-      output: async (chunk) => {
-        await Promise.allSettled(
-          Array.from(__privateGet(this, _dests), (dest) => dest.output(chunk))
-        );
+      output: async (chunk, meta) => {
+        await Promise.allSettled(Array.from(__privateGet(this, _dests), async ([dest, cancel]) => {
+          const err = await dest.output(chunk, meta?.decoderConfig);
+          if (err !== void 0) {
+            __privateGet(this, _dests).delete(dest);
+            cancel();
+          }
+        }));
       },
       error: (e) => {
         console.error("[AudioEncodeNode] encoder error:", e);
@@ -358,6 +362,30 @@ var AudioEncodeNode = class extends GainNode {
   configure(config) {
     __privateGet(this, _encoder).configure(config);
   }
+  /**
+   * Directly process an AudioData frame for encoding.
+   * Useful for testing or bypassing the Web Audio worklet pipeline.
+   */
+  process(input) {
+    if (__privateGet(this, _disposed2) || __privateGet(this, _encoder).state === "closed") {
+      return;
+    }
+    if (this.encodeQueueSize > MAX_ENCODE_QUEUE_SIZE) {
+      console.warn(
+        `[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`
+      );
+      return;
+    }
+    const clonedData = input.clone();
+    try {
+      __privateGet(this, _encoder).encode(clonedData);
+    } catch (e) {
+      if (!__privateGet(this, _disposed2)) {
+        console.error("[AudioEncodeNode] encode error:", e);
+      }
+    }
+    clonedData.close();
+  }
   // Codec state monitoring
   get encoderState() {
     return __privateGet(this, _encoder).state;
@@ -371,23 +399,33 @@ var AudioEncodeNode = class extends GainNode {
     }
   }
   encodeTo(dest) {
-    __privateGet(this, _dests).add(dest);
-    const done = dest.done.finally(() => {
-      __privateGet(this, _dests).delete(dest);
+    const promise = new Promise((resolve) => {
+      __privateGet(this, _dests).set(dest, resolve);
     });
-    return { done };
+    return { done: promise };
   }
-  close() {
+  async flush() {
+    if (__privateGet(this, _encoder).state === "closed") {
+      return;
+    }
     try {
-      __privateGet(this, _encoder).close();
-    } catch (_) {
+      await __privateGet(this, _encoder).flush();
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") {
+        return;
+      }
+      console.error("[AudioEncodeNode] flush error:", e);
     }
   }
   // Unified disposal pattern following video pattern
-  dispose() {
+  async dispose() {
     if (__privateGet(this, _disposed2))
       return;
     __privateSet(this, _disposed2, true);
+    try {
+      await this.flush();
+    } catch (_) {
+    }
     try {
       __privateGet(this, _encoder).close();
     } catch (_) {
@@ -403,6 +441,9 @@ var AudioEncodeNode = class extends GainNode {
       }
     }).catch(() => {
     });
+    for (const [_, cancel] of __privateGet(this, _dests)) {
+      cancel();
+    }
     __privateGet(this, _dests).clear();
   }
 };
@@ -1157,19 +1198,25 @@ var VideoContext = class {
    * @internal
    */
   async _waitNextFrame() {
+    console.log(`[VideoContext] _waitNextFrame called, state=${__privateGet(this, _state)}`);
     if (__privateGet(this, _state) !== "running") {
+      console.log("[VideoContext] Not running, returning current timestamp");
       return this.currentTimestamp;
     }
     const intervalMs = 1e3 / this.frameRate;
     if (__privateGet(this, _nextFrameTime) === 0) {
       __privateSet(this, _nextFrameTime, performance.now());
+      console.log(`[VideoContext] Initializing nextFrameTime to ${__privateGet(this, _nextFrameTime)}`);
     }
     __privateSet(this, _nextFrameTime, __privateGet(this, _nextFrameTime) + intervalMs);
     const delay = __privateGet(this, _nextFrameTime) - performance.now();
+    console.log(`[VideoContext] delay=${delay}ms, nextFrameTime=${__privateGet(this, _nextFrameTime)}`);
     if (delay > 0) {
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
-    return this.currentTimestamp;
+    const timestamp = this.currentTimestamp;
+    console.log(`[VideoContext] Returning timestamp=${timestamp}`);
+    return timestamp;
   }
   resume() {
     if (__privateGet(this, _state) === "closed")
@@ -1317,16 +1364,13 @@ var VideoDecodeNode = class extends VideoNode {
       console.error("[VideoDecodeNode] flush error:", e);
     }
   }
-  async close() {
-    try {
-      await this.flush();
-      __privateGet(this, _decoder2).close();
-    } catch (_) {
-    }
-  }
-  dispose() {
+  async dispose() {
     if (this.disposed)
       return;
+    try {
+      await this.flush();
+    } catch (_) {
+    }
     try {
       __privateGet(this, _decoder2).close();
     } catch (_) {
@@ -1346,21 +1390,22 @@ var VideoEncodeNode = class extends VideoNode {
     __publicField(this, "context");
     __privateAdd(this, _encoder2, void 0);
     __privateAdd(this, _isKey, void 0);
-    __privateAdd(this, _dests2, /* @__PURE__ */ new Set());
+    __privateAdd(this, _dests2, /* @__PURE__ */ new Map());
     this.context = context;
     __privateSet(this, _isKey, options?.isKey ?? (() => false));
     this.context._register(this);
     __privateSet(this, _encoder2, new VideoEncoder({
-      output: async (chunk, meta) => {
-        if (meta?.decoderConfig) {
-          console.log(
-            "[VideoEncodeNode] Encoded chunk decoderConfig:",
-            meta.decoderConfig
-          );
-        }
-        await Promise.allSettled(
-          Array.from(__privateGet(this, _dests2), (dest) => dest.output(chunk))
-        );
+      output: (chunk, meta) => {
+        console.log(`[VideoEncodeNode] output called: timestamp=${chunk.timestamp}, type=${chunk.type}, byteLength=${chunk.byteLength}, dests=${__privateGet(this, _dests2).size}`);
+        Promise.allSettled(Array.from(__privateGet(this, _dests2), async ([dest, cancel]) => {
+          console.log("[VideoEncodeNode] Calling dest.output");
+          const err = await dest.output(chunk, meta?.decoderConfig);
+          console.log(`[VideoEncodeNode] dest.output returned: err=${err}`);
+          if (err !== void 0) {
+            __privateGet(this, _dests2).delete(dest);
+            cancel();
+          }
+        }));
       },
       error: (e) => {
         console.error("[VideoEncodeNode] encoder error:", e);
@@ -1381,7 +1426,9 @@ var VideoEncodeNode = class extends VideoNode {
     __privateGet(this, _encoder2).configure(config);
   }
   process(input) {
+    console.log(`[VideoEncodeNode] process called: timestamp=${input.timestamp}, disposed=${this.disposed}, state=${__privateGet(this, _encoder2).state}`);
     if (this.disposed || __privateGet(this, _encoder2).state === "closed") {
+      console.log("[VideoEncodeNode] Skipping, disposed or closed");
       return;
     }
     if (this.encodeQueueSize > MAX_QUEUE_SIZE2) {
@@ -1392,8 +1439,10 @@ var VideoEncodeNode = class extends VideoNode {
     }
     const clonedFrame = input.clone();
     try {
+      const isKey = __privateGet(this, _isKey).call(this, input.timestamp, this.encodeQueueSize);
+      console.log(`[VideoEncodeNode] Encoding frame: keyFrame=${isKey}, queueSize=${this.encodeQueueSize}`);
       __privateGet(this, _encoder2).encode(clonedFrame, {
-        keyFrame: __privateGet(this, _isKey).call(this, input.timestamp, this.encodeQueueSize)
+        keyFrame: isKey
       });
     } catch (e) {
       if (!this.disposed) {
@@ -1415,29 +1464,29 @@ var VideoEncodeNode = class extends VideoNode {
       console.error("[VideoEncodeNode] flush error:", e);
     }
   }
-  async close() {
-    try {
-      await this.flush();
-      __privateGet(this, _encoder2).close();
-    } catch (_) {
-    }
-  }
-  dispose() {
+  async dispose() {
     if (this.disposed)
       return;
     try {
+      await this.flush();
+    } catch (_) {
+    }
+    try {
       __privateGet(this, _encoder2).close();
     } catch (_) {
     }
+    for (const [_, cancel] of __privateGet(this, _dests2)) {
+      cancel();
+    }
+    __privateGet(this, _dests2).clear();
     this.context._unregister(this);
     super.dispose();
   }
   encodeTo(dest) {
-    __privateGet(this, _dests2).add(dest);
-    const done = dest.done.finally(() => {
-      __privateGet(this, _dests2).delete(dest);
+    const promise = new Promise((resolve) => {
+      __privateGet(this, _dests2).set(dest, resolve);
     });
-    return { done };
+    return { done: promise };
   }
 };
 _encoder2 = new WeakMap();
@@ -1556,15 +1605,26 @@ var VideoSourceNode = class extends VideoNode {
       if (__privateGet(this, _running) || this.disposed)
         return;
       __privateSet(this, _running, true);
+      console.log("[VideoSourceNode] Starting loop");
       try {
         __privateSet(this, _reader, __privateGet(this, _stream).getReader());
+        let frameCount = 0;
         while (__privateGet(this, _running) && this.context.state === "running") {
+          console.log(`[VideoSourceNode] Loop iteration ${++frameCount}, running=${__privateGet(this, _running)}, state=${this.context.state}`);
           const timestamp = await this.context._waitNextFrame();
-          if (!__privateGet(this, _running) || !__privateGet(this, _reader))
+          console.log(`[VideoSourceNode] After _waitNextFrame, timestamp=${timestamp}`);
+          if (!__privateGet(this, _running) || !__privateGet(this, _reader)) {
+            console.log(`[VideoSourceNode] Breaking: running=${__privateGet(this, _running)}, hasReader=${!!__privateGet(this, _reader)}`);
             break;
+          }
+          console.log("[VideoSourceNode] About to read from stream");
           const { done: done2, value: frame } = await __privateGet(this, _reader).read();
-          if (done2)
+          console.log(`[VideoSourceNode] Read result: done=${done2}, hasFrame=${!!frame}`);
+          console.log(`[VideoSourceNode] Read result: done=${done2}, hasFrame=${!!frame}`);
+          if (done2) {
+            console.log("[VideoSourceNode] Stream done, breaking");
             break;
+          }
           const retimedFrame = new VideoFrame(frame, {
             timestamp
             // Use context's μs timestamp
@@ -1572,6 +1632,7 @@ var VideoSourceNode = class extends VideoNode {
           frame.close();
           this.process(retimedFrame);
           retimedFrame.close();
+          console.log("[VideoSourceNode] Frame processed, continuing loop");
         }
       } catch (e) {
         if (!__privateGet(this, _running) || this.disposed)
@@ -2086,16 +2147,13 @@ async function startPipeline(sourceType) {
     };
     const { readable, writable } = new TransformStream();
     const destination = {
-      output: async (chunk) => {
+      output: async (chunk, _decoderConfig) => {
         metrics.encodedFrames++;
         const writer = writable.getWriter();
         await writer.write(chunk);
         writer.releaseLock();
         return void 0;
-      },
-      done: new Promise(() => {
-      })
-      // Never resolves
+      }
     };
     void pipeline.encodeNode.encodeTo(destination);
     void pipeline.decodeNode.decodeFrom(readable);
@@ -2132,16 +2190,13 @@ async function startPipeline(sourceType) {
         writable: audioWritable
       } = new TransformStream();
       const audioDestination = {
-        output: async (chunk) => {
+        output: async (chunk, _decoderConfig) => {
           metrics.audioEncodedFrames++;
           const writer = audioWritable.getWriter();
           await writer.write(chunk);
           writer.releaseLock();
           return void 0;
-        },
-        done: new Promise(() => {
-        })
-        // Never resolves
+        }
       };
       void pipeline.audioEncodeNode.encodeTo(audioDestination);
       void pipeline.audioDecodeNode.decodeFrom(audioReadable);
@@ -2176,13 +2231,13 @@ function stopPipeline() {
     pipeline.analyserNode = null;
   }
   if (pipeline.encodeNode) {
-    void pipeline.encodeNode.close().catch(() => {
+    void pipeline.encodeNode.dispose().catch(() => {
     });
     pipeline.encodeNode.dispose();
     pipeline.encodeNode = null;
   }
   if (pipeline.decodeNode) {
-    void pipeline.decodeNode.close().catch(() => {
+    void pipeline.decodeNode.dispose().catch(() => {
     });
     pipeline.decodeNode.dispose();
     pipeline.decodeNode = null;
@@ -2200,7 +2255,8 @@ function stopPipeline() {
     pipeline.audioSourceNode = null;
   }
   if (pipeline.audioEncodeNode) {
-    void pipeline.audioEncodeNode.close();
+    void pipeline.audioEncodeNode.dispose().catch(() => {
+    });
     pipeline.audioEncodeNode.dispose();
     pipeline.audioEncodeNode = null;
   }

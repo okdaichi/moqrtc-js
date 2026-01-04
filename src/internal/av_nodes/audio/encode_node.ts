@@ -37,15 +37,12 @@ export class AudioEncodeNode extends GainNode {
 		this.#encoder = new AudioEncoder({
 			output: async (chunk, meta) => {
 				// Use allSettled to ensure one destination error doesn't affect others
-				await Promise.allSettled(Array.from(this.#dests, ([dest, cancel]) => {
-					return new Promise<void>((resolve) => {
-						const err = dest.output(chunk, meta?.decoderConfig);
-						if (err !== undefined) {
-							this.#dests.delete(dest);
-							cancel();
-						}
-						resolve();
-					});
+				await Promise.allSettled(Array.from(this.#dests, async ([dest, cancel]) => {
+					const err = await dest.output(chunk, meta?.decoderConfig);
+					if (err !== undefined) {
+						this.#dests.delete(dest);
+						cancel();
+					}
 				}));
 			},
 			error: (e) => {
@@ -276,5 +273,8 @@ export class AudioEncodeNode extends GainNode {
 }
 
 export interface AudioEncodeDestination {
-	output: (chunk: EncodedAudioChunk, decoderConfig?: AudioDecoderConfig) => (Error | undefined) | Promise<Error | undefined>;
+	output: (
+		chunk: EncodedAudioChunk,
+		decoderConfig?: AudioDecoderConfig,
+	) => Promise<Error | undefined>;
 }

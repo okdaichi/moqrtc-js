@@ -221,7 +221,8 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		encoderNode.configure(config);
 
 		const mockDestination: VideoEncodeDestination = {
-			output: (_chunk: any, _decoderConfig?: VideoDecoderConfig) => Promise.resolve(undefined),
+			output: (_chunk: any, _decoderConfig?: VideoDecoderConfig) =>
+				Promise.resolve(undefined),
 		};
 
 		// Add destination

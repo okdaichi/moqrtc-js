@@ -22,16 +22,12 @@ export class VideoEncodeNode extends VideoNode {
 		this.#encoder = new VideoEncoder({
 			output: (chunk, meta) => {
 				// Pass encoded chunk to all registered destinations
-				Promise.allSettled(Array.from(this.#dests, ([dest, cancel]) => {
-					return new Promise<void>((resolve) => {
-						const err = dest.output(chunk, meta?.decoderConfig);
-						// If failed, delete it from the set
-						if (err !== undefined) {
-							this.#dests.delete(dest);
-							cancel();
-						}
-						resolve();
-					});
+				Promise.allSettled(Array.from(this.#dests, async ([dest, cancel]) => {
+					const err = await dest.output(chunk, meta?.decoderConfig);
+					if (err !== undefined) {
+						this.#dests.delete(dest);
+						cancel();
+					}
 				}));
 			},
 			error: (e) => {
@@ -125,7 +121,7 @@ export class VideoEncodeNode extends VideoNode {
 	}
 
 	encodeTo(dest: VideoEncodeDestination): { done: Promise<void> } {
-		const promise = new Promise<void>((resolve) =>{
+		const promise = new Promise<void>((resolve) => {
 			this.#dests.set(dest, resolve);
 		});
 
@@ -136,5 +132,8 @@ export class VideoEncodeNode extends VideoNode {
 type IsKeyFunction = (timestamp: number, count: number) => boolean;
 
 export interface VideoEncodeDestination {
-	output: (chunk: EncodedVideoChunk, decoderConfig?: VideoDecoderConfig) => (Error | undefined) | Promise<Error | undefined>;
+	output: (
+		chunk: EncodedVideoChunk,
+		decoderConfig?: VideoDecoderConfig,
+	) => Promise<Error | undefined>;
 }
