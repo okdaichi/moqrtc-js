@@ -37,7 +37,8 @@ Deno.test("VideoContext", async (t) => {
 	});
 
 	await t.step("should have currentTime starting at 0", () => {
-		assertEquals(context.currentTime, 0);
+		// currentTime starts near 0; exact 0 is not guaranteed due to test execution time
+		assert(context.currentTime >= 0 && context.currentTime < 1);
 	});
 
 	await t.step("should resume from suspended state", async () => {

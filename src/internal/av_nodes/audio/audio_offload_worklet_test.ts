@@ -555,7 +555,15 @@ Deno.test("audio_offload_worklet", async (t) => {
 
 								if (!dst) continue;
 								if (!src) {
-									dst.fill(0, 0, numberOfFrames);
+									// Fill silence at correct circular buffer position
+									let writePos = this.#writeIndex % dst.length;
+									let remaining = numberOfFrames;
+									while (remaining > 0) {
+										const toCopy = Math.min(remaining, dst.length - writePos);
+										dst.fill(0, writePos, writePos + toCopy);
+										writePos = (writePos + toCopy) % dst.length;
+										remaining -= toCopy;
+									}
 									continue;
 								}
 
@@ -596,11 +604,9 @@ Deno.test("audio_offload_worklet", async (t) => {
 								this.#channelsBuffer[0] === undefined
 							) return true;
 
-							const available = (this.#writeIndex - this.#readIndex +
-								this.#channelsBuffer[0].length) %
-								this.#channelsBuffer[0].length;
+							const available = this.#writeIndex - this.#readIndex;
 							const numberOfFrames = (outputs[0][0] !== undefined)
-								? Math.min(available, outputs[0][0].length)
+								? Math.min(Math.max(0, available), outputs[0][0].length)
 								: 0;
 
 							if (numberOfFrames <= 0) return true;
@@ -730,6 +736,9 @@ Deno.test("audio_offload_worklet", async (t) => {
 		});
 
 		await t.step("reads from circular buffer correctly", () => {
+			// Drain any leftover data from previous tests (e.g. overflow)
+			processor.process([], [[new Float32Array(10000), new Float32Array(10000)]]);
+
 			// Add some data
 			const channels1 = [
 				new Float32Array([1, 2]),
@@ -762,6 +771,9 @@ Deno.test("audio_offload_worklet", async (t) => {
 		});
 
 		await t.step("handles missing channels in append", () => {
+			// Drain any leftover data from previous tests
+			processor.process([], [[new Float32Array(10000), new Float32Array(10000)]]);
+
 			const channels = [new Float32Array([1, 2]), undefined as any];
 			processor.append(channels);
 
@@ -774,6 +786,9 @@ Deno.test("audio_offload_worklet", async (t) => {
 		});
 
 		await t.step("handles onmessage events", () => {
+			// Drain any leftover data from previous tests
+			processor.process([], [[new Float32Array(10000), new Float32Array(10000)]]);
+
 			const channels = [
 				new Float32Array([1, 2]),
 				new Float32Array([3, 4]),

@@ -1,6 +1,6 @@
 // Audio node API: AudioEncodeNode
 // Extends GainNode to enable standard connect() pattern while adding encoding capabilities
-import type { CancelFunc } from "@okdaichi/golikejs/context";
+import type { CancelFunc } from "golikejs/context";
 import { createWorkletBlobUrl as createHijackWorkletBlobUrl } from "./audio_hijack_worklet_inline.ts";
 
 const hijackWorkletName = "audio-hijacker";
@@ -34,6 +34,9 @@ export class AudioEncodeNode extends GainNode {
 		// Initialize as a passthrough GainNode
 		super(context, { gain: 1.0 });
 
+		// Set channel properties appropriate for a terminal encode node
+		this.channelCount = Math.max(1, context.destination.channelCount);
+		this.channelCountMode = "explicit" as ChannelCountMode;
 		this.#encoder = new AudioEncoder({
 			output: async (chunk, meta) => {
 				// Use allSettled to ensure one destination error doesn't affect others

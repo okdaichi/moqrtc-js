@@ -255,8 +255,6 @@ export class VideoAnalyserNode extends VideoNode {
 
 	#scheduleAnalysis(frame: VideoFrame): void {
 		// Extract pixel data synchronously (this is fast)
-		const _width = frame.displayWidth;
-		const _height = frame.displayHeight;
 		const sampleWidth = this.#analysisSize.width;
 		const sampleHeight = this.#analysisSize.height;
 

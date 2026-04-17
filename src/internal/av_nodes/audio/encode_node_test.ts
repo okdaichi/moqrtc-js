@@ -1,53 +1,13 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
 import type { EncodedChunk } from "../container.ts";
+// Must be first: sets globalThis.GainNode before AudioEncodeNode is imported
 import { AudioEncodeDestination, AudioEncodeNode } from "./encode_node.ts";
 import { MockAudioData } from "./mock_audiodata_test.ts";
+import { MockGainNode } from "./mock_gainnode_test.ts";
 
-// Mock GainNode (base class for AudioEncodeNode)
-// MUST be set globally BEFORE importing AudioEncodeNode
-class MockGainNode {
-	context: AudioContext;
-	channelCount = 2;
-	channelCountMode: ChannelCountMode = "max";
-	channelInterpretation: ChannelInterpretation = "speakers";
-	numberOfInputs = 1;
-	numberOfOutputs = 0; // AudioEncodeNode has no outputs (terminal node)
-	gain = {
-		value: 1.0,
-	};
-	#internalConnectionAllowed = false;
-
-	constructor(context: AudioContext, _options?: { gain?: number }) {
-		this.context = context;
-		if (_options?.gain !== undefined) {
-			this.gain.value = _options.gain;
-		}
-	}
-
-	connect(_destination: AudioNode | AudioParam): AudioNode | void {
-		// Allow internal connection to worklet during construction
-		// Check if destination is an AudioWorkletNode (has a 'port' property)
-		if (_destination && typeof _destination === "object" && "port" in _destination) {
-			// This is an internal connection to AudioWorkletNode, allow it
-			return _destination as AudioNode;
-		}
-		// AudioEncodeNode does not support external connections (it's a terminal node)
-		throw new Error("AudioEncodeNode does not support connections. Use encodeTo() instead.");
-	}
-
-	disconnect(): void {
-		// Mock implementation - no-op
-	}
-}
-
-// Set GainNode globally before importing AudioEncodeNode
-const originalGainNode = (globalThis as any).GainNode;
-(globalThis as any).GainNode = MockGainNode;
-
-// Restore original if it existed
-if (originalGainNode !== undefined) {
-	(globalThis as any).GainNode = originalGainNode;
-}
+// The MockGainNode used as global GainNode stub (imported above)
+// It has the same interface as what AudioEncodeNode needs
+// (globalThis.GainNode is already set by mock_gainnode_test.ts import)
 
 // Global tracker for mock instances
 let lastMockEncoder: MockAudioEncoder | null = null;
@@ -378,11 +338,11 @@ Deno.test("AudioEncodeNode", async (t) => {
 		await node.dispose();
 	});
 
-	await t.step("should dispose correctly", () => {
+	await t.step("should dispose correctly", async () => {
 		const node = new AudioEncodeNode(context);
 		const encoder = lastMockEncoder!;
 
-		node.dispose();
+		await node.dispose();
 
 		assert(encoder.closeCalled);
 	});
@@ -472,8 +432,8 @@ Deno.test("AudioEncodeNode", async (t) => {
 		// const encoder = lastMockEncoder!;
 
 		let outputChunk: EncodedChunk | undefined;
-		let resolveDone: () => void;
-		const donePromise = new Promise<void>((resolve) => {
+		let resolveDone!: () => void;
+		new Promise<void>((resolve) => {
 			resolveDone = resolve;
 		});
 
@@ -513,8 +473,8 @@ Deno.test("AudioEncodeNode", async (t) => {
 		async () => {
 			const node = new AudioEncodeNode(context);
 
-			let resolveDone: () => void;
-			const donePromise = new Promise<void>((resolve) => {
+			let resolveDone!: () => void;
+			new Promise<void>((resolve) => {
 				resolveDone = resolve;
 			});
 
@@ -628,9 +588,10 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 			setupContext: () => context,
 			validate: (node: AudioEncodeNode) => {
 				// Access properties before worklet is ready
+				// Note: #workletReady is the actual field name in AudioEncodeNode
 				const worklet = (node as any)["#worklet"];
 				if (!worklet) {
-					assertEquals(node.channelCount, 1);
+					assertEquals(node.channelCount, 2); // matches context.destination.channelCount
 					assertEquals(node.numberOfInputs, 1);
 					assertEquals(node.numberOfOutputs, 0);
 				}

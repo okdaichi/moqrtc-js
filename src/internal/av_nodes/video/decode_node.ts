@@ -18,7 +18,11 @@ export class VideoDecodeNode extends VideoNode {
 				this.process(frame);
 
 				// Close the decoded frame after processing
-				frame.close();
+				try {
+					frame.close();
+				} catch (e) {
+					console.error("[VideoDecodeNode] frame close error:", e);
+				}
 			},
 			error: (e) => {
 				console.error("[VideoDecodeNode] decoder error:", e);

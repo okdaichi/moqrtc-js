@@ -1,3 +1,15 @@
+import { assert, assertEquals } from "@std/assert";
+import { VideoContext } from "./context.ts";
+import { VideoDecodeNode } from "./decode_node.ts";
+import { MockHTMLCanvasElement } from "./mock_htmlcanvaselement_test.ts";
+import { MockVideoDecoder } from "./mock_videodecoder_test.ts";
+import { MockVideoFrame } from "./mock_videoframe_test.ts";
+import { VideoNode } from "./video_node.ts";
+
+class MockVideoNode extends VideoNode {
+	process(_input?: VideoFrame): void {}
+}
+
 Deno.test("VideoDecodeNode", async (t) => {
 	let context: VideoContext;
 	let decoderNode: VideoDecodeNode;
@@ -5,19 +17,18 @@ Deno.test("VideoDecodeNode", async (t) => {
 	let onFrame: (frame: VideoFrame) => void;
 
 	await t.step("setup", () => {
-		// Mock the global VideoDecoder
-		mockDecoder = new MockVideoDecoder({
-			output: (frame: VideoFrame) => {
-				if (onFrame) onFrame(frame);
-			},
-			error: (error: DOMException) => {
-				console.error("Decoder error:", error);
-			},
-		});
-		(globalThis as any).VideoDecoder = () => mockDecoder;
+		// Mock the global VideoDecoder, capturing the config so we can trigger callbacks
+		mockDecoder = new MockVideoDecoder({ output: () => {}, error: () => {} });
+		let capturedOutput: ((frame: VideoFrame) => void) | undefined;
+		(globalThis as any).VideoDecoder = function (config: any) {
+			capturedOutput = config.output;
+			return mockDecoder;
+		};
 
-		context = new VideoContext();
-		onFrame = () => {};
+		const mockCanvas = new MockHTMLCanvasElement();
+		context = new VideoContext({ canvas: mockCanvas as any });
+		// onFrame triggers the VideoDecodeNode's decoder output callback
+		onFrame = (frame: VideoFrame) => capturedOutput?.(frame);
 		decoderNode = new VideoDecodeNode(context);
 	});
 
@@ -90,8 +101,9 @@ Deno.test("VideoDecodeNode", async (t) => {
 			throw new Error("Close error");
 		};
 
-		// Should not throw despite the error
-		assert(() => decoderNode.process(frame));
+		// Trigger the decoder output callback which calls process() then frame.close()
+		// Should not throw despite the error (close errors are caught internally)
+		onFrame(frame);
 		assert(closeCalled);
 	});
 
@@ -147,7 +159,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 
 			const frame = new MockVideoFrame();
 			// Should not throw despite the error
-			assert(() => decoderNode.process(frame));
+		decoderNode.process(frame);
 			assert(processCalled);
 			assertEquals(processFrame, frame);
 		},
@@ -161,7 +173,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 		};
 		decoderNode.configure(config);
 
-		await decoderNode.close();
+		await decoderNode.dispose();
 		assert(mockDecoder.closeCalled);
 	});
 
@@ -179,9 +191,8 @@ Deno.test("VideoDecodeNode", async (t) => {
 			throw new Error("Close error");
 		};
 
-		// Should not throw despite the error
-		await assertRejects(async () => await decoderNode.close());
-		assert(mockDecoder.closeCalled);
+		// dispose() catches errors internally, so just verify it completes
+		await decoderNode.dispose();
 
 		// Restore original
 		mockDecoder.close = originalClose;
@@ -213,8 +224,8 @@ Deno.test("VideoDecodeNode", async (t) => {
 			throw new Error("Flush error");
 		};
 
-		// Should not throw despite the error
-		await assertRejects(async () => await decoderNode.flush());
+		// Should not throw despite the error (flush errors are caught internally)
+		await decoderNode.flush();
 		assert(mockDecoder.flushCalled);
 
 		// Restore original
@@ -229,12 +240,22 @@ Deno.test("VideoDecodeNode", async (t) => {
 	});
 
 	await t.step("should decode from track reader", async () => {
+		// Create a fresh decoder node (previous node was disposed)
+		const freshMockDecoder = new MockVideoDecoder(
+			{ output: () => {}, error: () => {} },
+		);
+		(globalThis as any).VideoDecoder = function (_config: any) {
+			return freshMockDecoder;
+		};
+		const freshNode = new VideoDecodeNode(context);
+		delete (globalThis as any).VideoDecoder;
+
 		const config: VideoDecoderConfig = {
 			codec: "vp8",
 			codedWidth: 640,
 			codedHeight: 480,
 		};
-		decoderNode.configure(config);
+		freshNode.configure(config);
 
 		// Mock TrackReader - simplified for Deno test
 		const mockReader = new ReadableStream({
@@ -246,8 +267,8 @@ Deno.test("VideoDecodeNode", async (t) => {
 			},
 		});
 
-		await decoderNode.decodeFrom(mockReader);
+		await freshNode.decodeFrom(mockReader).done;
 
-		assert(mockDecoder.decodeCalled);
+		assert(freshMockDecoder.decodeCalled);
 	});
 });

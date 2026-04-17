@@ -80,7 +80,6 @@ export function DefaultVolume(): number {
 export class VolumeController extends GainNode {
 	#muted: boolean = false;
 	#unmuteVolume: number;
-	#rampMs: number;
 
 	constructor(
 		audioContext: AudioContext,
@@ -94,7 +93,6 @@ export class VolumeController extends GainNode {
 
 		super(audioContext, { ...options, gain: clampedInitial });
 
-		this.#rampMs = options?.fadeTimeMs ?? DefaultFadeTime();
 		this.#unmuteVolume = clampedInitial === 0 ? DefaultVolume() : clampedInitial;
 	}
 

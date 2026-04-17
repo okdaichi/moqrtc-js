@@ -18,6 +18,9 @@ import { MockVideoFrame } from "./mock_videoframe_test.ts";
 	},
 };
 
+// Mock VideoEncoder for Deno (basic functionality tests)
+(globalThis as any).VideoEncoder = MockVideoEncoder;
+
 Deno.test("VideoEncodeNode - basic functionality", async (t) => {
 	let context: VideoContext;
 	let encodeNode: VideoEncodeNode;

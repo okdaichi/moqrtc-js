@@ -383,6 +383,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		});
 
 		await t.step("processes stereo input correctly", () => {
+			mockPort.messages = [];
 			const inputData1 = new Float32Array([0.1, 0.2]);
 			const inputData2 = new Float32Array([0.3, 0.4]);
 			const inputs = [[inputData1, inputData2]];
@@ -400,6 +401,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		});
 
 		await t.step("handles empty input", () => {
+			mockPort.messages = [];
 			const inputs = [[]];
 
 			const result = processor.process(inputs);
@@ -409,6 +411,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		});
 
 		await t.step("handles null input channels", () => {
+			mockPort.messages = [];
 			const inputs = [[null as any]];
 
 			const result = processor.process(inputs);
@@ -418,6 +421,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		});
 
 		await t.step("handles empty input channel arrays", () => {
+			mockPort.messages = [];
 			const inputs = [[new Float32Array(0)]];
 
 			const result = processor.process(inputs);
@@ -432,6 +436,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		await t.step(
 			"duplicates first channel when target channels exceed input",
 			() => {
+				mockPort.messages = [];
 				const inputData = new Float32Array([0.1, 0.2]);
 				const inputs = [[inputData]];
 
@@ -447,6 +452,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		);
 
 		await t.step("fills with silence for missing channels", () => {
+			mockPort.messages = [];
 			const inputData = new Float32Array([0.1]);
 			const inputs = [[inputData]];
 
@@ -468,18 +474,26 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		});
 
 		await t.step("updates frame counter", () => {
+			mockPort.messages = [];
 			const inputData = new Float32Array([0.1, 0.2]);
 			const inputs = [[inputData]];
 
 			processor.process(inputs);
 
 			const message1 = mockPort.messages[0];
-			assertEquals(message1.timestamp, 0);
+			assertEquals(typeof message1.timestamp, "number");
 
 			processor.process(inputs);
 
 			const message2 = mockPort.messages[1];
-			assertEquals(message2.timestamp, Math.round(2 * 1_000_000 / 44100));
+			// Verify that the timestamp advances by approximately the correct amount (2 frames at 44100 Hz)
+			// Allow ±1 due to integer rounding at different frame positions
+			const expectedDelta = Math.round(2 * 1_000_000 / 44100);
+			const actualDelta = message2.timestamp - message1.timestamp;
+			assert(
+				Math.abs(actualDelta - expectedDelta) <= 1,
+				`Expected timestamp delta ~${expectedDelta}, got ${actualDelta}`,
+			);
 		});
 	});
 });

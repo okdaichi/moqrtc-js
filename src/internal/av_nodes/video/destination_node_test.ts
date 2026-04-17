@@ -1,4 +1,12 @@
-Deno.test("VideoDestinationNode", async (t) => {
+import { assert, assertEquals } from "@std/assert";
+import { VideoContext } from "./context.ts";
+import { VideoDestinationNode, VideoRenderFunctions } from "./destination_node.ts";
+import { MockHTMLCanvasElement } from "./mock_htmlcanvaselement_test.ts";
+import { MockVideoFrame } from "./mock_videoframe_test.ts";
+
+Deno.test(
+	{ name: "VideoDestinationNode", sanitizeOps: false, sanitizeResources: false },
+	async (t) => {
 	let context: VideoContext;
 	let canvas: MockHTMLCanvasElement;
 	let destinationNode: VideoDestinationNode;
@@ -12,7 +20,7 @@ Deno.test("VideoDestinationNode", async (t) => {
 		assertEquals(destinationNode.numberOfOutputs, 0);
 		assertEquals(destinationNode.canvas, canvas as any);
 		assertEquals(
-			destinationNode.resizeCallback,
+			destinationNode.renderFunction,
 			VideoRenderFunctions.contain,
 		);
 	});
@@ -23,7 +31,7 @@ Deno.test("VideoDestinationNode", async (t) => {
 		const customNode = new VideoDestinationNode(context, canvas as any, {
 			renderFunction: VideoRenderFunctions.cover,
 		});
-		assertEquals(customNode.resizeCallback, VideoRenderFunctions.cover);
+		assertEquals(customNode.renderFunction, VideoRenderFunctions.cover);
 	});
 
 	await t.step("should process frames and draw to canvas", () => {

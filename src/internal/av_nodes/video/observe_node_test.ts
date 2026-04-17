@@ -1,3 +1,14 @@
+import { assert, assertEquals } from "@std/assert";
+import { VideoContext } from "./context.ts";
+import { MockHTMLCanvasElement } from "./mock_htmlcanvaselement_test.ts";
+import { MockVideoFrame } from "./mock_videoframe_test.ts";
+import { VideoObserveNode } from "./observe_node.ts";
+import { VideoNode } from "./video_node.ts";
+
+class MockVideoNode extends VideoNode {
+	process(_input?: VideoFrame): void {}
+}
+
 Deno.test("VideoObserveNode", async (t) => {
 	let context: VideoContext;
 	let observeNode: VideoObserveNode;
@@ -10,10 +21,18 @@ Deno.test("VideoObserveNode", async (t) => {
 
 		// Mock IntersectionObserver
 		mockObserver = {
-			observe: () => {},
-			disconnect: () => {},
+			observeCalled: false,
+			observeCalls: [] as any[][],
+			disconnectCalled: false,
+			observe(...args: any[]) {
+				mockObserver.observeCalled = true;
+				mockObserver.observeCalls.push(args);
+			},
+			disconnect() {
+				mockObserver.disconnectCalled = true;
+			},
 		};
-		(globalThis as any).IntersectionObserver = (callback: any) => {
+		(globalThis as any).IntersectionObserver = function (callback: any) {
 			// Store callback for testing
 			(mockObserver as any).callback = callback;
 			return mockObserver;
@@ -74,7 +93,11 @@ Deno.test("VideoObserveNode", async (t) => {
 		observeNode.process(frame);
 
 		assert(!processCalled);
-	});
+		// Reset visibility for subsequent steps
+		const resetCallback = (mockObserver as any).callback;
+		if (resetCallback) {
+			resetCallback([{ isIntersecting: true }]);
+		}	});
 
 	await t.step("should handle process errors gracefully", () => {
 		const errorNode = new MockVideoNode();
@@ -97,7 +120,7 @@ Deno.test("VideoObserveNode", async (t) => {
 
 		const frame = new MockVideoFrame();
 		// Should not throw despite the error
-		assert(() => observeNode.process(frame));
+		observeNode.process(frame);
 		assert(errorProcessCalled);
 		assert(outputProcessCalled);
 		assertEquals(outputFrame, frame);
@@ -114,7 +137,7 @@ Deno.test("VideoObserveNode", async (t) => {
 	});
 
 	await t.step("should observe element", () => {
-		const element = document.createElement("div");
+		const element = {} as unknown as Element;
 		observeNode.observe(element);
 
 		assert(mockObserver.observeCalled);
