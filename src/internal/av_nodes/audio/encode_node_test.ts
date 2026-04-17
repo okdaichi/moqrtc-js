@@ -1,10 +1,10 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
 import { stubGlobal } from "../../../test-utils_test.ts";
 import type { EncodedChunk } from "../container.ts";
-// Must be imported BEFORE encode_node.ts: sets globalThis.GainNode
-import { AudioEncodeDestination, AudioEncodeNode } from "./encode_node.ts";
 import { FakeAudioData } from "./fake_audiodata_test.ts";
 import { FakeAudioEncoder } from "./fake_audioencoder_test.ts";
+// Must be imported BEFORE encode_node.ts: sets globalThis.GainNode
+import { AudioEncodeDestination, AudioEncodeNode } from "./encode_node.ts";
 import { FakeGainNode } from "./fake_gainnode_test.ts";
 
 // FakeGainNode sets globalThis.GainNode at import time (above)
