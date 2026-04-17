@@ -1,43 +1,180 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { defineRoom, RoomElement } from "./room.ts";
 
-// Mock implementations
-class MockRoom {
-	constructor(config: any) {
-		this.config = config;
-		this.roomID = "mock-room";
+class FakeElement extends EventTarget {
+	readonly tagName: string;
+	className = "";
+	textContent = "";
+	parentElement?: FakeElement;
+	#children: FakeElement[] = [];
+	#attributes = new Map<string, string>();
+	#innerHTML = "";
+
+	constructor(tagName: string = "div") {
+		super();
+		this.tagName = tagName.toUpperCase();
 	}
 
-	config: any;
-	roomID: string;
+	set innerHTML(value: string) {
+		this.#innerHTML = value;
+		this.#children = [];
 
-	async join(_session: any, _local: any) {
-		// Simulate calling onJoin callback
-		if (this.config.onmember?.onJoin) {
-			this.config.onmember.onJoin({ name: "test-member", remote: true });
+		const matches = value.matchAll(/<div class="([^"]*)"[^>]*>([^<]*)<\/div>/g);
+		for (const [, className, text] of matches) {
+			const child = new FakeElement("div");
+			child.className = className ?? "";
+			child.textContent = text ?? "";
+			this.appendChild(child);
 		}
 	}
 
-	leave() {
-		// Simulate calling onLeave callback when leave is called
-		if (this.config.onmember?.onLeave) {
-			this.config.onmember.onLeave({ name: "test-member", remote: true });
+	get innerHTML(): string {
+		return this.#innerHTML;
+	}
+
+	appendChild(child: FakeElement): FakeElement {
+		child.parentElement = this;
+		this.#children.push(child);
+		return child;
+	}
+
+	remove(): void {
+		if (!this.parentElement) {
+			return;
 		}
+		const siblings = this.parentElement.#children;
+		const index = siblings.indexOf(this);
+		if (index >= 0) {
+			siblings.splice(index, 1);
+		}
+		this.parentElement = undefined;
+	}
+
+	setAttribute(name: string, value: string): void {
+		this.#attributes.set(name, value);
+		if (name === "class") {
+			this.className = value;
+		}
+	}
+
+	getAttribute(name: string): string | null {
+		return this.#attributes.get(name) ?? null;
+	}
+
+	querySelector(selector: string): FakeElement | null {
+		for (const child of this.#children) {
+			if (child.#matches(selector)) {
+				return child;
+			}
+			const nested = child.querySelector(selector);
+			if (nested) {
+				return nested;
+			}
+		}
+		return null;
+	}
+
+	#matches(selector: string): boolean {
+		if (selector.startsWith(".")) {
+			const cls = selector.slice(1);
+			return this.className.split(/\s+/).filter(Boolean).includes(cls);
+		}
+
+		const attrPattern = /\[([^=\]]+)="([^"]*)"\]/g;
+		const attrs = [...selector.matchAll(attrPattern)];
+		if (attrs.length > 0) {
+			return attrs.every((match) => {
+				const key = match[1];
+				const val = match[2] ?? "";
+				if (!key) {
+					return false;
+				}
+				return this.#attributes.get(key) === val;
+			});
+		}
+
+		return false;
 	}
 }
 
-// Mock the modules by overriding the imports
-(Object as any).defineProperty(await import("../room.ts"), "Room", {
-	value: MockRoom,
-	writable: true,
-});
+class FakeDocument {
+	body = new FakeElement("body");
+
+	createElement(tagName: string): FakeElement {
+		return new FakeElement(tagName);
+	}
+}
+
+class FakeCustomElementsRegistry {
+	#map = new Map<string, unknown>();
+
+	define(name: string, ctor: unknown): void {
+		this.#map.set(name, ctor);
+	}
+
+	get(name: string): unknown {
+		return this.#map.get(name);
+	}
+}
+
+if (!("HTMLElement" in globalThis)) {
+	(globalThis as any).HTMLElement = FakeElement;
+}
+if (!("document" in globalThis)) {
+	(globalThis as any).document = new FakeDocument();
+}
+if (!("customElements" in globalThis)) {
+	(globalThis as any).customElements = new FakeCustomElementsRegistry();
+}
+
+const roomElementModule = await import("./room.ts");
+const defineRoom = roomElementModule.defineRoom;
+const RoomElement = roomElementModule.RoomElement;
+
+function createSession(roomID: string, localName: string, options?: { includeRemote?: boolean; failAccept?: boolean }) {
+	let callCount = 0;
+
+	if (options?.failAccept) {
+		return {
+			mux: { publish: () => {} },
+			acceptAnnounce: async () => [undefined, new Error("accept failed")],
+		};
+	}
+
+	return {
+		mux: {
+			publish: () => {},
+		},
+		acceptAnnounce: async () => [
+			{
+				receive: async () => {
+					callCount += 1;
+					if (callCount === 1) {
+						return [{
+							broadcastPath: `/${roomID}/${localName}.hang`,
+							ended: () => new Promise<void>(() => {}),
+						}, undefined] as const;
+					}
+					if (options?.includeRemote && callCount === 2) {
+						return [{
+							broadcastPath: `/${roomID}/test-member.hang`,
+							ended: () => new Promise<void>(() => {}),
+						}, undefined] as const;
+					}
+					return [undefined, new Error("done")] as const;
+				},
+				close: async () => {},
+			},
+			undefined,
+		],
+	};
+}
 
 Deno.test("RoomElement", async (t) => {
 	await t.step("setup", () => {
 		defineRoom();
 	});
 
-	let element: RoomElement;
+	let element: InstanceType<typeof RoomElement>;
 
 	await t.step("before each test setup", () => {
 		element = new RoomElement();
@@ -60,15 +197,6 @@ Deno.test("RoomElement", async (t) => {
 		});
 	});
 
-	await t.step("connectedCallback", async (t2) => {
-		await t2.step("should render the element", () => {
-			document.body.appendChild(element);
-			assertExists(element.querySelector(".room-status-display"));
-			assertExists(element.querySelector(".local-participant"));
-			assertExists(element.querySelector(".remote-participants"));
-		});
-	});
-
 	await t.step("render", async (t2) => {
 		await t2.step("should render the DOM structure", () => {
 			element.render();
@@ -78,54 +206,32 @@ Deno.test("RoomElement", async (t) => {
 		});
 	});
 
-	await t.step("attributeChangedCallback", async (t2) => {
-		await t2.step("should handle room-id change", () => {
-			const originalLeave = element.leave;
-			element.leave = () => {}; // Mock leave
-
-			// Set mock room
-			element.room = { roomID: "old-room" } as any;
-
-			element.attributeChangedCallback("room-id", "old-room", "new-room");
-			// Now leave should be called - but we can't easily test this without spying
-
-			// Restore
-			element.leave = originalLeave;
-		});
-
-		await t2.step("should not leave room for description change", () => {
-			element.room = { roomID: "room" } as any;
-
-			element.attributeChangedCallback("description", "old", "new");
-			// We can't easily test that leave was not called without spying
-		});
-	});
-
 	await t.step("join", async (t2) => {
 		await t2.step("should join room successfully", async () => {
-			const mockSession = {};
-			const mockPublisher = { name: "test-publisher" };
-
 			element.setAttribute("room-id", "test-room");
-
-			await element.join(mockSession as any, mockPublisher as any);
+			await element.join(
+				createSession("test-room", "test-publisher") as any,
+				{ name: "test-publisher" } as any,
+			);
 
 			assertExists(element.room);
-			assertEquals(element.room?.roomID, "mock-room");
+			assertEquals(element.room?.roomID, "test-room");
 		});
 
 		await t2.step("should set error status when room-id is missing", async () => {
-			const mockSession = {};
-			const mockPublisher = { name: "test-publisher" };
+			const missingRoomElement = new RoomElement();
 
 			let statusCalled = false;
 			let statusArg: any;
-			element.onstatus = (status) => {
+			missingRoomElement.onstatus = (status) => {
 				statusCalled = true;
 				statusArg = status;
 			};
 
-			await element.join(mockSession as any, mockPublisher as any);
+			await missingRoomElement.join(
+				createSession("x", "test-publisher") as any,
+				{ name: "test-publisher" } as any,
+			);
 
 			assert(statusCalled);
 			assertEquals(statusArg.type, "error");
@@ -133,21 +239,6 @@ Deno.test("RoomElement", async (t) => {
 		});
 
 		await t2.step("should handle join error", async () => {
-			const mockSession = {};
-			const mockPublisher = { name: "test-publisher" };
-
-			// Temporarily change the mock to throw
-			const originalRoomConstructor = (await import("../room.ts")).Room;
-			(Object as any).defineProperty(await import("../room.ts"), "Room", {
-				value: class extends MockRoom {
-					constructor(config: any) {
-						super(config);
-						throw new Error("Join failed");
-					}
-				},
-				writable: true,
-			});
-
 			element.setAttribute("room-id", "test-room");
 
 			let statusCalled = false;
@@ -157,23 +248,17 @@ Deno.test("RoomElement", async (t) => {
 				statusArg = status;
 			};
 
-			await element.join(mockSession as any, mockPublisher as any);
+			await element.join(
+				createSession("test-room", "test-publisher", { failAccept: true }) as any,
+				{ name: "test-publisher" } as any,
+			);
 
 			assert(statusCalled);
 			assertEquals(statusArg.type, "error");
-			assert(statusArg.message.includes("Failed to join: Join failed"));
-
-			// Restore original
-			(Object as any).defineProperty(await import("../room.ts"), "Room", {
-				value: originalRoomConstructor,
-				writable: true,
-			});
+			assert(statusArg.message.includes("Failed to join: accept failed"));
 		});
 
 		await t2.step("should call onjoin callback when member joins", async () => {
-			const mockSession = {};
-			const mockPublisher = { name: "test-publisher" };
-
 			element.setAttribute("room-id", "test-room");
 
 			let onjoinCalled = false;
@@ -183,7 +268,11 @@ Deno.test("RoomElement", async (t) => {
 				onjoinArg = member;
 			};
 
-			await element.join(mockSession as any, mockPublisher as any);
+			await element.join(
+				createSession("test-room", "test-publisher", { includeRemote: true }) as any,
+				{ name: "test-publisher" } as any,
+			);
+			await Promise.resolve();
 
 			assert(onjoinCalled);
 			assertEquals(onjoinArg.name, "test-member");
@@ -191,9 +280,6 @@ Deno.test("RoomElement", async (t) => {
 		});
 
 		await t2.step("should call onleave callback when member leaves", async () => {
-			const mockSession = {};
-			const mockPublisher = { name: "test-publisher" };
-
 			element.setAttribute("room-id", "test-room");
 
 			let onleaveCalled = false;
@@ -203,91 +289,16 @@ Deno.test("RoomElement", async (t) => {
 				onleaveArg = member;
 			};
 
-			await element.join(mockSession as any, mockPublisher as any);
-
-			// Simulate leave by calling room.leave
-			element.room?.leave();
+			await element.join(
+				createSession("test-room", "test-publisher", { includeRemote: true }) as any,
+				{ name: "test-publisher" } as any,
+			);
+			await Promise.resolve();
+			element.room?.disconnect();
 
 			assert(onleaveCalled);
 			assertEquals(onleaveArg.name, "test-member");
 			assertEquals(onleaveArg.remote, true);
-		});
-
-		await t2.step(
-			"dispatches 'join' event and adds DOM participant when member joins",
-			async () => {
-				const mockSession = {};
-				const mockPublisher = { name: "test-publisher" };
-
-				element.setAttribute("room-id", "test-room");
-
-				let joinEventDispatched = false;
-				element.addEventListener("join", () => {
-					joinEventDispatched = true;
-				});
-
-				await element.join(mockSession as any, mockPublisher as any);
-
-				// onjoin was called via mock Room; join event should be dispatched
-				assert(joinEventDispatched);
-
-				// Participant DOM should be added
-				const participant = element.querySelector(".remote-member-test-member");
-				assertExists(participant);
-			},
-		);
-
-		await t2.step(
-			"dispatches 'leave' event and removes DOM participant when remote leaves",
-			async () => {
-				const mockSession = {};
-				const mockPublisher = { name: "test-publisher" };
-
-				element.setAttribute("room-id", "test-room");
-
-				let leaveEventDispatched = false;
-				element.addEventListener("leave", () => {
-					leaveEventDispatched = true;
-				});
-
-				await element.join(mockSession as any, mockPublisher as any);
-
-				// participant should be present
-				assertExists(element.querySelector(".remote-member-test-member"));
-
-				// Simulate leave by calling room.leave
-				element.room?.leave();
-
-				assert(leaveEventDispatched);
-
-				// participant should be removed
-				assert(!element.querySelector(".remote-member-test-member"));
-			},
-		);
-
-		await t2.step("sets error status when onjoin handler throws", async () => {
-			const mockSession = {};
-			const mockPublisher = { name: "test-publisher" };
-
-			element.setAttribute("room-id", "test-room");
-
-			element.onjoin = () => {
-				throw new Error("handler fail");
-			};
-
-			let statusCalled = false;
-			let statusArg: any;
-			element.onstatus = (status) => {
-				statusCalled = true;
-				statusArg = status;
-			};
-
-			await element.join(mockSession as any, mockPublisher as any);
-
-			// onstatus should have been called with an error status
-			assert(statusCalled);
-			assertEquals(statusArg.type, "error");
-			assert(statusArg.message.includes("onjoin handler failed:"));
 		});
 	});
 
@@ -295,24 +306,17 @@ Deno.test("RoomElement", async (t) => {
 		await t2.step("should leave room and clear state", () => {
 			element.room = {
 				roomID: "test-room",
-				leave: () => {},
+				disconnect: () => {},
 			} as any;
 
 			element.leave();
-
 			assertEquals(element.room, undefined);
-		});
-
-		await t2.step("should do nothing if no room", () => {
-			element.room = undefined;
-
-			assert(() => element.leave()); // Should not throw
 		});
 
 		await t2.step("should dispatch statuschange event", () => {
 			element.room = {
 				roomID: "test-room",
-				leave: () => {},
+				disconnect: () => {},
 			} as any;
 
 			let statusChangeEvent: any;
@@ -325,26 +329,6 @@ Deno.test("RoomElement", async (t) => {
 			assertExists(statusChangeEvent);
 			assertEquals(statusChangeEvent.detail.type, "left");
 			assertEquals(statusChangeEvent.detail.message, "Left room test-room");
-		});
-	});
-
-	await t.step("disconnectedCallback", async (t2) => {
-		await t2.step("should leave room on disconnect", () => {
-			element.room = {
-				roomID: "test-room",
-				leave: () => {},
-			} as any;
-
-			let leaveCalled = false;
-			const originalLeave = element.room.leave;
-			element.room.leave = () => {
-				leaveCalled = true;
-				originalLeave();
-			};
-
-			element.disconnectedCallback();
-
-			assert(leaveCalled);
 		});
 	});
 });

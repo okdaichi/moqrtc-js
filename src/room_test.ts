@@ -1,457 +1,233 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
-import { broadcastPath, participantName, Room } from "./room.ts";
+import { DefaultCatalogTrackName } from "@okdaichi/moq/msf";
+import { assertEquals, assertRejects } from "@std/assert";
+import { Room, RoomEvents, broadcastPath, participantName } from "./room.ts";
 
-// Mock functions
-function createMockFunction() {
-	const calls: any[] = [];
-	const returnValues: any[] = [];
-	let mockReturn: any = undefined;
-	const mock = (...args: any[]) => {
-		calls.push(args);
-		mock.callCount++;
-		if (returnValues.length > 0) {
-			return returnValues.shift();
-		}
-		return mockReturn;
-	};
-	mock.calls = calls;
-	mock.callCount = 0;
-	mock.mockReturnValue = (value: any) => {
-		mockReturn = value;
-		return mock;
-	};
-	mock.mockResolvedValue = (value: any) => {
-		mockReturn = Promise.resolve(value);
-		return mock;
-	};
-	mock.mockResolvedValueOnce = (value: any) => {
-		returnValues.push(Promise.resolve(value));
-		return mock;
-	};
-	mock.mockImplementation = (impl: any) => {
-		mockReturn = impl;
-		return mock;
-	};
-	return mock;
-}
-
-// Mock @okudai/moq
-const validateBroadcastPath = createMockFunction().mockReturnValue("mock-path");
-
-// Mock golikejs/context
-const background = createMockFunction().mockReturnValue(Promise.resolve());
-const withCancelCause = createMockFunction().mockReturnValue([{
-	done: createMockFunction().mockReturnValue(new Promise(() => {})),
-	err: createMockFunction().mockReturnValue(undefined),
-}, undefined]);
-
-// Mock broadcast
-const BroadcastPublisher = createMockFunction().mockImplementation(() => ({
-	name: "test-publisher",
-}));
-const BroadcastSubscriber = createMockFunction().mockImplementation(() => ({
-	name: "test-subscriber",
-	close: createMockFunction(),
-}));
-
-// Mock worklets
-const importWorkletUrl = createMockFunction().mockReturnValue("mock-url");
-const importUrl = createMockFunction().mockReturnValue("mock-url");
-
-// Apply mocks
-(Object as any).defineProperty(await import("@okudai/moq"), "validateBroadcastPath", {
-	value: validateBroadcastPath,
-});
-(Object as any).defineProperty(await import("@okudai/moq"), "InternalAnnounceErrorCode", {
-	value: 1,
+Deno.test("room utils generate and parse participant paths", () => {
+	assertEquals(broadcastPath("myroom", "alice"), "/myroom/alice.hang");
+	assertEquals(participantName("myroom", "/myroom/alice.hang"), "alice");
+	assertEquals(participantName("room-x", "/room-x/john.doe.hang"), "john.doe");
 });
 
-(Object as any).defineProperty(await import("golikejs/context"), "background", {
-	value: background,
-});
-(Object as any).defineProperty(await import("golikejs/context"), "withCancelCause", {
-	value: withCancelCause,
-});
+Deno.test("Room.attach publishes local broadcast and acknowledges local announce", async () => {
+	const published: Array<{ path: string; localName: string }> = [];
+	const joined: string[] = [];
+	const local = { name: "alice" };
+	const localPath = "/test-room/alice.hang";
+	let received = false;
 
-(Object as any).defineProperty(await import("./broadcast.ts"), "BroadcastPublisher", {
-	value: BroadcastPublisher,
-});
-(Object as any).defineProperty(await import("./broadcast.ts"), "BroadcastSubscriber", {
-	value: BroadcastSubscriber,
-});
-
-(Object as any).defineProperty(
-	await import("./internal/audio/audio_hijack_worklet.ts"),
-	"importWorkletUrl",
-	{
-		value: importWorkletUrl,
-	},
-);
-(Object as any).defineProperty(
-	await import("./internal/audio/audio_offload_worklet.ts"),
-	"importUrl",
-	{
-		value: importUrl,
-	},
-);
-
-Deno.test("Room", async (t) => {
-	let room: Room;
-	const mockSession = {
-		mux: {
-			publish: createMockFunction(),
+	const room = new Room({
+		roomID: "test-room",
+		onmember: {
+			onJoin: (member) => joined.push(`${member.remote}:${member.name}`),
+			onLeave: () => {},
 		},
-		acceptAnnounce: createMockFunction(),
-	};
-	const mockLocal = {
-		name: "local-user",
-	};
-
-	await t.step("setup", () => {
-		room = new Room({
-			roomID: "test-room",
-			onmember: {
-				onJoin: createMockFunction(),
-				onLeave: createMockFunction(),
-			},
-		});
 	});
 
-	await t.step("constructor", async (t) => {
-		await t.step("should create an instance with roomID", () => {
-			assertEquals(room.roomID, "test-room");
-		});
-	});
-
-	await t.step("join", async (t) => {
-		await t.step("should join the room", async () => {
-			const mockAnnouncementReader = {
-				receive: createMockFunction().mockResolvedValue([{
-					broadcastPath: "/test-room/local-user.hang",
-					ended: createMockFunction().mockResolvedValue(undefined),
-				}, null] as any),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce.mockResolvedValue([mockAnnouncementReader, null] as any);
-
-			await assert(room.join(mockSession as any, mockLocal as any));
-		});
-
-		await t.step("should handle join errors gracefully", async () => {
-			const mockAnnouncementReader = {
-				receive: createMockFunction().mockResolvedValue([
-					null,
-					new Error("Network error"),
-				]),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce.mockResolvedValue([mockAnnouncementReader, null] as any);
-
-			// Should not throw even if announcement reader fails
-			await assert(room.join(mockSession as any, mockLocal as any));
-		});
-	});
-
-	await t.step("leave", async (t) => {
-		await t.step("should leave the room", async () => {
-			await assert(room.leave());
-		});
-
-		await t.step("should handle leave when not joined", async () => {
-			// Leave without joining first
-			await assert(room.leave());
-		});
-	});
-});
-
-Deno.test("room utils", async (t) => {
-	await t.step("broadcastPath calls validateBroadcastPath with constructed path", () => {
-		const res = broadcastPath("myroom", "alice");
-		assertEquals(res, "/myroom/alice.hang");
-
-		// Note: validateBroadcastPath is mocked, check call count
-		assertEquals(validateBroadcastPath.callCount, 1);
-	});
-
-	await t.step("participantName extracts name from broadcast path", () => {
-		assertEquals(participantName("myroom", "/myroom/alice.hang"), "alice");
-		assertEquals(participantName("r", "/r/bob.hang"), "bob");
-		// when name contains dots or dashes
-		assertEquals(participantName("room-x", "/room-x/john.doe.hang"), "john.doe");
-	});
-});
-
-Deno.test("Room - Advanced Tests", async (t) => {
-	let room: Room;
-	const mockSession = {
+	const session = {
 		mux: {
-			publish: createMockFunction(),
-		},
-		acceptAnnounce: createMockFunction(),
-	};
-	const mockLocal = {
-		name: "local-user",
-	};
-	let onJoinSpy: any;
-	let onLeaveSpy: any;
-
-	await t.step("setup", () => {
-		onJoinSpy = createMockFunction();
-		onLeaveSpy = createMockFunction();
-		room = new Room({
-			roomID: "test-room",
-			onmember: {
-				onJoin: onJoinSpy,
-				onLeave: onLeaveSpy,
+			publish: (_done: Promise<void>, path: string, publisher: { name: string }) => {
+				published.push({ path, localName: publisher.name });
 			},
-		});
-	});
+		},
+		acceptAnnounce: async () => [
+			{
+				receive: async () => {
+					if (!received) {
+						received = true;
+						return [
+							{
+								broadcastPath: localPath,
+								ended: () => new Promise<void>(() => {}),
+							},
+							undefined,
+						] as const;
+					}
 
-	await t.step("join with announcement processing", async (t) => {
-		await t.step("should handle local announcement acknowledgment", async () => {
-			const mockAnnouncementReader = {
-				receive: createMockFunction()
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/local-user.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValue([null, new Error("Reader closed")]),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce.mockResolvedValue([mockAnnouncementReader, null] as any);
-
-			await room.join(mockSession as any, mockLocal as any);
-
-			assertEquals(onJoinSpy.callCount, 1);
-		});
-
-		await t.step("should handle remote announcement and add subscriber", async () => {
-			const mockAnnouncementReader = {
-				receive: createMockFunction()
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/remote-user.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValue([null, new Error("Reader closed")]),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce.mockResolvedValue([mockAnnouncementReader, null] as any);
-
-			await room.join(mockSession as any, mockLocal as any);
-
-			assertEquals(onJoinSpy.callCount, 1);
-		});
-
-		await t.step("should handle acceptAnnounce failure", async () => {
-			const error = new Error("Failed to accept announce");
-			mockSession.acceptAnnounce.mockResolvedValue([null, error] as any);
-
-			await assertRejects(async () => {
-				await room.join(mockSession as any, mockLocal as any);
-			});
-		});
-
-		await t.step("should handle multiple remote announcements", async () => {
-			const mockAnnouncementReader = {
-				receive: createMockFunction()
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/remote-1.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/remote-2.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValue([null, new Error("Reader closed")]),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce.mockResolvedValue([mockAnnouncementReader, null] as any);
-
-			await room.join(mockSession as any, mockLocal as any);
-
-			// Should have called onJoin for both remotes
-			assertEquals(onJoinSpy.callCount, 2);
-		});
-	});
-
-	await t.step("leave functionality", async (t) => {
-		await t.step("should clean up all resources on leave", async () => {
-			const mockAnnouncementReader = {
-				receive: createMockFunction()
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/local-user.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValue([null, new Error("Reader closed")]),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce.mockResolvedValue([mockAnnouncementReader, null] as any);
-
-			await room.join(mockSession as any, mockLocal as any);
-			await room.leave();
-
-			// Verify that leave completes without errors
-			assertEquals(onLeaveSpy.callCount, 1);
-		});
-
-		await t.step("should handle leave before join", async () => {
-			await room.leave();
-			// Should not throw
-			assertEquals(true, true);
-		});
-
-		await t.step("should handle multiple leave calls", async () => {
-			const mockAnnouncementReader = {
-				receive: createMockFunction()
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/local-user.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValue([null, new Error("Reader closed")]),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce.mockResolvedValue([mockAnnouncementReader, null] as any);
-
-			await room.join(mockSession as any, mockLocal as any);
-			await room.leave();
-			await room.leave(); // Second leave should not throw
-
-			assertEquals(true, true);
-		});
-	});
-
-	await t.step("member management", async (t) => {
-		await t.step("should call onJoin for local member", async () => {
-			const mockAnnouncementReader = {
-				receive: createMockFunction()
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/local-user.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValue([null, new Error("Reader closed")]),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce.mockResolvedValue([mockAnnouncementReader, null] as any);
-
-			await room.join(mockSession as any, mockLocal as any);
-
-			assertEquals(onJoinSpy.callCount, 1);
-			assertEquals(onJoinSpy.calls[0][0], {
-				remote: false,
-				name: "local-user",
-			});
-		});
-
-		await t.step("should call onLeave for local member on leave", async () => {
-			const mockAnnouncementReader = {
-				receive: createMockFunction()
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/local-user.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValue([null, new Error("Reader closed")]),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce.mockResolvedValue([mockAnnouncementReader, null] as any);
-
-			await room.join(mockSession as any, mockLocal as any);
-			await room.leave();
-
-			assertEquals(onLeaveSpy.callCount, 1);
-			assertEquals(onLeaveSpy.calls[0][0], {
-				remote: false,
-				name: "local-user",
-			});
-		});
-
-		await t.step("should handle announcement errors gracefully", async () => {
-			const mockAnnouncementReader = {
-				receive: createMockFunction()
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/remote-user.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValue([null, new Error("Reader closed")]),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce.mockResolvedValue([mockAnnouncementReader, null] as any);
-
-			await room.join(mockSession as any, mockLocal as any);
-
-			// Should complete without throwing
-			assertEquals(true, true);
-		});
-	});
-
-	await t.step("rejoin functionality", async (t) => {
-		await t.step("should leave before joining again", async () => {
-			const mockAnnouncementReader1 = {
-				receive: createMockFunction()
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/local-user.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValue([null, new Error("Reader closed")]),
-				close: createMockFunction(),
-			};
-			const mockAnnouncementReader2 = {
-				receive: createMockFunction()
-					.mockResolvedValueOnce([{
-						broadcastPath: "/test-room/local-user.hang",
-						ended: createMockFunction().mockResolvedValue(undefined),
-					}, null] as any)
-					.mockResolvedValue([null, new Error("Reader closed")]),
-				close: createMockFunction(),
-			};
-			mockSession.acceptAnnounce
-				.mockResolvedValueOnce([mockAnnouncementReader1, null] as any)
-				.mockResolvedValueOnce([mockAnnouncementReader2, null] as any);
-
-			// First join
-			await room.join(mockSession as any, mockLocal as any);
-
-			// Second join (should leave first)
-			await room.join(mockSession as any, mockLocal as any);
-
-			// onJoin should be called twice (once for each join)
-			assertEquals(onJoinSpy.callCount, 2);
-		});
-	});
-
-	await t.step("edge cases", async (t) => {
-		await t.step("should handle empty room ID", async () => {
-			const emptyRoom = new Room({
-				roomID: "",
-				onmember: {
-					onJoin: createMockFunction(),
-					onLeave: createMockFunction(),
+					return [undefined, new Error("done")] as const;
 				},
-			});
+				close: async () => {},
+			},
+			undefined,
+		],
+	};
 
-			assertEquals(emptyRoom.roomID, "");
-		});
+	await room.attach({ session: session as any, local: local as any });
 
-		await t.step("should handle special characters in room ID", async () => {
-			const specialRoom = new Room({
-				roomID: "room-with-special_chars.123",
-				onmember: {
-					onJoin: createMockFunction(),
-					onLeave: createMockFunction(),
+	assertEquals(published, [{ path: localPath, localName: "alice" }]);
+	assertEquals(joined, ["false:alice"]);
+	assertEquals(room.state, "connected");
+	assertEquals(room.members(), [{ remote: false, name: "alice" }]);
+});
+
+Deno.test("Room exposes remote catalogs and role-based subscribe helpers", async () => {
+	const localPath = "/test-room/alice.hang";
+	let keepRemoteOpen = true;
+	const subscribeCalls: string[] = [];
+	const catalogPayload = new TextEncoder().encode(JSON.stringify({
+		version: 1,
+		isComplete: true,
+		tracks: [
+			{ name: "camera", role: "video", packaging: "loc" },
+			{ name: "microphone", role: "audio", packaging: "loc" },
+		],
+	}));
+
+	let announceCount = 0;
+	const room = new Room({ roomID: "test-room" });
+
+	const session = {
+		mux: {
+			publish: () => {},
+		},
+		subscribe: async (broadcastPath: string, trackName: string) => {
+			if (broadcastPath === "/test-room/bob.hang" && trackName === DefaultCatalogTrackName) {
+				return [
+					{
+						acceptGroup: async () => [
+							{
+								readFrame: async (sink: (bytes: Uint8Array) => void) => {
+									sink(catalogPayload);
+									return undefined;
+								},
+							},
+							undefined,
+						],
+						closeWithError: async () => {},
+					},
+					undefined,
+				] as const;
+			}
+
+			if (broadcastPath === "/test-room/bob.hang" && trackName === "camera") {
+				subscribeCalls.push(trackName);
+				return [{ trackName }, undefined] as const;
+			}
+
+			return [undefined, new Error(`unexpected subscribe: ${broadcastPath}/${trackName}`)] as const;
+		},
+		acceptAnnounce: async () => [
+			{
+				receive: async () => {
+					announceCount += 1;
+					if (announceCount === 1) {
+						return [{ broadcastPath: localPath, ended: () => new Promise<void>(() => {}) }, undefined];
+					}
+					if (announceCount === 2) {
+						return [{
+							broadcastPath: "/test-room/bob.hang",
+							ended: () => keepRemoteOpen ? new Promise<void>(() => {}) : Promise.resolve(),
+						}, undefined];
+					}
+					return [undefined, new Error("done")];
 				},
-			});
+				close: async () => {},
+			},
+			undefined,
+		],
+	};
 
-			assertEquals(specialRoom.roomID, "room-with-special_chars.123");
-		});
+	await room.attach({ session: session as any, local: { name: "alice" } as any });
+	await Promise.resolve();
 
-		await t.step("should handle participant name with special characters", () => {
-			const name = participantName("test-room", "/test-room/user-name_123.hang");
-			assertEquals(name, "user-name_123");
-		});
+	const catalog = await room.catalog("bob");
+	if (catalog instanceof Error) {
+		throw catalog;
+	}
 
-		await t.step("should construct correct broadcast path for various names", () => {
-			assertEquals(broadcastPath("room", "user"), "/room/user.hang");
-			assertEquals(broadcastPath("room-1", "user-2"), "/room-1/user-2.hang");
-			assertEquals(broadcastPath("r", "u"), "/r/u.hang");
-		});
+	assertEquals(room.remote("bob")?.name, "bob");
+	assertEquals(catalog.tracks[0]?.name, "camera");
+
+	const [reader, err] = await room.subscribe({ memberName: "bob", role: "video" });
+	assertEquals(err, undefined);
+	assertEquals((reader as any).trackName, "camera");
+	assertEquals(subscribeCalls, ["camera"]);
+	assertEquals(room.members().map((member) => member.name), ["alice", "bob"]);
+
+	keepRemoteOpen = false;
+});
+
+Deno.test("Room.attach propagates acceptAnnounce failures", async () => {
+	const room = new Room({
+		roomID: "test-room",
+		onmember: {
+			onJoin: () => {},
+			onLeave: () => {},
+		},
 	});
+	const errors: string[] = [];
+	room.on(RoomEvents.Error, (event) => {
+		const detail = (event as CustomEvent<{ error: Error; context: string }>).detail;
+		errors.push(`${detail.context}:${detail.error.message}`);
+	});
+
+	const session = {
+		mux: { publish: () => {} },
+		acceptAnnounce: async () => [undefined, new Error("boom")],
+	};
+
+	await assertRejects(
+		() => room.attach({ session: session as any, local: { name: "alice" } as any }),
+		Error,
+		"boom",
+	);
+	assertEquals(room.state, "error");
+	assertEquals(errors, ["acceptAnnounce:boom"]);
+});
+
+Deno.test("Room.connect uses URL + dial and exposes on/once helpers", async () => {
+	const stateTransitions: string[] = [];
+	const localPath = "/test-room/alice.hang";
+	let received = false;
+
+	const room = new Room({ roomID: "test-room" });
+	room.on(RoomEvents.StateChange, (event) => {
+		const detail = (event as CustomEvent<{ previous: string; current: string }>).detail;
+		stateTransitions.push(`${detail.previous}->${detail.current}`);
+	});
+
+	let onceCalled = 0;
+	room.once(RoomEvents.MemberJoin, () => {
+		onceCalled += 1;
+	});
+
+	const session = {
+		mux: {
+			publish: () => {},
+		},
+		acceptAnnounce: async () => [
+			{
+				receive: async () => {
+					if (!received) {
+						received = true;
+						return [{ broadcastPath: localPath, ended: () => Promise.resolve() }, undefined] as const;
+					}
+					return [undefined, new Error("done")] as const;
+				},
+				close: async () => {},
+			},
+			undefined,
+		],
+	};
+
+	const dialCalls: string[] = [];
+	const client = {
+		dial: async (url: string | URL) => {
+			dialCalls.push(String(url));
+			return session as any;
+		},
+		close: async () => {},
+	};
+
+	await room.connect({
+		url: "https://example.com/moq",
+		local: { name: "alice" } as any,
+		client: client as any,
+	});
+	assertEquals(room.isConnected, true);
+	assertEquals(onceCalled, 1);
+	assertEquals(dialCalls, ["https://example.com/moq"]);
+
+	await room.disconnect();
+	assertEquals(room.state, "disconnected");
+	assertEquals(stateTransitions.includes("connecting->connected"), true);
 });

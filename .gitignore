@@ -44,6 +44,8 @@ jspm_packages/
 # Deno
 cov/
 .deno/
+dist/
+temp/
 
 # Snowpack dependency directory (https://snowpack.dev/)
 web_modules/

@@ -1,209 +1,104 @@
+import { SubscribeErrorCode } from "@okdaichi/moq";
 import { assertEquals } from "@std/assert";
-import { Spy, spy } from "@std/testing/mock";
-import { BroadcastPublisher } from "./broadcast.ts";
-import * as room from "./room.ts";
+import { BroadcastPublisher, BroadcastSubscriber } from "./broadcast.ts";
 
-// Mock interfaces for dependency injection
-interface MockCatalogEncoder {
-	sync: Spy;
-	setTrack: Spy;
-	removeTrack: Spy;
-	close: Spy;
-}
+Deno.test("BroadcastPublisher builds an MSF catalog from track descriptors", async () => {
+	const publisher = new BroadcastPublisher("alice");
+	await publisher.addTrack(
+		{
+			name: "camera",
+			packaging: "legacy",
+			label: "Main camera",
+			depends: ["audio"],
+			extraFields: {
+				schema: "video/h264",
+				config: { profile: "main" },
+			},
+		},
+		async (_writer) => {},
+	);
 
-interface MockCatalogDecoder {
-	decodeFrom: Spy;
-	nextTrack: Spy;
-	root: Spy;
-	close: Spy;
-}
-
-// Factory functions for creating mocks
-function createMockCatalogEncoder(): MockCatalogEncoder {
-	return {
-		sync: spy(() => {}),
-		setTrack: spy(() => {}),
-		removeTrack: spy(() => {}),
-		close: spy(() => Promise.resolve()),
-	};
-}
-
-function createMockCatalogDecoder(): MockCatalogDecoder {
-	return {
-		decodeFrom: spy(() => Promise.resolve()),
-		nextTrack: spy(() => Promise.resolve([{ name: "catalog" }, undefined])),
-		root: spy(() => Promise.resolve({ version: "1", tracks: [] })),
-		close: spy(() => {}),
-	};
-}
-
-// Mock the room module
-const mockParticipantName = spy(() => "participant");
-(room as any).participantName = mockParticipantName;
-
-// Mock catalog modules with DI-friendly approach
-let mockCatalogEncoderInstance: MockCatalogEncoder;
-let mockCatalogDecoderInstance: MockCatalogDecoder;
-
-// Override the constructors to return our mocks
-const originalCatalogEncoder = (await import("./internal/catalog_stream.ts")).CatalogEncoder;
-const originalCatalogDecoder = (await import("./internal/catalog_stream.ts")).CatalogDecoder;
-
-(Object as any).defineProperty(await import("./internal/catalog_stream.ts"), "CatalogEncoder", {
-	value: function () {
-		mockCatalogEncoderInstance = createMockCatalogEncoder();
-		return mockCatalogEncoderInstance;
-	},
+	const catalog = publisher.catalog();
+	assertEquals(catalog.version, 1);
+	assertEquals(catalog.isComplete, true);
+	assertEquals(catalog.tracks.length, 1);
+	assertEquals(catalog.tracks[0]?.name, "camera");
+	assertEquals(catalog.tracks[0]?.packaging, "legacy");
+	assertEquals(catalog.tracks[0]?.label, "Main camera");
+	assertEquals(catalog.tracks[0]?.depends, ["audio"]);
+	assertEquals(catalog.tracks[0]?.extraFields?.schema, "video/h264");
+	assertEquals(catalog.tracks[0]?.extraFields?.config, { profile: "main" });
 });
 
-(Object as any).defineProperty(await import("./internal/catalog_stream.ts"), "CatalogDecoder", {
-	value: function () {
-		mockCatalogDecoderInstance = createMockCatalogDecoder();
-		return mockCatalogDecoderInstance;
-	},
+Deno.test("BroadcastPublisher closes missing tracks with TrackNotFound", async () => {
+	const publisher = new BroadcastPublisher("alice");
+	const closeCodes: number[] = [];
+
+	await publisher.serveTrack({
+		trackName: "missing",
+		closeWithError: async (code: number) => {
+			closeCodes.push(code);
+		},
+	} as any);
+
+	assertEquals(closeCodes, [SubscribeErrorCode.TrackNotFound]);
 });
 
-// Setup and cleanup
-function setupMocks() {
-	mockParticipantName.calls.length = 0;
-	// Reset instances
-	mockCatalogEncoderInstance = undefined as any;
-	mockCatalogDecoderInstance = undefined as any;
-}
+Deno.test("BroadcastSubscriber.catalog parses MSF catalog payload", async () => {
+	const payload = new TextEncoder().encode(
+		JSON.stringify({
+			version: 1,
+			isComplete: true,
+			tracks: [{ name: "camera", packaging: "legacy" }],
+		}),
+	);
+	const closeCodes: number[] = [];
 
-function cleanupMocks() {
-	// Restore any global state if needed
-}
+	const session = {
+		subscribe: async () => [
+			{
+				acceptGroup: async () => [
+					{
+						readFrame: async (sink: (bytes: Uint8Array) => void) => {
+							sink(payload);
+							return undefined;
+						},
+					},
+					undefined,
+				],
+				closeWithError: async (code: number) => {
+					closeCodes.push(code);
+				},
+			},
+			undefined,
+		],
+	} as any;
 
-Deno.test("BroadcastPublisher", async (t) => {
-	await t.step("constructor", async (t) => {
-		const constructorCases = new Map([
-			["with name only", { name: "test-publisher", expectedName: "test-publisher" }],
-			["with empty name", { name: "", expectedName: "" }],
-			["with special characters", { name: "test-publisher_123", expectedName: "test-publisher_123" }],
-		]);
+	const subscriber = new BroadcastSubscriber("/room/alice.hang", "room", session);
+	const catalog = await subscriber.catalog();
 
-		for (const [name, c] of constructorCases) {
-			await t.step(name, () => {
-				setupMocks();
-				const publisher = new BroadcastPublisher(c.name);
-				assertEquals(publisher.name, c.expectedName);
-				// Verify catalog encoder was created
-				assertEquals(typeof mockCatalogEncoderInstance, "object");
-				cleanupMocks();
-			});
-		}
+	if (catalog instanceof Error) {
+		throw catalog;
+	}
+	assertEquals(catalog.tracks[0]?.name, "camera");
+	assertEquals(catalog.tracks[0]?.packaging, "legacy");
+	assertEquals(closeCodes, [SubscribeErrorCode.InternalError]);
+});
 
-		await t.step("should throw on invalid name", () => {
-			setupMocks();
-			// Assuming constructor validates name, add appropriate assertions
-			// If no validation, this test can be removed
-			const publisher = new BroadcastPublisher("valid-name");
-			assertEquals(publisher.name, "valid-name");
-			cleanupMocks();
-		});
-	});
+Deno.test("BroadcastSubscriber.subscribeTrack returns TrackReader directly", async () => {
+	const calls: string[] = [];
+	const session = {
+		subscribe: async () => [
+			{
+				trackName: "camera",
+			},
+			undefined,
+		],
+	} as any;
 
-	await t.step("setTrack", async (t) => {
-		await t.step("should call catalog encoder setTrack", () => {
-			setupMocks();
-			const publisher = new BroadcastPublisher("room");
-			// Mock track data
-			const track = {
-				descriptor: { name: "video", priority: 0, schema: "", config: {} },
-				encoder: { encodeTo: spy(() => Promise.resolve()) },
-			};
-			// publisher.setTrack(track); // Uncomment when method is implemented
-			// assertEquals(mockCatalogEncoderInstance.setTrack.calls.length, 1);
-			cleanupMocks();
-		});
-
-		await t.step("should reject catalog track", () => {
-			setupMocks();
-			const publisher = new BroadcastPublisher("room");
-			// const catalogTrack = { descriptor: { name: "catalog" }, encoder: {} };
-			// assertThrows(() => publisher.setTrack(catalogTrack), Error, "Cannot add catalog track");
-			cleanupMocks();
-		});
-	});
-
-	await t.step("serveTrack", async (t) => {
-		await t.step("should handle catalog track", async () => {
-			setupMocks();
-			const publisher = new BroadcastPublisher("room");
-			const ctx = Promise.resolve();
-			const track = {
-				trackName: "catalog",
-				closeWithError: spy(() => {}),
-				writeFrame: spy(() => Promise.resolve()),
-				close: spy(() => Promise.resolve()),
-			} as any;
-			// await publisher.serveTrack(ctx, track);
-			// assertEquals(mockCatalogEncoderInstance.encodeTo.calls.length, 1);
-			cleanupMocks();
-		});
-
-		await t.step("should handle regular track with encoder", async () => {
-			setupMocks();
-			const publisher = new BroadcastPublisher("room");
-			const ctx = Promise.resolve();
-			const track = {
-				trackName: "video",
-				closeWithError: spy(() => {}),
-				writeFrame: spy(() => Promise.resolve()),
-				close: spy(() => Promise.resolve()),
-			} as any;
-			const encoder = {
-				encodeTo: spy(() => Promise.resolve()),
-			};
-			// publisher.setTrack({ descriptor: { name: "video" }, encoder });
-			// await publisher.serveTrack(ctx, track);
-			// assertEquals(encoder.encodeTo.calls.length, 1);
-			cleanupMocks();
-		});
-
-		await t.step("should handle track not found", async () => {
-			setupMocks();
-			const publisher = new BroadcastPublisher("room");
-			const ctx = Promise.resolve();
-			const track = {
-				trackName: "nonexistent",
-				closeWithError: spy(() => {}),
-				writeFrame: spy(() => Promise.resolve()),
-				close: spy(() => Promise.resolve()),
-			} as any;
-			// await publisher.serveTrack(ctx, track);
-			// assertEquals(track.closeWithError.calls.length, 1);
-			cleanupMocks();
-		});
-	});
-
-	await t.step("close", async (t) => {
-		await t.step("should close catalog encoder", async () => {
-			setupMocks();
-			const publisher = new BroadcastPublisher("room");
-			await publisher.close();
-			assertEquals(mockCatalogEncoderInstance.close.calls.length, 1);
-			cleanupMocks();
-		});
-
-		await t.step("should clear encoders map", async () => {
-			setupMocks();
-			const publisher = new BroadcastPublisher("room");
-			// Add some encoders
-			// publisher.setTrack(...);
-			await publisher.close();
-			// Verify encoders are cleared
-			cleanupMocks();
-		});
-
-		await t.step("should handle close with cause", async () => {
-			setupMocks();
-			const publisher = new BroadcastPublisher("room");
-			const cause = new Error("test cause");
-			await publisher.close(cause);
-			assertEquals(mockCatalogEncoderInstance.close.calls[0].args[0], cause);
-			cleanupMocks();
-		});
-	});
+	const subscriber = new BroadcastSubscriber("/room/alice.hang", "room", session);
+	const [reader, err] = await subscriber.subscribeTrack("camera");
+	assertEquals(err, undefined);
+	assertEquals((reader as any).trackName, "camera");
+	assertEquals(calls, []);
 });

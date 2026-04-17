@@ -1,6 +1,6 @@
-import type { Session } from "@okudai/moq";
-import type { BroadcastPublisher, JoinedMember, LeftMember } from "../";
-import { Room } from "../";
+import type { Session } from "@okdaichi/moq";
+import type { JoinedMember, LeftMember } from "../member.ts";
+import { Room, type LocalBroadcast } from "../room.ts";
 
 // Extended status type includes lifecycle states
 export type RoomLifecycleStatus = {
@@ -38,7 +38,7 @@ export class RoomElement extends HTMLElement {
 	disconnectedCallback(): void {
 		// Leave the room if connected
 		if (this.room) {
-			this.room.leave();
+			this.room.disconnect();
 		}
 		this.#setStatus({ type: "disconnected", message: "Disconnected" });
 	}
@@ -54,7 +54,7 @@ export class RoomElement extends HTMLElement {
 	}
 
 	// Public methods
-	async join(session: Session, local: BroadcastPublisher): Promise<void> {
+	async join(session: Session, local: LocalBroadcast): Promise<void> {
 		const roomId = this.getAttribute("room-id");
 		// const localName = this.getAttribute('local-name');
 		const description = this.getAttribute("description");
@@ -79,7 +79,7 @@ export class RoomElement extends HTMLElement {
 				},
 			});
 
-			await room.join(session, local);
+			await room.attach({ session, local });
 
 			this.room = room;
 			// Do not overwrite an error status that may have been set by onjoin handler
@@ -103,7 +103,7 @@ export class RoomElement extends HTMLElement {
 		}
 		const id = this.room.roomID;
 
-		this.room.leave();
+		this.room.disconnect();
 		this.room = undefined;
 		this.#setStatus({ type: "left", message: `Left room ${id}` });
 
@@ -144,16 +144,17 @@ export class RoomElement extends HTMLElement {
 			? this.querySelector(".remote-participants")
 			: this.querySelector(".local-participant");
 		if (!container) {
-		} else {
-			const participantDiv = document.createElement("div");
-			participantDiv.className = member.remote
-				? `remote-member remote-member-${member.name}`
-				: `local-member local-member-${member.name}`;
-			participantDiv.setAttribute("data-member-name", member.name);
-			participantDiv.setAttribute("data-member-type", member.remote ? "remote" : "local");
-			participantDiv.textContent = member.name;
-			container.appendChild(participantDiv);
+			return;
 		}
+
+		const participantDiv = document.createElement("div");
+		participantDiv.className = member.remote
+			? `remote-member remote-member-${member.name}`
+			: `local-member local-member-${member.name}`;
+		participantDiv.setAttribute("data-member-name", member.name);
+		participantDiv.setAttribute("data-member-type", member.remote ? "remote" : "local");
+		participantDiv.textContent = member.name;
+		container.appendChild(participantDiv);
 
 		// Dispatch join event
 		this.dispatchEvent(
@@ -188,7 +189,6 @@ export class RoomElement extends HTMLElement {
 		const participantDiv = container.querySelector(selector);
 		if (participantDiv) {
 			participantDiv.remove();
-		} else {
 		}
 
 		// Dispatch leave event

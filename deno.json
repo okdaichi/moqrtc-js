@@ -3,7 +3,7 @@
   "name": "@okudai/moqrtc-js",
   "version": "0.1.0",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/mod.ts"
   },
   "license": "MIT",
   "nodeModulesDir": "auto",
@@ -22,7 +22,7 @@
     "verbatimModuleSyntax": false
   },
   "imports": {
-    "@okudai/moq": "jsr:@okudai/moq@^0.4.0",
+    "@okdaichi/moq": "jsr:@okdaichi/moq@^0.11.0",
     "golikejs": "jsr:@okudai/golikejs@^0.5.2",
     "zod": "https://esm.sh/zod@3.23.8",
     "@std/assert": "jsr:@std/assert@^1",
@@ -54,15 +54,16 @@
     "include": ["src/"],
     "rules": {
       "tags": ["recommended"],
-      "exclude": ["require-await", "no-unused-vars", "no-explicit-any", "no-await-in-sync-fn", "no-redeclare"]
+      "exclude": [
+        "require-await",
+        "no-unused-vars",
+        "no-explicit-any",
+        "no-await-in-sync-fn",
+        "no-redeclare"
+      ]
     }
   },
-  "exclude": [
-    ".git",
-    "dist/",
-    "node_modules/",
-    "cov/"
-  ],
+  "exclude": [".git", "dist/", "node_modules/", "cov/"],
   "test": {
     "include": ["src/**/*_test.ts"]
   }

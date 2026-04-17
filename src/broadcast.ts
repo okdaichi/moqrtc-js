@@ -1,110 +1,57 @@
 import type {
 	BroadcastPath,
 	Session,
-	TrackEncoder,
 	TrackHandler,
 	TrackName,
 	TrackReader,
 	TrackWriter,
-} from "@okudai/moq";
-import { SubscribeCanceledErrorCode, TrackNotFoundErrorCode } from "@okudai/moq";
+} from "@okdaichi/moq";
+import { SubscribeErrorCode } from "@okdaichi/moq";
+import {
+	Broadcast,
+	DefaultCatalogTrackName,
+	parseCatalog,
+	type Catalog,
+	type Track,
+} from "@okdaichi/moq/msf";
 import type { CancelCauseFunc, Context } from "golikejs/context";
 import { background, withCancelCause } from "golikejs/context";
-import type { TrackDescriptor } from "./catalog/index.ts";
-import { CATALOG_TRACK_NAME, DEFAULT_CATALOG_VERSION } from "./catalog/index.ts";
-import type { EncodedChunk } from "./internal/av_nodes/container.ts";
-import { CatalogDecoder, CatalogEncoder } from "./internal/catalog_stream.ts";
-import type { EncodeDestination } from "./internal/container.ts";
 import { participantName } from "./room.ts";
-
-type EncodeCallback = (chunk: EncodedChunk) => Promise<void>;
-
-interface Track {
-	encodeTo(dest: EncodeDestination): Promise<void>;
-}
 
 export class BroadcastPublisher implements TrackHandler {
 	readonly name: string;
-	#encoders: Map<string, TrackEncoder> = new Map();
-	#ctx: Context;
-	#cancelCtx: CancelCauseFunc;
+	#broadcast: Broadcast;
 
-	#tracks: Map<string, TrackDescriptor> = new Map();
-
-	#catalog: CatalogEncoder;
-
-	constructor(name: string, description?: string) {
+	constructor(name: string) {
 		this.name = name;
-		[this.#ctx, this.#cancelCtx] = withCancelCause(background());
-
-		this.#catalog = new CatalogEncoder({
-			version: DEFAULT_CATALOG_VERSION,
-		});
+		this.#broadcast = new Broadcast({ version: 1, isComplete: true, tracks: [] });
 	}
 
-	setTrack(track: TrackDescriptor, encoder: TrackEncoder): void {
-		if (track.name === CATALOG_TRACK_NAME) {
-			throw new Error("Cannot add catalog track");
-		}
-
-		this.#encoders.set(track.name, encoder);
-		this.#tracks.set(track.name, track);
-
-		this.#catalog.set([{
-			name: track.name,
-			priority: track.priority,
-			schema: track.schema,
-			config: track.config,
-		}]);
+	async addTrack(track: Track, serve: (writer: TrackWriter) => Promise<void>): Promise<void> {
+		await this.#broadcast.registerTrack(track, { serveTrack: serve });
 	}
 
-	async serveTrack(ctx: Promise<void>, track: TrackWriter): Promise<void> {
-		if (track.trackName === CATALOG_TRACK_NAME) {
-			await this.#catalog.encodeTo();
-			return;
-		}
-
-		const encoder = this.#encoders.get(track.trackName);
-		if (!encoder) {
-			track.closeWithError(TrackNotFoundErrorCode, `track not found: ${track.trackName}`);
-			return;
-		}
-
-		await encoder.encodeTo({
-			output: async (chunk: EncodedChunk): Promise<Error | undefined> => {
-				return await track.writeFrame(chunk);
-			},
-			done: ctx,
-		});
-
-		await track.close(); // Ensure the track is closed after serving; Is this necessary?
+	catalog(): Catalog {
+		return this.#broadcast.catalog();
 	}
 
-	async close(cause?: Error): Promise<void> {
-		const catalogEncoder = this.#encoders.get(CATALOG_TRACK_NAME);
-		if (catalogEncoder) {
-			await catalogEncoder.close(cause);
-		}
-		this.#catalog.close();
-		this.#encoders.clear();
+	async serveTrack(writer: TrackWriter): Promise<void> {
+		await this.#broadcast.serveTrack(writer);
 	}
-}
 
-interface DecodeNode {
-	decodeFrom(ctx: Promise<void>, reader: TrackReader): Promise<Error | undefined>;
+	close(): void {
+		this.#broadcast.close();
+	}
 }
 
 export class BroadcastSubscriber {
 	#path: BroadcastPath;
 	readonly roomID: string;
 	readonly session: Session;
-	#decoders: Map<string, DecodeNode> = new Map();
-	#catalog?: CatalogDecoder;
+	#catalogPromise?: Promise<Catalog | Error>;
 
 	#ctx: Context;
 	#cancelCtx: CancelCauseFunc;
-
-	// oncatalog?: CatalogCallbacks
 
 	constructor(path: BroadcastPath, roomID: string, session: Session) {
 		this.#path = path;
@@ -115,61 +62,58 @@ export class BroadcastSubscriber {
 		this.#cancelCtx = (cause?: Error) => {
 			cancelCtx(cause);
 		};
-		this.#catalog = catalog ?? new CatalogDecodeNode({});
-
-		this.subscribeTrack(CATALOG_TRACK_NAME, this.#catalog).then((err) => {
-			// Ignore errors
-			if (err) {
-				console.error("Failed to subscribe to catalog track:", err);
-			}
-		});
 	}
 
-	async catalog(): Promise<CatalogDecoder | Error> {
-		if (this.#catalog) {
-			return this.#catalog;
+	async catalog(): Promise<Catalog | Error> {
+		if (this.#catalogPromise) {
+			return await this.#catalogPromise;
 		}
 
-		const [track, err] = await this.session.subscribe(this.#path, CATALOG_TRACK_NAME);
-		if (err) {
-			return err;
-		}
-
-		this.#catalog = new CatalogDecoder({
-			version: DEFAULT_CATALOG_VERSION,
-			reader: track,
-		});
-
-		return this.#catalog;
-	}
-
-	hasTrack(name: string): boolean {
-		return this.#decoders.has(name);
+		this.#catalogPromise = this.#readCatalog();
+		return await this.#catalogPromise;
 	}
 
 	get name(): string {
 		return participantName(this.roomID, this.#path);
 	}
 
-	async subscribeTrack(name: TrackName, decoder: DecodeNode): Promise<Error | undefined> {
-		// Make a new subscription
-		const [track, err] = await this.session.subscribe(this.#path, name);
-		if (err) {
-			console.debug("Failed to subscribe to track:", name);
-			return err;
-		}
-
-		await decoder.decodeFrom(this.#ctx.done(), track);
-
-		// When the decoder is done, ensure to close the track
-		await track.closeWithError(SubscribeCanceledErrorCode, "decoder closed");
+	async subscribeTrack(name: TrackName): Promise<[TrackReader, undefined] | [undefined, Error]> {
+		return await this.session.subscribe(this.#path, name);
 	}
 
 	async close(cause?: Error): Promise<void> {
-		this.#decoders.clear();
-
-		// Cancel context to stop all decoders
-		// This will also close all active subscriptions
 		this.#cancelCtx(cause);
 	}
+
+	async #readCatalog(): Promise<Catalog | Error> {
+		const [track, err] = await this.session.subscribe(this.#path, DefaultCatalogTrackName);
+		if (err) {
+			return err;
+		}
+
+		try {
+			const [group, groupErr] = await track.acceptGroup(this.#ctx.done());
+			if (groupErr || !group) {
+				return groupErr ?? new Error("catalog group unavailable");
+			}
+
+			let payload: Uint8Array | undefined;
+			const frameErr = await group.readFrame((bytes) => {
+				payload = bytes.slice();
+			});
+			if (frameErr) {
+				return frameErr;
+			}
+			if (!payload) {
+				return new Error("catalog payload missing");
+			}
+
+			return parseCatalog(payload);
+		} catch (caught) {
+			return caught instanceof Error ? caught : new Error(String(caught));
+		} finally {
+			await track.closeWithError(SubscribeErrorCode.InternalError);
+		}
+	}
 }
+
