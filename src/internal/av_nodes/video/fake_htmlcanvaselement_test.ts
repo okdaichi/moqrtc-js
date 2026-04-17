@@ -19,7 +19,9 @@ export class FakeHTMLCanvasElement implements CanvasLike {
 	getContext(type: string): CanvasRenderingContext2D | null {
 		if (type !== "2d") return null;
 
-		const self = this;
+		const width = this.width;
+		const height = this.height;
+		const pixels = this.#pixels;
 		return {
 			drawImage(
 				_source: unknown,
@@ -31,25 +33,25 @@ export class FakeHTMLCanvasElement implements CanvasLike {
 				// Simulated draw: no-op for tests that just verify the call happens
 			},
 			clearRect(x: number, y: number, w: number, h: number): void {
-				const stride = self.width * 4;
-				for (let row = y; row < Math.min(y + h, self.height); row++) {
-					self.#pixels.fill(0, row * stride + x * 4, row * stride + (x + w) * 4);
+				const stride = width * 4;
+				for (let row = y; row < Math.min(y + h, height); row++) {
+					pixels.fill(0, row * stride + x * 4, row * stride + (x + w) * 4);
 				}
 			},
 			getImageData(x: number, y: number, w: number, h: number) {
 				const out = new Uint8ClampedArray(w * h * 4);
-				const stride = self.width * 4;
+				const stride = width * 4;
 				for (let row = 0; row < h; row++) {
 					const srcOffset = (y + row) * stride + x * 4;
-					out.set(self.#pixels.subarray(srcOffset, srcOffset + w * 4), row * w * 4);
+					out.set(pixels.subarray(srcOffset, srcOffset + w * 4), row * w * 4);
 				}
 				return { data: out, width: w, height: h };
 			},
 			putImageData(imageData: { data: Uint8ClampedArray }, x: number, y: number): void {
-				const stride = self.width * 4;
-				const srcStride = imageData.data.length / (self.height || 1);
-				for (let row = 0; row < self.height; row++) {
-					self.#pixels.set(
+				const stride = width * 4;
+				const srcStride = imageData.data.length / (height || 1);
+				for (let row = 0; row < height; row++) {
+					pixels.set(
 						imageData.data.subarray(row * srcStride, (row + 1) * srcStride),
 						(y + row) * stride + x * 4,
 					);
