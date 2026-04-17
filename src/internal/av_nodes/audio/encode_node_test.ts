@@ -1,13 +1,18 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
 import { stubGlobal } from "../../../test-utils_test.ts";
 import type { EncodedChunk } from "../container.ts";
+import type {
+	AudioEncodeDestination,
+	AudioEncodeNode as AudioEncodeNodeType,
+} from "./encode_node.ts";
 import { FakeAudioData } from "./fake_audiodata_test.ts";
 import { FakeAudioEncoder } from "./fake_audioencoder_test.ts";
-// Must be imported BEFORE encode_node.ts: sets globalThis.GainNode
-import { AudioEncodeDestination, AudioEncodeNode } from "./encode_node.ts";
 import { FakeGainNode } from "./fake_gainnode_test.ts";
 
-// FakeGainNode sets globalThis.GainNode at import time (above)
+// encode_node.ts must be loaded AFTER GainNode is stubbed (fake_gainnode_test.ts
+// side-effect). Because `deno fmt` reorders static imports alphabetically, we
+// use a dynamic import so the module evaluation order is deterministic.
+const { AudioEncodeNode } = await import("./encode_node.ts");
 
 // Mock AudioWorkletNode
 class MockAudioWorkletNode {
@@ -64,7 +69,7 @@ Deno.test("AudioEncodeNode", async (t) => {
 	let originalAudioWorkletNode: any;
 	let originalGainNode: any;
 	let context: AudioContext;
-	let encodeNode: AudioEncodeNode;
+	let encodeNode: AudioEncodeNodeType;
 
 	await t.step("setup", () => {
 		// Store originals
@@ -498,20 +503,20 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 				ctx.destination.channelCount = 0;
 				return ctx;
 			},
-			validate: (node: AudioEncodeNode) => {
+			validate: (node: AudioEncodeNodeType) => {
 				assertEquals(node.channelCount, 1);
 			},
 		}],
 		["should expose correct channel properties", {
 			setupContext: () => context,
-			validate: (node: AudioEncodeNode) => {
+			validate: (node: AudioEncodeNodeType) => {
 				assertEquals(node.channelCountMode, "explicit");
 				assertEquals(node.channelInterpretation, "speakers");
 			},
 		}],
 		["should handle worklet not yet initialized", {
 			setupContext: () => context,
-			validate: (node: AudioEncodeNode) => {
+			validate: (node: AudioEncodeNodeType) => {
 				// Access properties before worklet is ready
 				// Note: #workletReady is the actual field name in AudioEncodeNode
 				const worklet = (node as any)["#worklet"];
@@ -546,7 +551,7 @@ Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 	let originalAudioWorkletNode: any;
 	let originalGainNode: any;
 	let context: AudioContext;
-	let encodeNode: AudioEncodeNode;
+	let encodeNode: AudioEncodeNodeType;
 
 	await t.step("setup", () => {
 		originalAudioEncoder = globalThis.AudioEncoder;
