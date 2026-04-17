@@ -1,8 +1,10 @@
+import type { CanvasLike } from "./destination_node.ts";
+
 /**
  * FakeHTMLCanvasElement for Deno test environments.
  * Provides a working 2D canvas context backed by a Uint8ClampedArray pixel buffer.
  */
-export class FakeHTMLCanvasElement {
+export class FakeHTMLCanvasElement implements CanvasLike {
 	width: number;
 	height: number;
 

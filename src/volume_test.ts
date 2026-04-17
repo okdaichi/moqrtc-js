@@ -158,7 +158,7 @@ Deno.test("Volume", async (t) => {
 				assertEquals(isValidMinGain(0.1), false);
 				assertEquals(isValidMinGain(NaN), false);
 				assertEquals(isValidMinGain(Infinity), false);
-				assertEquals(isValidMinGain("0.001" as any), false);
+				assertEquals(isValidMinGain("0.001" as unknown as number), false);
 			});
 		});
 
@@ -176,7 +176,7 @@ Deno.test("Volume", async (t) => {
 				assertEquals(isValidFadeTime(2.0), false);
 				assertEquals(isValidFadeTime(NaN), false);
 				assertEquals(isValidFadeTime(Infinity), false);
-				assertEquals(isValidFadeTime("0.5" as any), false);
+				assertEquals(isValidFadeTime("0.5" as unknown as number), false);
 			});
 		});
 
@@ -193,7 +193,7 @@ Deno.test("Volume", async (t) => {
 				assertEquals(isValidVolume(1.1), false);
 				assertEquals(isValidVolume(NaN), false);
 				assertEquals(isValidVolume(Infinity), false);
-				assertEquals(isValidVolume("0.5" as any), false);
+				assertEquals(isValidVolume("0.5" as unknown as number), false);
 				assertEquals(isValidVolume(null), false);
 				assertEquals(isValidVolume(undefined), false);
 			});

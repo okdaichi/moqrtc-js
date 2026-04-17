@@ -1,3 +1,4 @@
+import type { CanvasLike } from "./destination_node.ts";
 import { VideoDestinationNode } from "./destination_node.ts";
 import type { VideoNode } from "./video_node.ts";
 
@@ -19,7 +20,7 @@ export class VideoContext {
 	#nextFrameTime: number = 0; // For frame pacing
 	#onstatechange?: VideoContextStateChangeCallback;
 
-	constructor(options?: { frameRate?: number; canvas?: HTMLCanvasElement }) {
+	constructor(options?: { frameRate?: number; canvas?: CanvasLike }) {
 		this.frameRate = options?.frameRate ?? 30;
 		this.startTime = performance.now();
 		this.baseTimestamp = 0; // μs origin point
@@ -31,7 +32,7 @@ export class VideoContext {
 					width: 0,
 					height: 0,
 					getContext: () => null,
-				} as unknown as HTMLCanvasElement),
+				}),
 		);
 	}
 

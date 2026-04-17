@@ -11,31 +11,40 @@ class MockVideoNode extends VideoNode {
 }
 
 Deno.test("VideoObserveNode", async (t) => {
+	interface MockObserver {
+		observeCalled: boolean;
+		observeCalls: [Element, ...unknown[]][];
+		disconnectCalled: boolean;
+		callback?: IntersectionObserverCallback;
+		observe(element: Element, ...args: unknown[]): void;
+		disconnect(): void;
+	}
+
 	let context: VideoContext;
 	let observeNode: VideoObserveNode;
 	let mockCanvas: FakeHTMLCanvasElement;
-	let mockObserver: any;
+	let mockObserver: MockObserver;
 
 	await t.step("setup", () => {
 		mockCanvas = new FakeHTMLCanvasElement();
-		context = new VideoContext({ canvas: mockCanvas as any });
+		context = new VideoContext({ canvas: mockCanvas });
 
 		// Mock IntersectionObserver
 		mockObserver = {
 			observeCalled: false,
-			observeCalls: [] as any[][],
+			observeCalls: [],
 			disconnectCalled: false,
-			observe(...args: any[]) {
+			observe(element: Element, ...args: unknown[]) {
 				mockObserver.observeCalled = true;
-				mockObserver.observeCalls.push(args);
+				mockObserver.observeCalls.push([element, ...args]);
 			},
 			disconnect() {
 				mockObserver.disconnectCalled = true;
 			},
 		};
-		stubGlobal("IntersectionObserver", function (callback: any) {
+		stubGlobal("IntersectionObserver", function (callback: IntersectionObserverCallback) {
 			// Store callback for testing
-			(mockObserver as any).callback = callback;
+			mockObserver.callback = callback;
 			return mockObserver;
 		});
 
@@ -80,9 +89,11 @@ Deno.test("VideoObserveNode", async (t) => {
 		observeNode.connect(outputNode);
 
 		// Make not visible
-		const callback = (mockObserver as any).callback;
+		const callback = mockObserver.callback;
 		if (callback) {
-			callback([{ isIntersecting: false }]);
+			callback([
+				{ isIntersecting: false } as IntersectionObserverEntry,
+			], mockObserver as unknown as IntersectionObserver);
 		}
 
 		const frame = new FakeVideoFrame();
@@ -95,9 +106,11 @@ Deno.test("VideoObserveNode", async (t) => {
 
 		assert(!processCalled);
 		// Reset visibility for subsequent steps
-		const resetCallback = (mockObserver as any).callback;
+		const resetCallback = mockObserver.callback;
 		if (resetCallback) {
-			resetCallback([{ isIntersecting: true }]);
+			resetCallback([
+				{ isIntersecting: true } as IntersectionObserverEntry,
+			], mockObserver as unknown as IntersectionObserver);
 		}
 	});
 
@@ -152,9 +165,11 @@ Deno.test("VideoObserveNode", async (t) => {
 	await t.step("should get isVisible", () => {
 		assertEquals(observeNode.isVisible, true);
 		// Simulate not visible
-		const callback = (mockObserver as any).callback;
+		const callback = mockObserver.callback;
 		if (callback) {
-			callback([{ isIntersecting: false }]);
+			callback([
+				{ isIntersecting: false } as IntersectionObserverEntry,
+			], mockObserver as unknown as IntersectionObserver);
 		}
 		assertEquals(observeNode.isVisible, false);
 	});

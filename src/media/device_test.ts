@@ -1,6 +1,6 @@
 import { assertEquals, assertExists } from "@std/assert";
-import { setupFakeMediaDevices } from "./fake_media_devices.ts";
 import { Device, MediaDeviceContext } from "./device.ts";
+import { setupFakeMediaDevices } from "./fake_media_devices.ts";
 
 const devices = [
 	{ kind: "audioinput" as MediaDeviceKind, label: "Mic", deviceId: "mic-1" },
@@ -84,7 +84,7 @@ Deno.test("abstract Device", async (t) => {
 		assertEquals(device.kind, "video");
 		assertEquals(device.enabled, true);
 		assertEquals(device.preferred, "cam-1");
-		assertEquals((device.constraints as any).width, 1920);
+		assertEquals(device.constraints?.width, 1920);
 	});
 
 	await t.step("stop() clears stream", async () => {
@@ -124,7 +124,7 @@ Deno.test("abstract Device", async (t) => {
 		assertEquals(device.stream?.readyState, "live");
 
 		await device.updateConstraints({ height: 1080 });
-		assertEquals((device.constraints as any).height, 1080);
+		assertEquals(device.constraints?.height, 1080);
 		assertEquals(device.stream?.getConstraints()?.height, 1080);
 	});
 });

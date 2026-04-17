@@ -1,3 +1,4 @@
+import type { Client, Session } from "@okdaichi/moq";
 import { DefaultCatalogTrackName } from "@okdaichi/moq/msf";
 import { assertEquals, assertRejects } from "@std/assert";
 import { broadcastPath, participantName, Room, RoomEvents } from "./room.ts";
@@ -11,7 +12,7 @@ Deno.test("room utils generate and parse participant paths", () => {
 Deno.test("Room.attach publishes local broadcast and acknowledges local announce", async () => {
 	const published: Array<{ path: string; localName: string }> = [];
 	const joined: string[] = [];
-	const local = { name: "alice" };
+	const local = { name: "alice", serveTrack: () => {} };
 	const localPath = "/test-room/alice.hang";
 	let received = false;
 
@@ -51,7 +52,7 @@ Deno.test("Room.attach publishes local broadcast and acknowledges local announce
 		],
 	};
 
-	await room.attach({ session: session as any, local: local as any });
+	await room.attach({ session: session as unknown as Session, local });
 
 	assertEquals(published, [{ path: localPath, localName: "alice" }]);
 	assertEquals(joined, ["false:alice"]);
@@ -133,7 +134,10 @@ Deno.test("Room exposes remote catalogs and role-based subscribe helpers", async
 		],
 	};
 
-	await room.attach({ session: session as any, local: { name: "alice" } as any });
+	await room.attach({
+		session: session as unknown as Session,
+		local: { name: "alice", serveTrack: () => {} },
+	});
 	await Promise.resolve();
 
 	const catalog = await room.catalog("bob");
@@ -146,7 +150,7 @@ Deno.test("Room exposes remote catalogs and role-based subscribe helpers", async
 
 	const [reader, err] = await room.subscribe({ memberName: "bob", role: "video" });
 	assertEquals(err, undefined);
-	assertEquals((reader as any).trackName, "camera");
+	assertEquals((reader as unknown as { trackName: string }).trackName, "camera");
 	assertEquals(subscribeCalls, ["camera"]);
 	assertEquals(room.members().map((member) => member.name), ["alice", "bob"]);
 
@@ -173,7 +177,11 @@ Deno.test("Room.attach propagates acceptAnnounce failures", async () => {
 	};
 
 	await assertRejects(
-		() => room.attach({ session: session as any, local: { name: "alice" } as any }),
+		() =>
+			room.attach({
+				session: session as unknown as Session,
+				local: { name: "alice", serveTrack: () => {} },
+			}),
 		Error,
 		"boom",
 	);
@@ -223,15 +231,15 @@ Deno.test("Room.connect uses URL + dial and exposes on/once helpers", async () =
 	const client = {
 		dial: async (url: string | URL) => {
 			dialCalls.push(String(url));
-			return session as any;
+			return session as unknown as Session;
 		},
 		close: async () => {},
 	};
 
 	await room.connect({
 		url: "https://example.com/moq",
-		local: { name: "alice" } as any,
-		client: client as any,
+		local: { name: "alice", serveTrack: () => {} },
+		client: client as unknown as Client,
 	});
 	assertEquals(room.isConnected, true);
 	assertEquals(onceCalled, 1);

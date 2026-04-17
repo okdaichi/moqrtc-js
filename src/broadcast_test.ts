@@ -1,5 +1,6 @@
+import type { Session, TrackWriter } from "@okdaichi/moq";
 import { SubscribeErrorCode } from "@okdaichi/moq";
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertExists } from "@std/assert";
 import { BroadcastPublisher, BroadcastSubscriber } from "./broadcast.ts";
 
 Deno.test("BroadcastPublisher builds an MSF catalog from track descriptors", async () => {
@@ -39,7 +40,7 @@ Deno.test("BroadcastPublisher closes missing tracks with TrackNotFound", async (
 		closeWithError: async (code: number) => {
 			closeCodes.push(code);
 		},
-	} as any);
+	} as unknown as TrackWriter);
 
 	assertEquals(closeCodes, [SubscribeErrorCode.TrackNotFound]);
 });
@@ -72,7 +73,7 @@ Deno.test("BroadcastSubscriber.catalog parses MSF catalog payload", async () => 
 			},
 			undefined,
 		],
-	} as any;
+	} as unknown as Session;
 
 	const subscriber = new BroadcastSubscriber("/room/alice.hang", "room", session);
 	const catalog = await subscriber.catalog();
@@ -80,6 +81,7 @@ Deno.test("BroadcastSubscriber.catalog parses MSF catalog payload", async () => 
 	if (catalog instanceof Error) {
 		throw catalog;
 	}
+
 	assertEquals(catalog.tracks[0]?.name, "camera");
 	assertEquals(catalog.tracks[0]?.packaging, "legacy");
 	assertEquals(closeCodes, [SubscribeErrorCode.InternalError]);
@@ -94,11 +96,12 @@ Deno.test("BroadcastSubscriber.subscribeTrack returns TrackReader directly", asy
 			},
 			undefined,
 		],
-	} as any;
+	} as unknown as Session;
 
 	const subscriber = new BroadcastSubscriber("/room/alice.hang", "room", session);
 	const [reader, err] = await subscriber.subscribeTrack("camera");
 	assertEquals(err, undefined);
-	assertEquals((reader as any).trackName, "camera");
+	assertExists(reader);
+	assertEquals(reader.trackName, "camera");
 	assertEquals(calls, []);
 });

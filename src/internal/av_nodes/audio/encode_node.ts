@@ -5,6 +5,12 @@ import { createWorkletBlobUrl as createHijackWorkletBlobUrl } from "./audio_hija
 
 const hijackWorkletName = "audio-hijacker";
 
+interface AudioContextLike {
+	readonly sampleRate: number;
+	readonly destination: { readonly channelCount: number };
+	readonly audioWorklet: { addModule(moduleUrl: string): Promise<void> };
+}
+
 // Backpressure management: Maximum queue size before dropping frames
 const MAX_ENCODE_QUEUE_SIZE = 2;
 
@@ -30,9 +36,9 @@ export class AudioEncodeNode extends GainNode {
 	#disposed = false;
 	#dests: Map<AudioEncodeDestination, CancelFunc> = new Map();
 
-	constructor(context: AudioContext) {
+	constructor(context: AudioContextLike) {
 		// Initialize as a passthrough GainNode
-		super(context, { gain: 1.0 });
+		super(context as unknown as AudioContext, { gain: 1.0 });
 
 		// Set channel properties appropriate for a terminal encode node
 		this.channelCount = Math.max(1, context.destination.channelCount);

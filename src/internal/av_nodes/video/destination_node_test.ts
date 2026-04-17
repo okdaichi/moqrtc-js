@@ -15,11 +15,11 @@ Deno.test(
 		await t.step("should create VideoDestinationNode", () => {
 			context = new VideoContext();
 			canvas = new FakeHTMLCanvasElement();
-			destinationNode = new VideoDestinationNode(context, canvas as any);
+			destinationNode = new VideoDestinationNode(context, canvas);
 
 			assertEquals(destinationNode.numberOfInputs, 1);
 			assertEquals(destinationNode.numberOfOutputs, 0);
-			assertEquals(destinationNode.canvas, canvas as any);
+			assertEquals(destinationNode.canvas, canvas);
 			assertEquals(
 				destinationNode.renderFunction,
 				VideoRenderFunctions.contain,
@@ -29,7 +29,7 @@ Deno.test(
 		await t.step("should create with custom render function", () => {
 			context = new VideoContext();
 			canvas = new FakeHTMLCanvasElement();
-			const customNode = new VideoDestinationNode(context, canvas as any, {
+			const customNode = new VideoDestinationNode(context, canvas, {
 				renderFunction: VideoRenderFunctions.cover,
 			});
 			assertEquals(customNode.renderFunction, VideoRenderFunctions.cover);
@@ -38,7 +38,7 @@ Deno.test(
 		await t.step("should process frames and draw to canvas", () => {
 			context = new VideoContext();
 			canvas = new FakeHTMLCanvasElement();
-			destinationNode = new VideoDestinationNode(context, canvas as any);
+			destinationNode = new VideoDestinationNode(context, canvas);
 
 			const frame = new FakeVideoFrame(640, 480);
 
@@ -50,7 +50,7 @@ Deno.test(
 		await t.step("should handle frame close errors gracefully", () => {
 			context = new VideoContext();
 			canvas = new FakeHTMLCanvasElement();
-			destinationNode = new VideoDestinationNode(context, canvas as any);
+			destinationNode = new VideoDestinationNode(context, canvas);
 
 			const frame = new FakeVideoFrame(640, 480);
 
@@ -70,7 +70,7 @@ Deno.test(
 		await t.step("should not draw when context is suspended", async () => {
 			context = new VideoContext();
 			canvas = new FakeHTMLCanvasElement();
-			destinationNode = new VideoDestinationNode(context, canvas as any);
+			destinationNode = new VideoDestinationNode(context, canvas);
 
 			await context.suspend();
 			const frame = new FakeVideoFrame();
@@ -93,15 +93,15 @@ Deno.test(
 			stubGlobal("cancelAnimationFrame", () => {});
 			stubGlobal(
 				"requestAnimationFrame",
-				(() => {
+				() => {
 					requestedId = 123;
 					return requestedId;
-				}) as any,
+				},
 			);
 
 			const destinationNode = new VideoDestinationNode(
 				context,
-				canvas as any,
+				canvas,
 			);
 
 			const frame = new FakeVideoFrame(640, 480);
@@ -133,18 +133,18 @@ Deno.test(
 				let nextId = 1;
 				stubGlobal(
 					"requestAnimationFrame",
-					((cb: FrameRequestCallback) => {
+					(cb: FrameRequestCallback) => {
 						// Intentionally do not invoke cb
 						void cb;
 						return nextId++;
-					}) as any,
+					},
 				);
-				stubGlobal("cancelAnimationFrame", (() => {}) as any);
+				stubGlobal("cancelAnimationFrame", () => {});
 
 				try {
 					const destinationNode = new VideoDestinationNode(
 						context,
-						canvas as any,
+						canvas,
 					);
 
 					let closed = 0;
@@ -176,7 +176,7 @@ Deno.test(
 		await t.step("should handle frames with zero dimensions", () => {
 			context = new VideoContext();
 			canvas = new FakeHTMLCanvasElement();
-			destinationNode = new VideoDestinationNode(context, canvas as any);
+			destinationNode = new VideoDestinationNode(context, canvas);
 
 			const frame = new FakeVideoFrame(0, 0);
 			assert(() => destinationNode.process(frame)); // Should not throw
@@ -185,7 +185,7 @@ Deno.test(
 		await t.step("should handle frames with negative dimensions", () => {
 			context = new VideoContext();
 			canvas = new FakeHTMLCanvasElement();
-			destinationNode = new VideoDestinationNode(context, canvas as any);
+			destinationNode = new VideoDestinationNode(context, canvas);
 
 			const frame = new FakeVideoFrame(-100, -100);
 			assert(() => destinationNode.process(frame)); // Should not throw
@@ -194,7 +194,7 @@ Deno.test(
 		await t.step("should handle frames with very large dimensions", () => {
 			context = new VideoContext();
 			canvas = new FakeHTMLCanvasElement();
-			destinationNode = new VideoDestinationNode(context, canvas as any);
+			destinationNode = new VideoDestinationNode(context, canvas);
 
 			const frame = new FakeVideoFrame(10000, 10000);
 			assert(() => destinationNode.process(frame)); // Should not throw
@@ -203,7 +203,7 @@ Deno.test(
 		await t.step("should handle frames with negative timestamp", () => {
 			context = new VideoContext();
 			canvas = new FakeHTMLCanvasElement();
-			destinationNode = new VideoDestinationNode(context, canvas as any);
+			destinationNode = new VideoDestinationNode(context, canvas);
 
 			const frame = new FakeVideoFrame(640, 480, -1000);
 			assert(() => destinationNode.process(frame)); // Should not throw

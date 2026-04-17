@@ -1,8 +1,14 @@
 import type { VideoContext } from "./context.ts";
 import { VideoNode } from "./video_node.ts";
 
+export interface CanvasLike {
+	width: number;
+	height: number;
+	getContext(contextId: "2d", ...options: unknown[]): CanvasRenderingContext2D | null;
+}
+
 export class VideoDestinationNode extends VideoNode {
-	readonly canvas: HTMLCanvasElement;
+	readonly canvas: CanvasLike;
 	readonly context: VideoContext;
 	#animateId?: number;
 	#pendingFrame?: VideoFrame;
@@ -13,7 +19,7 @@ export class VideoDestinationNode extends VideoNode {
 
 	constructor(
 		context: VideoContext,
-		canvas: HTMLCanvasElement,
+		canvas: CanvasLike,
 		options?: {
 			renderFunction?: VideoRenderFunction;
 		},

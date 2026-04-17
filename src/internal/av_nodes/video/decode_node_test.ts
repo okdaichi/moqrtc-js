@@ -27,7 +27,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 		});
 
 		const mockCanvas = new FakeHTMLCanvasElement();
-		context = new VideoContext({ canvas: mockCanvas as any });
+		context = new VideoContext({ canvas: mockCanvas });
 		// onFrame triggers the VideoDecodeNode's decoder output callback
 		onFrame = (frame: VideoFrame) => capturedOutput?.(frame);
 		decoderNode = new VideoDecodeNode(context);

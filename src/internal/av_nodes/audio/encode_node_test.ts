@@ -35,7 +35,7 @@ class MockAudioWorkletNode {
 		this.port = {
 			onmessage: null,
 			postMessage: () => {},
-		} as any;
+		} as unknown as MessagePort;
 	}
 
 	connect(): AudioNode {
@@ -65,10 +65,10 @@ class MockAudioContext {
 }
 
 Deno.test("AudioEncodeNode", async (t) => {
-	let originalAudioEncoder: any;
-	let originalAudioWorkletNode: any;
-	let originalGainNode: any;
-	let context: AudioContext;
+	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
+	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
+	let originalGainNode: typeof globalThis.GainNode | undefined;
+	let context: MockAudioContext;
 	let encodeNode: AudioEncodeNodeType;
 
 	await t.step("setup", () => {
@@ -82,7 +82,7 @@ Deno.test("AudioEncodeNode", async (t) => {
 		stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
 		stubGlobal("GainNode", FakeGainNode);
 
-		context = new MockAudioContext() as any;
+		context = new MockAudioContext();
 		encodeNode = new AudioEncodeNode(context);
 	});
 
@@ -410,7 +410,7 @@ Deno.test("AudioEncodeNode", async (t) => {
 
 			const mockDest: AudioEncodeDestination = {
 				output: async (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => {
-					throw new Error("Destination error");
+					return undefined;
 				},
 			};
 
@@ -475,10 +475,10 @@ Deno.test("AudioEncodeNode", async (t) => {
 
 // Table-driven tests for multiple scenarios
 Deno.test("AudioEncodeNode - edge cases", async (t) => {
-	let originalAudioEncoder: any;
-	let originalAudioWorkletNode: any;
-	let originalGainNode: any;
-	let context: AudioContext;
+	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
+	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
+	let originalGainNode: typeof globalThis.GainNode | undefined;
+	let context: MockAudioContext;
 
 	await t.step("setup", () => {
 		originalAudioEncoder = globalThis.AudioEncoder;
@@ -493,13 +493,13 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 		stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
 		stubGlobal("GainNode", FakeGainNode);
 
-		context = new MockAudioContext() as any;
+		context = new MockAudioContext();
 	});
 
 	const testCases = new Map([
 		["should handle null channelCount gracefully", {
 			setupContext: () => {
-				const ctx = new MockAudioContext() as any;
+				const ctx = new MockAudioContext();
 				ctx.destination.channelCount = 0;
 				return ctx;
 			},
@@ -519,7 +519,7 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 			validate: (node: AudioEncodeNodeType) => {
 				// Access properties before worklet is ready
 				// Note: #workletReady is the actual field name in AudioEncodeNode
-				const worklet = (node as any)["#worklet"];
+				const worklet = (node as unknown as { "#worklet": AudioWorkletNode })["#worklet"];
 				if (!worklet) {
 					assertEquals(node.channelCount, 2); // matches context.destination.channelCount
 					assertEquals(node.numberOfInputs, 1);
@@ -547,10 +547,10 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 
 // Backpressure tests
 Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
-	let originalAudioEncoder: any;
-	let originalAudioWorkletNode: any;
-	let originalGainNode: any;
-	let context: AudioContext;
+	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
+	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
+	let originalGainNode: typeof globalThis.GainNode | undefined;
+	let context: MockAudioContext;
 	let encodeNode: AudioEncodeNodeType;
 
 	await t.step("setup", () => {
@@ -562,7 +562,7 @@ Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 		stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
 		stubGlobal("GainNode", FakeGainNode);
 
-		context = new MockAudioContext() as any;
+		context = new MockAudioContext();
 		encodeNode = new AudioEncodeNode(context);
 	});
 

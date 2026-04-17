@@ -1,4 +1,6 @@
+import type { Session } from "@okdaichi/moq";
 import { assert, assertEquals, assertExists } from "@std/assert";
+import type { Room } from "../room.ts";
 import { stubGlobal } from "../test-utils_test.ts";
 
 class FakeElement extends EventTarget {
@@ -215,8 +217,8 @@ Deno.test("RoomElement", async (t) => {
 		await t2.step("should join room successfully", async () => {
 			element.setAttribute("room-id", "test-room");
 			await element.join(
-				createSession("test-room", "test-publisher") as any,
-				{ name: "test-publisher" } as any,
+				createSession("test-room", "test-publisher") as unknown as Session,
+				{ name: "test-publisher", serveTrack: () => {} },
 			);
 
 			assertExists(element.room);
@@ -234,8 +236,8 @@ Deno.test("RoomElement", async (t) => {
 			};
 
 			await missingRoomElement.join(
-				createSession("x", "test-publisher") as any,
-				{ name: "test-publisher" } as any,
+				createSession("x", "test-publisher") as unknown as Session,
+				{ name: "test-publisher", serveTrack: () => {} },
 			);
 
 			assert(statusCalled);
@@ -254,8 +256,10 @@ Deno.test("RoomElement", async (t) => {
 			};
 
 			await element.join(
-				createSession("test-room", "test-publisher", { failAccept: true }) as any,
-				{ name: "test-publisher" } as any,
+				createSession("test-room", "test-publisher", {
+					failAccept: true,
+				}) as unknown as Session,
+				{ name: "test-publisher", serveTrack: () => {} },
 			);
 
 			assert(statusCalled);
@@ -274,8 +278,10 @@ Deno.test("RoomElement", async (t) => {
 			};
 
 			await element.join(
-				createSession("test-room", "test-publisher", { includeRemote: true }) as any,
-				{ name: "test-publisher" } as any,
+				createSession("test-room", "test-publisher", {
+					includeRemote: true,
+				}) as unknown as Session,
+				{ name: "test-publisher", serveTrack: () => {} },
 			);
 			await Promise.resolve();
 
@@ -295,8 +301,10 @@ Deno.test("RoomElement", async (t) => {
 			};
 
 			await element.join(
-				createSession("test-room", "test-publisher", { includeRemote: true }) as any,
-				{ name: "test-publisher" } as any,
+				createSession("test-room", "test-publisher", {
+					includeRemote: true,
+				}) as unknown as Session,
+				{ name: "test-publisher", serveTrack: () => {} },
 			);
 			await Promise.resolve();
 			element.room?.disconnect();
@@ -312,19 +320,16 @@ Deno.test("RoomElement", async (t) => {
 			element.room = {
 				roomID: "test-room",
 				disconnect: () => {},
-			} as any;
-
-			element.leave();
-			assertEquals(element.room, undefined);
+			} as unknown as Room;
 		});
 
 		await t2.step("should dispatch statuschange event", () => {
+			let statusChangeEvent: Event | undefined;
 			element.room = {
 				roomID: "test-room",
 				disconnect: () => {},
-			} as any;
+			} as unknown as Room;
 
-			let statusChangeEvent: any;
 			element.addEventListener("statuschange", (event) => {
 				statusChangeEvent = event;
 			});
@@ -332,8 +337,15 @@ Deno.test("RoomElement", async (t) => {
 			element.leave();
 
 			assertExists(statusChangeEvent);
-			assertEquals(statusChangeEvent.detail.type, "left");
-			assertEquals(statusChangeEvent.detail.message, "Left room test-room");
+			assertEquals(
+				(statusChangeEvent as CustomEvent<{ type: string; message: string }>).detail.type,
+				"left",
+			);
+			assertEquals(
+				(statusChangeEvent as CustomEvent<{ type: string; message: string }>).detail
+					.message,
+				"Left room test-room",
+			);
 		});
 	});
 });

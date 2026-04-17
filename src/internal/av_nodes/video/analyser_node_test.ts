@@ -3,6 +3,7 @@ import { stubGlobal } from "../../../test-utils_test.ts";
 import type { VideoFrameAnalysis } from "./analyse_node.ts";
 import { VideoAnalyserNode } from "./analyse_node.ts";
 import { VideoContext } from "./context.ts";
+import type { CanvasLike } from "./destination_node.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 import { VideoNode } from "./video_node.ts";
 
@@ -39,12 +40,15 @@ if (typeof requestIdleCallback === "undefined") {
 }
 
 // Mock canvas for Deno environment
-const canvas = {
-	getContext: () => ({
-		drawImage: () => {},
-		getImageData: () => ({ data: new Uint8ClampedArray(4) }),
-	}),
-} as any;
+const canvas: CanvasLike = {
+	width: 0,
+	height: 0,
+	getContext: () =>
+		({
+			drawImage: () => {},
+			getImageData: () => ({ data: new Uint8ClampedArray(4) }),
+		}) as unknown as CanvasRenderingContext2D,
+};
 
 class MockVideoNode extends VideoNode {
 	processedFrames: VideoFrame[] = [];

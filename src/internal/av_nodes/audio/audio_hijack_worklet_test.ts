@@ -15,14 +15,14 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		"registers the hijack processor when AudioWorkletProcessor is available",
 		() => {
 			// Setup mocks
-			const mockRegisterProcessor = { calls: [] as any[] };
+			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
 			const originalRegisterProcessor = globalThis.registerProcessor;
 			const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
 
 			stubGlobal("AudioWorkletProcessor", class {});
 			stubGlobal("registerProcessor", (
 				name: string,
-				processor: any,
+				processor: Parameters<typeof registerProcessor>[1],
 			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
 			});
@@ -149,7 +149,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				}
 
 				assertEquals(mockRegisterProcessor.calls.length, 1);
-				const [name, processorCtor] = mockRegisterProcessor.calls[0];
+				const [name, processorCtor] = mockRegisterProcessor.calls[0]!;
 				assertEquals(name, "AudioHijacker");
 				assertEquals(typeof processorCtor, "function");
 			} finally {
@@ -161,12 +161,20 @@ Deno.test("audio_hijack_worklet", async (t) => {
 	);
 
 	await t.step("AudioHijackProcessor", async (t) => {
-		let processor: any;
-		let mockPort: any;
+		let processor!: {
+			process(inputs: Float32Array[][]): boolean;
+			append?(channels: (Float32Array | undefined)[]): void;
+		};
+		let mockPort: {
+			messages?: AudioDataInit[];
+			postedMessages?: unknown[];
+			onmessage?: (message: unknown) => void;
+			postMessage?: (message: AudioDataInit) => void;
+		};
 
 		await t.step("setup", () => {
 			mockPort = {
-				postMessage: (message: any) => {
+				postMessage: (message: AudioDataInit) => {
 					mockPort.messages = mockPort.messages || [];
 					mockPort.messages.push(message);
 				},
@@ -184,14 +192,13 @@ Deno.test("audio_hijack_worklet", async (t) => {
 			);
 
 			// Mock registerProcessor
-			const mockRegisterProcessor = { calls: [] as any[] };
+			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
 			stubGlobal("registerProcessor", (
 				name: string,
-				processor: any,
+				processor: Parameters<typeof registerProcessor>[1],
 			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
 			});
-
 			try {
 				// Import the worklet code by simulating the worklet context
 				if (
@@ -315,7 +322,9 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				}
 
 				// Create processor instance
-				const TestAudioHijackProcessor = mockRegisterProcessor.calls[0][1];
+				const TestAudioHijackProcessor = mockRegisterProcessor.calls[0]![1] as new (
+					options: AudioWorkletNodeOptions,
+				) => { process(inputs: Float32Array[][]): boolean };
 				processor = new TestAudioHijackProcessor({
 					processorOptions: {
 						sampleRate: 44100,
@@ -329,174 +338,178 @@ Deno.test("audio_hijack_worklet", async (t) => {
 			}
 		});
 
-		await t.step("initializes with default values", () => {
+		await t.step("initializes with default values", async () => {
 			const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
 			const originalRegisterProcessor = globalThis.registerProcessor;
 
-			const mockRegisterProcessor = { calls: [] as any[] };
+			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
 			stubGlobal("AudioWorkletProcessor", class {});
 			stubGlobal("registerProcessor", (
 				name: string,
-				processor: any,
+				processor: Parameters<typeof registerProcessor>[1],
 			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
+				try {
+					class InitTestAudioHijackProcessor extends globalThis.AudioWorkletProcessor {
+						constructor(_options: AudioWorkletNodeOptions) {
+							super();
+						}
+					}
+					globalThis.registerProcessor(
+						"AudioHijacker",
+						InitTestAudioHijackProcessor,
+					);
+
+					const ProcessorClass = mockRegisterProcessor.calls[0]![1] as new (
+						options: AudioWorkletNodeOptions,
+					) => unknown;
+					const proc = new ProcessorClass({
+						processorOptions: {},
+					});
+					assertExists(proc);
+				} finally {
+					stubGlobal("AudioWorkletProcessor", originalAudioWorkletProcessor);
+					stubGlobal("registerProcessor", originalRegisterProcessor);
+				}
 			});
 
-			try {
-				class InitTestAudioHijackProcessor extends globalThis.AudioWorkletProcessor {
-					constructor(_options: AudioWorkletNodeOptions) {
-						super();
-					}
-				}
-				globalThis.registerProcessor(
-					"AudioHijacker",
-					InitTestAudioHijackProcessor,
-				);
-
-				const ProcessorClass = mockRegisterProcessor.calls[0][1];
-				const proc = new ProcessorClass({
-					processorOptions: {},
-				});
-				assertExists(proc);
-			} finally {
-				stubGlobal("AudioWorkletProcessor", originalAudioWorkletProcessor);
-				stubGlobal("registerProcessor", originalRegisterProcessor);
-			}
-		});
-
-		await t.step("processes mono input correctly", () => {
-			const inputData = new Float32Array([0.1, 0.2, 0.3]);
-			const inputs = [[inputData]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assert(mockPort.messages);
-			assertEquals(mockPort.messages.length, 1);
-
-			const message = mockPort.messages[0];
-			assertEquals(message.format, "f32-planar");
-			assertEquals(message.sampleRate, 44100);
-			assertEquals(message.numberOfChannels, 2);
-			assertEquals(message.numberOfFrames, 3);
-			assert(message.data instanceof Float32Array);
-			assertEquals(message.data.length, 6); // 2 channels * 3 frames
-			assertEquals(message.timestamp, 0);
-			assertEquals(message.transfer, [message.data.buffer]);
-		});
-
-		await t.step("processes stereo input correctly", () => {
-			mockPort.messages = [];
-			const inputData1 = new Float32Array([0.1, 0.2]);
-			const inputData2 = new Float32Array([0.3, 0.4]);
-			const inputs = [[inputData1, inputData2]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assert(mockPort.messages);
-			assertEquals(mockPort.messages.length, 1);
-
-			const message = mockPort.messages[0];
-			assertEquals(message.numberOfChannels, 2);
-			assertEquals(message.numberOfFrames, 2);
-			assertEquals(message.data, new Float32Array([0.1, 0.2, 0.3, 0.4]));
-		});
-
-		await t.step("handles empty input", () => {
-			mockPort.messages = [];
-			const inputs = [[]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assert(!mockPort.messages || mockPort.messages.length === 0);
-		});
-
-		await t.step("handles null input channels", () => {
-			mockPort.messages = [];
-			const inputs = [[null as any]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assert(!mockPort.messages || mockPort.messages.length === 0);
-		});
-
-		await t.step("handles empty input channel arrays", () => {
-			mockPort.messages = [];
-			const inputs = [[new Float32Array(0)]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assert(mockPort.messages);
-			assertEquals(mockPort.messages.length, 1);
-			const message = mockPort.messages[0];
-			assertEquals(message.numberOfFrames, 0);
-		});
-
-		await t.step(
-			"duplicates first channel when target channels exceed input",
-			() => {
-				mockPort.messages = [];
-				const inputData = new Float32Array([0.1, 0.2]);
+			await t.step("processes mono input correctly", () => {
+				const inputData = new Float32Array([0.1, 0.2, 0.3]);
 				const inputs = [[inputData]];
 
 				const result = processor.process(inputs);
 
 				assertEquals(result, true);
-				const message = mockPort.messages[0];
-				assertEquals(
-					message.data,
-					new Float32Array([0.1, 0.2, 0.1, 0.2]),
-				); // duplicated
-			},
-		);
+				assertExists(mockPort.messages);
+				assertEquals(mockPort.messages.length, 1);
 
-		await t.step("fills with silence for missing channels", () => {
-			mockPort.messages = [];
-			const inputData = new Float32Array([0.1]);
-			const inputs = [[inputData]];
+				const message = mockPort.messages[0]!;
+				assertEquals(message.format, "f32-planar");
+				assertEquals(message.sampleRate, 44100);
+				assertEquals(message.numberOfChannels, 2);
+				assertEquals(message.numberOfFrames, 3);
+				assert(message.data instanceof Float32Array);
+				assertEquals(message.data.length, 6); // 2 channels * 3 frames
+				assertEquals(message.timestamp, 0);
+				assertEquals(message.transfer, [message.data.buffer]);
+			});
 
-			const result = processor.process(inputs);
+			await t.step("processes stereo input correctly", () => {
+				mockPort.messages = [];
+				const inputData1 = new Float32Array([0.1, 0.2]);
+				const inputData2 = new Float32Array([0.3, 0.4]);
+				const inputs = [[inputData1, inputData2]];
 
-			assertEquals(result, true);
-			const message = mockPort.messages[0];
-			assertEquals(message.data, new Float32Array([0.1, 0.1])); // duplicate first channel
-		});
+				const result = processor.process(inputs);
 
-		await t.step("throws error for multiple inputs", () => {
-			const inputs = [[], []];
+				assertEquals(result, true);
+				assertExists(mockPort.messages);
+				assertEquals(mockPort.messages.length, 1);
 
-			assertThrows(
-				() => processor.process(inputs),
-				Error,
-				"only one input is supported.",
+				const message = mockPort.messages[0]!;
+				assertEquals(message.numberOfChannels, 2);
+				assertEquals(message.numberOfFrames, 2);
+				assertEquals(message.data, new Float32Array([0.1, 0.2, 0.3, 0.4]));
+			});
+
+			await t.step("handles empty input", () => {
+				mockPort.messages = [];
+				const inputs = [[]];
+
+				const result = processor.process(inputs);
+
+				assertEquals(result, true);
+				assert(!mockPort.messages || mockPort.messages.length === 0);
+			});
+
+			await t.step("handles null input channels", () => {
+				mockPort.messages = [];
+				const inputs = [[null as unknown as Float32Array]];
+
+				const result = processor.process(inputs);
+
+				assertEquals(result, true);
+				assert(!mockPort.messages || mockPort.messages.length === 0);
+			});
+
+			await t.step("handles empty input channel arrays", () => {
+				mockPort.messages = [];
+				const inputs = [[new Float32Array(0)]];
+
+				const result = processor.process(inputs);
+
+				assertEquals(result, true);
+				assertExists(mockPort.messages);
+				assertEquals(mockPort.messages.length, 1);
+				const message = mockPort.messages[0]!;
+				assertEquals(message.numberOfFrames, 0);
+			});
+
+			await t.step(
+				"duplicates first channel when target channels exceed input",
+				() => {
+					mockPort.messages = [];
+					const inputData = new Float32Array([0.1, 0.2]);
+					const inputs = [[inputData]];
+
+					const result = processor.process(inputs);
+
+					assertEquals(result, true);
+					assertExists(mockPort.messages);
+					const message = mockPort.messages[0]!;
+					assertEquals(
+						message.data,
+						new Float32Array([0.1, 0.2, 0.1, 0.2]),
+					); // duplicated
+				},
 			);
-		});
 
-		await t.step("updates frame counter", () => {
-			mockPort.messages = [];
-			const inputData = new Float32Array([0.1, 0.2]);
-			const inputs = [[inputData]];
+			await t.step("fills with silence for missing channels", () => {
+				mockPort.messages = [];
+				const inputData = new Float32Array([0.1]);
+				const inputs = [[inputData]];
 
-			processor.process(inputs);
+				const result = processor.process(inputs);
 
-			const message1 = mockPort.messages[0];
-			assertEquals(typeof message1.timestamp, "number");
+				assertEquals(result, true);
+				assertExists(mockPort.messages);
+				const message = mockPort.messages[0]!;
+				assertEquals(message.data, new Float32Array([0.1, 0.1])); // duplicate first channel
+			});
 
-			processor.process(inputs);
+			await t.step("throws error for multiple inputs", () => {
+				const inputs = [[], []];
 
-			const message2 = mockPort.messages[1];
-			// Verify that the timestamp advances by approximately the correct amount (2 frames at 44100 Hz)
-			// Allow ±1 due to integer rounding at different frame positions
-			const expectedDelta = Math.round(2 * 1_000_000 / 44100);
-			const actualDelta = message2.timestamp - message1.timestamp;
-			assert(
-				Math.abs(actualDelta - expectedDelta) <= 1,
-				`Expected timestamp delta ~${expectedDelta}, got ${actualDelta}`,
-			);
+				assertThrows(
+					() => processor.process(inputs),
+					Error,
+					"only one input is supported.",
+				);
+			});
+
+			await t.step("updates frame counter", () => {
+				mockPort.messages = [];
+				const inputData = new Float32Array([0.1, 0.2]);
+				const inputs = [[inputData]];
+
+				processor.process(inputs);
+
+				assertExists(mockPort.messages);
+				const message1 = mockPort.messages[0]!;
+				assertEquals(typeof message1.timestamp, "number");
+
+				processor.process(inputs);
+
+				const message2 = mockPort.messages[1]!;
+				// Verify that the timestamp advances by approximately the correct amount (2 frames at 44100 Hz)
+				// Allow ±1 due to integer rounding at different frame positions
+				const expectedDelta = Math.round(2 * 1_000_000 / 44100);
+				const actualDelta = message2.timestamp - message1.timestamp;
+				assert(
+					Math.abs(actualDelta - expectedDelta) <= 1,
+					`Expected timestamp delta ~${expectedDelta}, got ${actualDelta}`,
+				);
+			});
 		});
 	});
 });
