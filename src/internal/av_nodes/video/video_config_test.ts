@@ -1,11 +1,11 @@
 import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
-import { MockVideoEncoder } from "./mock_videoencoder_test.ts";
+import { FakeVideoEncoder } from "./fake_videoencoder_test.ts";
 import {
 	upgradeEncoderConfig,
 	VIDEO_HARDWARE_CODECS,
 	VIDEO_SOFTWARE_CODECS,
 	videoEncoderConfig,
-	VideoEncoderOptions,
+	type VideoEncoderOptions,
 } from "./video_config.ts";
 
 // Mock the browser module - TODO: convert to Deno mock
@@ -16,7 +16,7 @@ import {
 // Mock VideoEncoder
 
 // Mock global VideoEncoder
-(globalThis as any).VideoEncoder = MockVideoEncoder;
+(globalThis as any).VideoEncoder = FakeVideoEncoder;
 
 Deno.test("VideoConfig", async (t) => {
 	await t.step("Constants", async (t2) => {
@@ -161,10 +161,10 @@ Deno.test("VideoConfig", async (t) => {
 
 		await t2.step("throws error when no codec is supported", async () => {
 			// Mock VideoEncoder to return no supported codecs
-			const originalIsConfigSupported = MockVideoEncoder.isConfigSupported;
-			MockVideoEncoder.isConfigSupported = async () => ({
+			const originalIsConfigSupported = FakeVideoEncoder.isConfigSupported;
+			FakeVideoEncoder.isConfigSupported = async () => ({
 				supported: false,
-				config: null,
+				config: undefined,
 			});
 
 			const options: VideoEncoderOptions = {
@@ -180,7 +180,7 @@ Deno.test("VideoConfig", async (t) => {
 			);
 
 			// Restore original method
-			MockVideoEncoder.isConfigSupported = originalIsConfigSupported;
+			FakeVideoEncoder.isConfigSupported = originalIsConfigSupported;
 		});
 
 		await t2.step(

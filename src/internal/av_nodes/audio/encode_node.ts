@@ -1,6 +1,6 @@
 // Audio node API: AudioEncodeNode
 // Extends GainNode to enable standard connect() pattern while adding encoding capabilities
-import type { CancelFunc } from "golikejs/context";
+import type { CancelFunc } from "@okdaichi/golikejs/context";
 import { createWorkletBlobUrl as createHijackWorkletBlobUrl } from "./audio_hijack_worklet_inline.ts";
 
 const hijackWorkletName = "audio-hijacker";

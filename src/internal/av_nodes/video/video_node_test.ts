@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { VideoContext } from "./context.ts";
 import { VideoDestinationNode } from "./destination_node.ts";
-import { MockHTMLCanvasElement } from "./mock_htmlcanvaselement_test.ts";
+import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
 import { VideoNode } from "./video_node.ts";
 
 // Using shared MockVideoEncoder from test-stubs
@@ -14,7 +14,7 @@ class MockVideoNode extends VideoNode {
 }
 
 Deno.test("VideoContext", async (t) => {
-	const canvas = new MockHTMLCanvasElement();
+	const canvas = new FakeHTMLCanvasElement();
 	const context = new VideoContext({
 		frameRate: 30,
 		canvas: canvas as unknown as HTMLCanvasElement,

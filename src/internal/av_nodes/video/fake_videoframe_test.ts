@@ -1,4 +1,4 @@
-export class MockVideoFrame implements VideoFrame {
+export class FakeVideoFrame implements VideoFrame {
 	displayWidth: number;
 	displayHeight: number;
 	codedWidth: number;
@@ -10,10 +10,12 @@ export class MockVideoFrame implements VideoFrame {
 	codedRect: DOMRectReadOnly | null;
 	format: VideoPixelFormat | null;
 
+	#closed = false;
+
 	constructor(
-		width: number = 640,
-		height: number = 480,
-		timestamp: number = 0,
+		width = 640,
+		height = 480,
+		timestamp = 0,
 	) {
 		this.displayWidth = width;
 		this.displayHeight = height;
@@ -24,38 +26,40 @@ export class MockVideoFrame implements VideoFrame {
 		this.colorSpace = {} as VideoColorSpace;
 		this.visibleRect = null;
 		this.codedRect = null;
-		this.format = null;
+		this.format = "RGBX";
+	}
+
+	allocationSize(_options?: VideoFrameCopyToOptions): number {
+		return this.displayWidth * this.displayHeight * 4;
 	}
 
 	copyTo(
 		destination: AllowSharedBufferSource,
 		_options?: VideoFrameCopyToOptions,
 	): Promise<PlaneLayout[]> {
-		// Fill with test pattern
 		if (destination instanceof Uint8Array) {
+			// Fill with a test pattern: R=255, G=128, B=64, A=255
 			for (let i = 0; i < destination.length; i += 4) {
-				destination[i] = 255; // R
-				destination[i + 1] = 128; // G
-				destination[i + 2] = 64; // B
-				destination[i + 3] = 255; // A
+				destination[i] = 255;
+				destination[i + 1] = 128;
+				destination[i + 2] = 64;
+				destination[i + 3] = 255;
 			}
 		}
-		return Promise.resolve([]);
+		return Promise.resolve([
+			{ offset: 0, stride: this.displayWidth * 4 },
+		]);
 	}
 
 	clone(): VideoFrame {
-		return new MockVideoFrame(
-			this.displayWidth,
-			this.displayHeight,
-			this.timestamp,
-		);
+		return this;
 	}
 
 	close(): void {
-		// Mock close
+		this.#closed = true;
 	}
 
-	allocationSize(_options?: VideoFrameCopyToOptions): number {
-		return this.displayWidth * this.displayHeight * 4;
+	get isClosed(): boolean {
+		return this.#closed;
 	}
 }

@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { VideoContext } from "./context.ts";
-import { MockHTMLCanvasElement } from "./mock_htmlcanvaselement_test.ts";
-import { MockVideoFrame } from "./mock_videoframe_test.ts";
+import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
+import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 import { VideoObserveNode } from "./observe_node.ts";
 import { VideoNode } from "./video_node.ts";
 
@@ -12,11 +12,11 @@ class MockVideoNode extends VideoNode {
 Deno.test("VideoObserveNode", async (t) => {
 	let context: VideoContext;
 	let observeNode: VideoObserveNode;
-	let mockCanvas: MockHTMLCanvasElement;
+	let mockCanvas: FakeHTMLCanvasElement;
 	let mockObserver: any;
 
 	await t.step("setup", () => {
-		mockCanvas = new MockHTMLCanvasElement();
+		mockCanvas = new FakeHTMLCanvasElement();
 		context = new VideoContext({ canvas: mockCanvas as any });
 
 		// Mock IntersectionObserver
@@ -59,7 +59,7 @@ Deno.test("VideoObserveNode", async (t) => {
 			const outputNode = new MockVideoNode();
 			observeNode.connect(outputNode);
 
-			const frame = new MockVideoFrame();
+			const frame = new FakeVideoFrame();
 			let processCalled = false;
 			let processFrame: VideoFrame | undefined;
 			outputNode.process = (f: VideoFrame) => {
@@ -84,7 +84,7 @@ Deno.test("VideoObserveNode", async (t) => {
 			callback([{ isIntersecting: false }]);
 		}
 
-		const frame = new MockVideoFrame();
+		const frame = new FakeVideoFrame();
 		let processCalled = false;
 		outputNode.process = () => {
 			processCalled = true;
@@ -97,7 +97,8 @@ Deno.test("VideoObserveNode", async (t) => {
 		const resetCallback = (mockObserver as any).callback;
 		if (resetCallback) {
 			resetCallback([{ isIntersecting: true }]);
-		}	});
+		}
+	});
 
 	await t.step("should handle process errors gracefully", () => {
 		const errorNode = new MockVideoNode();
@@ -118,7 +119,7 @@ Deno.test("VideoObserveNode", async (t) => {
 			outputFrame = f;
 		};
 
-		const frame = new MockVideoFrame();
+		const frame = new FakeVideoFrame();
 		// Should not throw despite the error
 		observeNode.process(frame);
 		assert(errorProcessCalled);

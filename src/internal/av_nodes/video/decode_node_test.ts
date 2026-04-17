@@ -1,9 +1,9 @@
 import { assert, assertEquals } from "@std/assert";
 import { VideoContext } from "./context.ts";
 import { VideoDecodeNode } from "./decode_node.ts";
-import { MockHTMLCanvasElement } from "./mock_htmlcanvaselement_test.ts";
-import { MockVideoDecoder } from "./mock_videodecoder_test.ts";
-import { MockVideoFrame } from "./mock_videoframe_test.ts";
+import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
+import { FakeVideoDecoder } from "./fake_videodecoder_test.ts";
+import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 import { VideoNode } from "./video_node.ts";
 
 class MockVideoNode extends VideoNode {
@@ -13,19 +13,19 @@ class MockVideoNode extends VideoNode {
 Deno.test("VideoDecodeNode", async (t) => {
 	let context: VideoContext;
 	let decoderNode: VideoDecodeNode;
-	let mockDecoder: MockVideoDecoder;
+	let mockDecoder: FakeVideoDecoder;
 	let onFrame: (frame: VideoFrame) => void;
 
 	await t.step("setup", () => {
 		// Mock the global VideoDecoder, capturing the config so we can trigger callbacks
-		mockDecoder = new MockVideoDecoder({ output: () => {}, error: () => {} });
+		mockDecoder = new FakeVideoDecoder({ output: () => {}, error: () => {} });
 		let capturedOutput: ((frame: VideoFrame) => void) | undefined;
 		(globalThis as any).VideoDecoder = function (config: any) {
 			capturedOutput = config.output;
 			return mockDecoder;
 		};
 
-		const mockCanvas = new MockHTMLCanvasElement();
+		const mockCanvas = new FakeHTMLCanvasElement();
 		context = new VideoContext({ canvas: mockCanvas as any });
 		// onFrame triggers the VideoDecodeNode's decoder output callback
 		onFrame = (frame: VideoFrame) => capturedOutput?.(frame);
@@ -69,7 +69,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 
 		// VideoDecodeNode decodes in decodeFrom method, not in process
 		// process method passes decoded frames to next nodes
-		const frame = new MockVideoFrame();
+		const frame = new FakeVideoFrame();
 		const outputNode = new MockVideoNode();
 		decoderNode.connect(outputNode);
 		let processCalled = false;
@@ -94,7 +94,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 		decoderNode.configure(config);
 
 		// Mock VideoFrame.close to throw an error
-		const frame = new MockVideoFrame();
+		const frame = new FakeVideoFrame();
 		let closeCalled = false;
 		frame.close = () => {
 			closeCalled = true;
@@ -128,7 +128,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 			};
 
 			// Simulate decoder output
-			const mockFrame = new MockVideoFrame();
+			const mockFrame = new FakeVideoFrame();
 			if (onFrame) onFrame(mockFrame);
 
 			assert(processCalled);
@@ -157,9 +157,9 @@ Deno.test("VideoDecodeNode", async (t) => {
 				throw new Error("Output processing error");
 			};
 
-			const frame = new MockVideoFrame();
+			const frame = new FakeVideoFrame();
 			// Should not throw despite the error
-		decoderNode.process(frame);
+			decoderNode.process(frame);
 			assert(processCalled);
 			assertEquals(processFrame, frame);
 		},
@@ -241,7 +241,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 
 	await t.step("should decode from track reader", async () => {
 		// Create a fresh decoder node (previous node was disposed)
-		const freshMockDecoder = new MockVideoDecoder(
+		const freshMockDecoder = new FakeVideoDecoder(
 			{ output: () => {}, error: () => {} },
 		);
 		(globalThis as any).VideoDecoder = function (_config: any) {

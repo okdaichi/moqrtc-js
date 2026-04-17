@@ -27,9 +27,11 @@ export class VideoContext {
 		this.destination = new VideoDestinationNode(
 			this,
 			options?.canvas ??
-				(typeof document !== "undefined"
-					? document.createElement("canvas")
-					: { width: 0, height: 0, getContext: () => null } as unknown as HTMLCanvasElement),
+				(typeof document !== "undefined" ? document.createElement("canvas") : {
+					width: 0,
+					height: 0,
+					getContext: () => null,
+				} as unknown as HTMLCanvasElement),
 		);
 	}
 

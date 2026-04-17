@@ -2,7 +2,7 @@ import { assert, assertEquals, assertExists } from "@std/assert";
 import type { VideoFrameAnalysis } from "./analyse_node.ts";
 import { VideoAnalyserNode } from "./analyse_node.ts";
 import { VideoContext } from "./context.ts";
-import { MockVideoFrame } from "./mock_videoframe_test.ts";
+import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 import { VideoNode } from "./video_node.ts";
 
 // Mock globals for Deno environment
@@ -114,7 +114,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		context = new VideoContext({ canvas });
 		analyserNode = new VideoAnalyserNode(context);
 
-		const frame = new MockVideoFrame(320, 240);
+		const frame = new FakeVideoFrame(320, 240);
 		analyserNode.process(frame);
 
 		// Wait for deferred analysis (using small delay)
@@ -157,7 +157,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 			receivedAnalysis = analysis;
 		};
 
-		const frame = new MockVideoFrame(320, 240);
+		const frame = new FakeVideoFrame(320, 240);
 		analyserNode.process(frame);
 
 		await new Promise((resolve) => setTimeout(resolve, 150));
@@ -175,7 +175,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 			throw new Error("Callback error");
 		};
 
-		const frame = new MockVideoFrame(320, 240);
+		const frame = new FakeVideoFrame(320, 240);
 		// Should not throw
 		analyserNode.process(frame);
 
@@ -186,7 +186,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		context = new VideoContext({ canvas });
 		analyserNode = new VideoAnalyserNode(context);
 
-		const frame = new MockVideoFrame(320, 240);
+		const frame = new FakeVideoFrame(320, 240);
 		analyserNode.process(frame);
 
 		await new Promise((resolve) => setTimeout(resolve, 150));
@@ -205,7 +205,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 
 		// Process multiple frames
 		for (let i = 0; i < 5; i++) {
-			const frame = new MockVideoFrame(320, 240);
+			const frame = new FakeVideoFrame(320, 240);
 			analyserNode.process(frame);
 			await new Promise((resolve) => setTimeout(resolve, 150));
 		}
@@ -227,7 +227,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 
 		// Process frames
 		for (let i = 0; i < 3; i++) {
-			const frame = new MockVideoFrame(320, 240);
+			const frame = new FakeVideoFrame(320, 240);
 			analyserNode.process(frame);
 			await new Promise((resolve) => setTimeout(resolve, 150));
 		}
@@ -247,7 +247,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 
 		// Process multiple frames
 		for (let i = 0; i < 3; i++) {
-			const frame = new MockVideoFrame(320, 240);
+			const frame = new FakeVideoFrame(320, 240);
 			analyserNode.process(frame);
 			await new Promise((resolve) => setTimeout(resolve, 150));
 		}
@@ -262,7 +262,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 
 		// Process multiple frames
 		for (let i = 0; i < 3; i++) {
-			const frame = new MockVideoFrame(320, 240);
+			const frame = new FakeVideoFrame(320, 240);
 			analyserNode.process(frame);
 			await new Promise((resolve) => setTimeout(resolve, 150));
 		}
@@ -284,7 +284,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 
 		// Process 9 frames
 		for (let i = 0; i < 9; i++) {
-			const frame = new MockVideoFrame(320, 240);
+			const frame = new FakeVideoFrame(320, 240);
 			analyserNode.process(frame);
 			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
@@ -305,7 +305,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 			},
 		});
 
-		const frame = new MockVideoFrame(320, 240);
+		const frame = new FakeVideoFrame(320, 240);
 		analyserNode.process(frame);
 
 		await new Promise((resolve) => setTimeout(resolve, 150));
@@ -332,7 +332,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		const outputNode = new MockVideoNode();
 		analyserNode.connect(outputNode);
 
-		const frame = new MockVideoFrame(320, 240);
+		const frame = new FakeVideoFrame(320, 240);
 		analyserNode.process(frame);
 
 		// Frame should be passed to output
@@ -349,7 +349,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		};
 		analyserNode.connect(errorNode);
 
-		const frame = new MockVideoFrame(320, 240);
+		const frame = new FakeVideoFrame(320, 240);
 		// Should not throw
 		analyserNode.process(frame);
 	});
@@ -358,7 +358,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		context = new VideoContext({ canvas });
 		analyserNode = new VideoAnalyserNode(context);
 
-		const frame = new MockVideoFrame(320, 240);
+		const frame = new FakeVideoFrame(320, 240);
 		analyserNode.process(frame);
 
 		analyserNode.dispose();
@@ -376,7 +376,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		analyserNode = new VideoAnalyserNode(context);
 
 		// First frame
-		const frame1 = new MockVideoFrame(320, 240);
+		const frame1 = new FakeVideoFrame(320, 240);
 		analyserNode.process(frame1);
 		await new Promise((resolve) => setTimeout(resolve, 150));
 
@@ -388,7 +388,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		assert(analysis1.motionEnergy >= 0 && analysis1.motionEnergy <= 1);
 
 		// Second frame (identical pixels, should have minimal motion)
-		const frame2 = new MockVideoFrame(320, 240);
+		const frame2 = new FakeVideoFrame(320, 240);
 		analyserNode.process(frame2);
 		await new Promise((resolve) => setTimeout(resolve, 150));
 

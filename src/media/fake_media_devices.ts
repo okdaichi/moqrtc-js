@@ -148,13 +148,29 @@ export class FakeMediaDevices implements MediaDevices {
 	getSupportedConstraints(): MediaTrackSupportedConstraints {
 		return {};
 	}
-getDisplayMedia(options?: DisplayMediaStreamOptions): Promise<MediaStream> {
-                const tracks = [];
-                tracks.push(new FakeMediaStreamTrack('video', 'Screen', 'screen-1', options?.video ? (typeof options.video === "object" ? options.video : {}) : undefined));
-                if (options?.audio) {
-                        tracks.push(new FakeMediaStreamTrack('audio', 'System Audio', 'sys-audio-1', typeof options.audio === "object" ? options.audio : undefined));
-                }
-                return Promise.resolve(new FakeMediaStream(tracks));
+	getDisplayMedia(options?: DisplayMediaStreamOptions): Promise<MediaStream> {
+		const tracks = [];
+		tracks.push(
+			new FakeMediaStreamTrack(
+				"video",
+				"Screen",
+				"screen-1",
+				options?.video
+					? (typeof options.video === "object" ? options.video : {})
+					: undefined,
+			),
+		);
+		if (options?.audio) {
+			tracks.push(
+				new FakeMediaStreamTrack(
+					"audio",
+					"System Audio",
+					"sys-audio-1",
+					typeof options.audio === "object" ? options.audio : undefined,
+				),
+			);
+		}
+		return Promise.resolve(new FakeMediaStream(tracks));
 	}
 
 	triggerDeviceChange() {

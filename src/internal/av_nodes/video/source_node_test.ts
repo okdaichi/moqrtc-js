@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 import { VideoContext } from "./context.ts";
-import { MockVideoFrame } from "./mock_videoframe_test.ts";
+import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 import { VideoSourceNode } from "./source_node.ts";
 import { VideoNode } from "./video_node.ts";
 
@@ -41,7 +41,7 @@ Deno.test("VideoSourceNode", async (t) => {
 		const outputNode = new MockVideoNode();
 		sourceNode.connect(outputNode);
 
-		const frame = new MockVideoFrame();
+		const frame = new FakeVideoFrame();
 		// Note: Spy functionality would need proper mock implementation
 		sourceNode.process(frame);
 		// TODO: Verify frame was processed - would need spy on outputNode.process
@@ -56,7 +56,7 @@ Deno.test("VideoSourceNode", async (t) => {
 			start(controller) {
 				// Mock stream that provides one frame and then closes
 				if (!frameEnqueued) {
-					controller.enqueue(new MockVideoFrame());
+					controller.enqueue(new FakeVideoFrame());
 					frameEnqueued = true;
 				}
 				controller.close();

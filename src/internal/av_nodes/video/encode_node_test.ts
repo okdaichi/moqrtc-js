@@ -1,8 +1,8 @@
 import { assert, assertEquals } from "@std/assert";
 import { VideoContext } from "./context.ts";
 import { VideoEncodeDestination, VideoEncodeNode } from "./encode_node.ts";
-import { MockVideoEncoder } from "./mock_videoencoder_test.ts";
-import { MockVideoFrame } from "./mock_videoframe_test.ts";
+import { FakeVideoEncoder } from "./fake_videoencoder_test.ts";
+import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 
 // Mock document for Deno
 (globalThis as any).document = {
@@ -19,7 +19,7 @@ import { MockVideoFrame } from "./mock_videoframe_test.ts";
 };
 
 // Mock VideoEncoder for Deno (basic functionality tests)
-(globalThis as any).VideoEncoder = MockVideoEncoder;
+(globalThis as any).VideoEncoder = FakeVideoEncoder;
 
 Deno.test("VideoEncodeNode - basic functionality", async (t) => {
 	let context: VideoContext;
@@ -57,7 +57,7 @@ Deno.test("VideoEncodeNode - basic functionality", async (t) => {
 		};
 		encodeNode.configure(config);
 
-		const frame = new MockVideoFrame();
+		const frame = new FakeVideoFrame();
 		assert(() => encodeNode.process(frame)); // Should not throw
 	});
 
@@ -65,7 +65,7 @@ Deno.test("VideoEncodeNode - basic functionality", async (t) => {
 		context = new VideoContext();
 		encodeNode = new VideoEncodeNode(context);
 
-		const frame = new MockVideoFrame();
+		const frame = new FakeVideoFrame();
 		assert(() => encodeNode.process(frame)); // Should not throw
 	});
 
@@ -80,13 +80,13 @@ Deno.test("VideoEncodeNode - basic functionality", async (t) => {
 Deno.test("VideoEncodeNode - with mocks", async (t) => {
 	let context: VideoContext;
 	let encoderNode: VideoEncodeNode;
-	let mockEncoder: MockVideoEncoder;
-	let mockFrame: MockVideoFrame;
+	let mockEncoder: FakeVideoEncoder;
+	let mockFrame: FakeVideoFrame;
 	let onChunk: (chunk: EncodedVideoChunk) => void;
 
 	await t.step("setup", () => {
 		// Mock the global VideoEncoder
-		mockEncoder = new MockVideoEncoder({
+		mockEncoder = new FakeVideoEncoder({
 			output: (chunk: EncodedVideoChunk) => {
 				if (onChunk) onChunk(chunk);
 			},
@@ -96,7 +96,7 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		});
 		// When the code calls new VideoEncoder(init) we want the mock instance to receive
 		// the init callbacks (output/error) so the node's handlers are wired to the mock.
-		(globalThis as any).VideoEncoder = class MockVideoEncoderConstructor {
+		(globalThis as any).VideoEncoder = class FakeVideoEncoderConstructor {
 			constructor(init: any) {
 				// copy the init handlers onto the existing mock instance
 				Object.assign(mockEncoder, init);
@@ -106,7 +106,7 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 
 		context = new VideoContext();
 		onChunk = () => {}; // Default empty handler
-		mockFrame = new MockVideoFrame();
+		mockFrame = new FakeVideoFrame();
 		encoderNode = new VideoEncodeNode(context);
 	});
 
@@ -132,7 +132,7 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 			mockEncoder.configureCalls.length > 0 &&
 			mockEncoder.configureCalls[0]
 		) {
-			const calledConfig = mockEncoder.configureCalls[0][0];
+			const calledConfig = mockEncoder.configureCalls[0];
 			assertEquals(calledConfig.codec, "vp8");
 			assertEquals(calledConfig.width, 640);
 			assertEquals(calledConfig.height, 480);
@@ -149,14 +149,14 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		};
 		encoderNode.configure(config);
 
-		const frame = new MockVideoFrame();
+		const frame = new FakeVideoFrame();
 		encoderNode.process(frame);
 
 		assert(mockEncoder.encodeCalled);
 		if (mockEncoder.encodeCalls.length > 0 && mockEncoder.encodeCalls[0]) {
 			const [calledFrame, options] = mockEncoder.encodeCalls[0];
-			assert(calledFrame instanceof MockVideoFrame);
-			assertEquals(options.keyFrame, false);
+			assert(calledFrame instanceof FakeVideoFrame);
+			assertEquals(options!.keyFrame, false);
 		}
 	});
 
@@ -176,7 +176,7 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 			throw new Error("Encode error");
 		};
 
-		const frame = new MockVideoFrame();
+		const frame = new FakeVideoFrame();
 		// Should not throw despite the error
 		assert(() => encoderNode.process(frame));
 		assert(mockEncoder.encodeCalled);
@@ -196,7 +196,7 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		encoderNode.configure(config);
 
 		// Mock VideoFrame.close to throw an error (though it's not called on input)
-		const frame = new MockVideoFrame();
+		const frame = new FakeVideoFrame();
 		frame.close = () => {
 			throw new Error("Close error");
 		};

@@ -1,207 +1,208 @@
 import { assert, assertEquals } from "@std/assert";
 import { VideoContext } from "./context.ts";
 import { VideoDestinationNode, VideoRenderFunctions } from "./destination_node.ts";
-import { MockHTMLCanvasElement } from "./mock_htmlcanvaselement_test.ts";
-import { MockVideoFrame } from "./mock_videoframe_test.ts";
+import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
+import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 
 Deno.test(
 	{ name: "VideoDestinationNode", sanitizeOps: false, sanitizeResources: false },
 	async (t) => {
-	let context: VideoContext;
-	let canvas: MockHTMLCanvasElement;
-	let destinationNode: VideoDestinationNode;
+		let context: VideoContext;
+		let canvas: FakeHTMLCanvasElement;
+		let destinationNode: VideoDestinationNode;
 
-	await t.step("should create VideoDestinationNode", () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
-		destinationNode = new VideoDestinationNode(context, canvas as any);
-
-		assertEquals(destinationNode.numberOfInputs, 1);
-		assertEquals(destinationNode.numberOfOutputs, 0);
-		assertEquals(destinationNode.canvas, canvas as any);
-		assertEquals(
-			destinationNode.renderFunction,
-			VideoRenderFunctions.contain,
-		);
-	});
-
-	await t.step("should create with custom render function", () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
-		const customNode = new VideoDestinationNode(context, canvas as any, {
-			renderFunction: VideoRenderFunctions.cover,
-		});
-		assertEquals(customNode.renderFunction, VideoRenderFunctions.cover);
-	});
-
-	await t.step("should process frames and draw to canvas", () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
-		destinationNode = new VideoDestinationNode(context, canvas as any);
-
-		const frame = new MockVideoFrame(640, 480);
-
-		assert(() => destinationNode.process(frame)); // Should not throw
-		// Note: Spy verification would need proper mock implementation
-		// assert(canvas.getContextSpy.calledWith("2d"));
-	});
-
-	await t.step("should handle frame close errors gracefully", () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
-		destinationNode = new VideoDestinationNode(context, canvas as any);
-
-		const frame = new MockVideoFrame(640, 480);
-
-		// Mock VideoFrame.close to throw an error
-		const originalClose = frame.close;
-		frame.close = () => {
-			throw new Error("Close error");
-		};
-
-		// Should not throw despite the error
-		assert(() => destinationNode.process(frame)); // Should not throw
-
-		// Restore original method
-		frame.close = originalClose;
-	});
-
-	await t.step("should not draw when context is suspended", async () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
-		destinationNode = new VideoDestinationNode(context, canvas as any);
-
-		await context.suspend();
-		const frame = new MockVideoFrame();
-
-		destinationNode.process(frame);
-
-		// Note: Spy verification would need proper mock implementation
-		// assert(!ctx.drawImageSpy.called);
-	});
-
-	await t.step("should dispose and cancel animation frame", () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
-
-		// Mock global functions
-		const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
-		const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-
-		let requestedId = 0;
-		globalThis.cancelAnimationFrame = () => {};
-		globalThis.requestAnimationFrame = (() => {
-			requestedId = 123;
-			return requestedId;
-		}) as any;
-
-		const destinationNode = new VideoDestinationNode(
-			context,
-			canvas as any,
-		);
-
-		const frame = new MockVideoFrame(640, 480);
-		destinationNode.process(frame);
-
-		// Note: Spy verification would need proper mock implementation
-		// assert(requestAnimationFrame called);
-
-		destinationNode.dispose();
-
-		// Note: Spy verification would need proper mock implementation
-		// assert(cancelAnimationFrame called with 123);
-
-		// Restore globals
-		globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-		globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-	});
-
-	await t.step(
-		"should close pending frame when replaced before rAF runs",
-		() => {
+		await t.step("should create VideoDestinationNode", () => {
 			context = new VideoContext();
-			canvas = new MockHTMLCanvasElement();
+			canvas = new FakeHTMLCanvasElement();
+			destinationNode = new VideoDestinationNode(context, canvas as any);
 
-			// Mock global functions so rAF callback never runs (we only test pending replacement)
+			assertEquals(destinationNode.numberOfInputs, 1);
+			assertEquals(destinationNode.numberOfOutputs, 0);
+			assertEquals(destinationNode.canvas, canvas as any);
+			assertEquals(
+				destinationNode.renderFunction,
+				VideoRenderFunctions.contain,
+			);
+		});
+
+		await t.step("should create with custom render function", () => {
+			context = new VideoContext();
+			canvas = new FakeHTMLCanvasElement();
+			const customNode = new VideoDestinationNode(context, canvas as any, {
+				renderFunction: VideoRenderFunctions.cover,
+			});
+			assertEquals(customNode.renderFunction, VideoRenderFunctions.cover);
+		});
+
+		await t.step("should process frames and draw to canvas", () => {
+			context = new VideoContext();
+			canvas = new FakeHTMLCanvasElement();
+			destinationNode = new VideoDestinationNode(context, canvas as any);
+
+			const frame = new FakeVideoFrame(640, 480);
+
+			assert(() => destinationNode.process(frame)); // Should not throw
+			// Note: Spy verification would need proper mock implementation
+			// assert(canvas.getContextSpy.calledWith("2d"));
+		});
+
+		await t.step("should handle frame close errors gracefully", () => {
+			context = new VideoContext();
+			canvas = new FakeHTMLCanvasElement();
+			destinationNode = new VideoDestinationNode(context, canvas as any);
+
+			const frame = new FakeVideoFrame(640, 480);
+
+			// Mock VideoFrame.close to throw an error
+			const originalClose = frame.close;
+			frame.close = () => {
+				throw new Error("Close error");
+			};
+
+			// Should not throw despite the error
+			assert(() => destinationNode.process(frame)); // Should not throw
+
+			// Restore original method
+			frame.close = originalClose;
+		});
+
+		await t.step("should not draw when context is suspended", async () => {
+			context = new VideoContext();
+			canvas = new FakeHTMLCanvasElement();
+			destinationNode = new VideoDestinationNode(context, canvas as any);
+
+			await context.suspend();
+			const frame = new FakeVideoFrame();
+
+			destinationNode.process(frame);
+
+			// Note: Spy verification would need proper mock implementation
+			// assert(!ctx.drawImageSpy.called);
+		});
+
+		await t.step("should dispose and cancel animation frame", () => {
+			context = new VideoContext();
+			canvas = new FakeHTMLCanvasElement();
+
+			// Mock global functions
 			const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
 			const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
 
-			let nextId = 1;
-			globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
-				// Intentionally do not invoke cb
-				void cb;
-				return nextId++;
+			let requestedId = 0;
+			globalThis.cancelAnimationFrame = () => {};
+			globalThis.requestAnimationFrame = (() => {
+				requestedId = 123;
+				return requestedId;
 			}) as any;
-			globalThis.cancelAnimationFrame = (() => {}) as any;
 
-			try {
-				const destinationNode = new VideoDestinationNode(
-					context,
-					canvas as any,
-				);
+			const destinationNode = new VideoDestinationNode(
+				context,
+				canvas as any,
+			);
 
-				let closed = 0;
-				const frame1 = new MockVideoFrame(640, 480);
-				frame1.clone = () => {
-					const f = new MockVideoFrame(640, 480);
-					f.close = () => {
-						closed++;
+			const frame = new FakeVideoFrame(640, 480);
+			destinationNode.process(frame);
+
+			// Note: Spy verification would need proper mock implementation
+			// assert(requestAnimationFrame called);
+
+			destinationNode.dispose();
+
+			// Note: Spy verification would need proper mock implementation
+			// assert(cancelAnimationFrame called with 123);
+
+			// Restore globals
+			globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+			globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+		});
+
+		await t.step(
+			"should close pending frame when replaced before rAF runs",
+			() => {
+				context = new VideoContext();
+				canvas = new FakeHTMLCanvasElement();
+
+				// Mock global functions so rAF callback never runs (we only test pending replacement)
+				const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+				const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+
+				let nextId = 1;
+				globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+					// Intentionally do not invoke cb
+					void cb;
+					return nextId++;
+				}) as any;
+				globalThis.cancelAnimationFrame = (() => {}) as any;
+
+				try {
+					const destinationNode = new VideoDestinationNode(
+						context,
+						canvas as any,
+					);
+
+					let closed = 0;
+					const frame1 = new FakeVideoFrame(640, 480);
+					frame1.clone = () => {
+						const f = new FakeVideoFrame(640, 480);
+						f.close = () => {
+							closed++;
+						};
+						return f;
 					};
-					return f;
-				};
 
-				const frame2 = new MockVideoFrame(640, 480);
-				frame2.clone = () => new MockVideoFrame(640, 480);
+					const frame2 = new FakeVideoFrame(640, 480);
+					frame2.clone = () => new FakeVideoFrame(640, 480);
 
-				destinationNode.process(frame1);
-				// Second process call replaces the pending frame; the previous pending clone MUST be closed
-				destinationNode.process(frame2);
+					destinationNode.process(frame1);
+					// Second process call replaces the pending frame; the previous pending clone MUST be closed
+					destinationNode.process(frame2);
 
-				assertEquals(closed, 1);
-			} finally {
-				// Restore globals
-				globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-				globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-			}
-		},
-	);
+					assertEquals(closed, 1);
+				} finally {
+					// Restore globals
+					globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+					globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+				}
+			},
+		);
 
-	await t.step("should handle frames with zero dimensions", () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
-		destinationNode = new VideoDestinationNode(context, canvas as any);
+		await t.step("should handle frames with zero dimensions", () => {
+			context = new VideoContext();
+			canvas = new FakeHTMLCanvasElement();
+			destinationNode = new VideoDestinationNode(context, canvas as any);
 
-		const frame = new MockVideoFrame(0, 0);
-		assert(() => destinationNode.process(frame)); // Should not throw
-	});
+			const frame = new FakeVideoFrame(0, 0);
+			assert(() => destinationNode.process(frame)); // Should not throw
+		});
 
-	await t.step("should handle frames with negative dimensions", () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
-		destinationNode = new VideoDestinationNode(context, canvas as any);
+		await t.step("should handle frames with negative dimensions", () => {
+			context = new VideoContext();
+			canvas = new FakeHTMLCanvasElement();
+			destinationNode = new VideoDestinationNode(context, canvas as any);
 
-		const frame = new MockVideoFrame(-100, -100);
-		assert(() => destinationNode.process(frame)); // Should not throw
-	});
+			const frame = new FakeVideoFrame(-100, -100);
+			assert(() => destinationNode.process(frame)); // Should not throw
+		});
 
-	await t.step("should handle frames with very large dimensions", () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
-		destinationNode = new VideoDestinationNode(context, canvas as any);
+		await t.step("should handle frames with very large dimensions", () => {
+			context = new VideoContext();
+			canvas = new FakeHTMLCanvasElement();
+			destinationNode = new VideoDestinationNode(context, canvas as any);
 
-		const frame = new MockVideoFrame(10000, 10000);
-		assert(() => destinationNode.process(frame)); // Should not throw
-	});
+			const frame = new FakeVideoFrame(10000, 10000);
+			assert(() => destinationNode.process(frame)); // Should not throw
+		});
 
-	await t.step("should handle frames with negative timestamp", () => {
-		context = new VideoContext();
-		canvas = new MockHTMLCanvasElement();
-		destinationNode = new VideoDestinationNode(context, canvas as any);
+		await t.step("should handle frames with negative timestamp", () => {
+			context = new VideoContext();
+			canvas = new FakeHTMLCanvasElement();
+			destinationNode = new VideoDestinationNode(context, canvas as any);
 
-		const frame = new MockVideoFrame(640, 480, -1000);
-		assert(() => destinationNode.process(frame)); // Should not throw
-	});
-});
+			const frame = new FakeVideoFrame(640, 480, -1000);
+			assert(() => destinationNode.process(frame)); // Should not throw
+		});
+	},
+);
 
 Deno.test("VideoRenderFunctions", async (t) => {
 	await t.step(
