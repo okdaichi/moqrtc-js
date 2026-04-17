@@ -1,4 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
+import { deleteGlobal, stubGlobal } from "../../../test-utils_test.ts";
 import { VideoContext } from "./context.ts";
 import { VideoDecodeNode } from "./decode_node.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
@@ -20,10 +21,10 @@ Deno.test("VideoDecodeNode", async (t) => {
 		// Mock the global VideoDecoder, capturing the config so we can trigger callbacks
 		mockDecoder = new FakeVideoDecoder({ output: () => {}, error: () => {} });
 		let capturedOutput: ((frame: VideoFrame) => void) | undefined;
-		(globalThis as any).VideoDecoder = function (config: any) {
+		stubGlobal("VideoDecoder", function (config: any) {
 			capturedOutput = config.output;
 			return mockDecoder;
-		};
+		});
 
 		const mockCanvas = new FakeHTMLCanvasElement();
 		context = new VideoContext({ canvas: mockCanvas as any });
@@ -34,7 +35,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 
 	await t.step("teardown", () => {
 		// Restore global VideoDecoder
-		delete (globalThis as any).VideoDecoder;
+		deleteGlobal("VideoDecoder");
 	});
 
 	await t.step("should create VideoDecodeNode", () => {
@@ -244,11 +245,11 @@ Deno.test("VideoDecodeNode", async (t) => {
 		const freshMockDecoder = new FakeVideoDecoder(
 			{ output: () => {}, error: () => {} },
 		);
-		(globalThis as any).VideoDecoder = function (_config: any) {
+		stubGlobal("VideoDecoder", function (_config: any) {
 			return freshMockDecoder;
-		};
+		});
 		const freshNode = new VideoDecodeNode(context);
-		delete (globalThis as any).VideoDecoder;
+		deleteGlobal("VideoDecoder");
 
 		const config: VideoDecoderConfig = {
 			codec: "vp8",

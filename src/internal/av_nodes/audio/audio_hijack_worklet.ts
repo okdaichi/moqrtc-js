@@ -1,3 +1,4 @@
+/// <reference path="../../../test_globals.d.ts" />
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
 	return new URL("./audio_hijack_worklet.js", import.meta.url).href;
@@ -17,7 +18,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			super();
 			// Get sampleRate from processorOptions or fall back to global sampleRate
 			this.#sampleRate = options.processorOptions?.sampleRate ||
-				(globalThis as any).sampleRate;
+				globalThis.sampleRate;
 			// Get target number of channels from processorOptions
 			this.#targetChannels = options.processorOptions?.targetChannels || 1;
 		}

@@ -77,4 +77,5 @@ export class FakeGainNode extends EventTarget {
 }
 
 // Set globally so `class X extends GainNode` works when this module is imported first.
-(globalThis as any).GainNode = FakeGainNode;
+import { stubGlobal } from "../../../test-utils_test.ts";
+stubGlobal("GainNode", FakeGainNode);

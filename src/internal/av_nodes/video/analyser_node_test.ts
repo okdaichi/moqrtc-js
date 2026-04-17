@@ -1,4 +1,5 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
+import { stubGlobal } from "../../../test-utils_test.ts";
 import type { VideoFrameAnalysis } from "./analyse_node.ts";
 import { VideoAnalyserNode } from "./analyse_node.ts";
 import { VideoContext } from "./context.ts";
@@ -7,7 +8,7 @@ import { VideoNode } from "./video_node.ts";
 
 // Mock globals for Deno environment
 if (typeof OffscreenCanvas === "undefined") {
-	(globalThis as any).OffscreenCanvas = class {
+	stubGlobal("OffscreenCanvas", class {
 		width: number;
 		height: number;
 		constructor(width: number, height: number) {
@@ -22,16 +23,16 @@ if (typeof OffscreenCanvas === "undefined") {
 				}),
 			};
 		}
-	};
+	});
 }
 
 if (typeof requestIdleCallback === "undefined") {
-	(globalThis as any).requestIdleCallback = (callback: () => void) => {
+	stubGlobal("requestIdleCallback", (callback: () => void) => {
 		return setTimeout(callback, 1);
-	};
-	(globalThis as any).cancelIdleCallback = (id: number) => {
+	});
+	stubGlobal("cancelIdleCallback", (id: number) => {
 		clearTimeout(id);
-	};
+	});
 }
 
 // Mock canvas for Deno environment

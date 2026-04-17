@@ -30,13 +30,15 @@ export class FakeAudioEncoder {
 	/** Accumulates every config passed to isConfigSupported. Reset between tests. */
 	static isConfigSupportedCalls: AudioEncoderConfig[] = [];
 
-	static async isConfigSupported(config: AudioEncoderConfig): Promise<AudioEncoderSupport> {
-		FakeAudioEncoder.isConfigSupportedCalls.push(config);
-		const supported = (FakeAudioEncoder.supportedCodecs as readonly string[]).some(
-			(c) => config.codec.startsWith(c),
-		);
-		return { supported, config: supported ? config : undefined };
-	}
+	/** Assignable property so tests can override without `as any`. Set to `undefined` to simulate missing method. */
+	static isConfigSupported: ((config: AudioEncoderConfig) => Promise<unknown>) | undefined =
+		async (config) => {
+			FakeAudioEncoder.isConfigSupportedCalls.push(config);
+			const supported = (FakeAudioEncoder.supportedCodecs as readonly string[]).some(
+				(c) => config.codec.startsWith(c),
+			);
+			return { supported, config: supported ? config : undefined };
+		};
 
 	// --- Instance ---
 

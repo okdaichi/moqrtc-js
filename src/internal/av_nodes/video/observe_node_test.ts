@@ -1,4 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
+import { deleteGlobal, stubGlobal } from "../../../test-utils_test.ts";
 import { VideoContext } from "./context.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
@@ -32,18 +33,18 @@ Deno.test("VideoObserveNode", async (t) => {
 				mockObserver.disconnectCalled = true;
 			},
 		};
-		(globalThis as any).IntersectionObserver = function (callback: any) {
+		stubGlobal("IntersectionObserver", function (callback: any) {
 			// Store callback for testing
 			(mockObserver as any).callback = callback;
 			return mockObserver;
-		};
+		});
 
 		observeNode = new VideoObserveNode(context); // enableBackground defaults to false
 	});
 
 	await t.step("teardown", () => {
 		// Restore global IntersectionObserver
-		delete (globalThis as any).IntersectionObserver;
+		deleteGlobal("IntersectionObserver");
 	});
 
 	await t.step("should create VideoObserveNode", () => {

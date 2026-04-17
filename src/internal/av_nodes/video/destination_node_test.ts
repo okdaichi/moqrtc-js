@@ -1,4 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
+import { stubGlobal } from "../../../test-utils_test.ts";
 import { VideoContext } from "./context.ts";
 import { VideoDestinationNode, VideoRenderFunctions } from "./destination_node.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
@@ -89,11 +90,11 @@ Deno.test(
 			const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
 
 			let requestedId = 0;
-			globalThis.cancelAnimationFrame = () => {};
-			globalThis.requestAnimationFrame = (() => {
+			stubGlobal("cancelAnimationFrame", () => {});
+			stubGlobal("requestAnimationFrame", (() => {
 				requestedId = 123;
 				return requestedId;
-			}) as any;
+			}) as any);
 
 			const destinationNode = new VideoDestinationNode(
 				context,
@@ -112,8 +113,8 @@ Deno.test(
 			// assert(cancelAnimationFrame called with 123);
 
 			// Restore globals
-			globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-			globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+			stubGlobal("cancelAnimationFrame", originalCancelAnimationFrame);
+			stubGlobal("requestAnimationFrame", originalRequestAnimationFrame);
 		});
 
 		await t.step(
@@ -127,12 +128,12 @@ Deno.test(
 				const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
 
 				let nextId = 1;
-				globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+				stubGlobal("requestAnimationFrame", ((cb: FrameRequestCallback) => {
 					// Intentionally do not invoke cb
 					void cb;
 					return nextId++;
-				}) as any;
-				globalThis.cancelAnimationFrame = (() => {}) as any;
+				}) as any);
+				stubGlobal("cancelAnimationFrame", (() => {}) as any);
 
 				try {
 					const destinationNode = new VideoDestinationNode(
@@ -160,8 +161,8 @@ Deno.test(
 					assertEquals(closed, 1);
 				} finally {
 					// Restore globals
-					globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-					globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+					stubGlobal("cancelAnimationFrame", originalCancelAnimationFrame);
+					stubGlobal("requestAnimationFrame", originalRequestAnimationFrame);
 				}
 			},
 		);

@@ -1,3 +1,4 @@
+/// <reference path="./test_globals.d.ts" />
 // Common test utilities and mocks for hang-web tests
 
 import { mockAudioContextClose, mockAudioWorkletAddModule } from "./mock_audio_context_test.ts";
@@ -19,50 +20,69 @@ import { mockVideo } from "./mock_video_test.ts";
 export {
 	mockAudioContext,
 	mockAudioContextClose,
-	mockAudioWorkletAddModule,
+	mockAudioWorkletAddModule
 } from "./mock_audio_context_test.ts";
 export {
 	mockAudioWorkletNode,
 	mockWorkletConnect,
 	mockWorkletDisconnect,
-	mockWorkletPort,
+	mockWorkletPort
 } from "./mock_audio_worklet_node_test.ts";
 export { mockCanvas, mockCanvasContext } from "./mock_canvas_test.ts";
 export {
 	MockGainNode,
 	mockGainNode,
 	mockGainNodeConnect,
-	mockGainNodeDisconnect,
+	mockGainNodeDisconnect
 } from "./mock_gain_node_test.ts";
 export { mockVideo } from "./mock_video_test.ts";
 
+/**
+ * Assigns a value to a globalThis property, bypassing strict DOM type checks.
+ * Used in tests to stub browser APIs with fake implementations.
+ */
+export function stubGlobal(key: string, value: unknown): void {
+	(globalThis as unknown as Record<string, unknown>)[key] = value;
+}
+
+/**
+ * Deletes a globalThis property, bypassing strict DOM type checks.
+ */
+export function deleteGlobal(key: string): void {
+	delete (globalThis as unknown as Record<string, unknown>)[key];
+}
+
 // Global constructor mocks
 export function setupGlobalMocks() {
-	(globalThis as any).AudioContext = class MockAudioContext {
-		audioWorklet = {
-			addModule: mockAudioWorkletAddModule,
-		};
-		get currentTime() {
-			return this._currentTime || 0;
-		}
-		set currentTime(value: number) {
-			this._currentTime = value;
-		}
-		_currentTime = 0;
-		sampleRate = 44100;
-		destination = {};
-		close = mockAudioContextClose;
-	};
-	(globalThis as any).GainNode = MockGainNode;
-	(globalThis as any).AudioWorkletNode = () => mockAudioWorkletNode;
-	(globalThis as any).HTMLCanvasElement = () => mockCanvas;
-	(globalThis as any).HTMLVideoElement = () => mockVideo;
+	stubGlobal(
+		"AudioContext",
+		class MockAudioContext {
+			audioWorklet = {
+				addModule: mockAudioWorkletAddModule,
+			};
+			get currentTime() {
+				return this._currentTime || 0;
+			}
+			set currentTime(value: number) {
+				this._currentTime = value;
+			}
+			_currentTime = 0;
+			sampleRate = 44100;
+			destination = {};
+			close = mockAudioContextClose;
+		},
+	);
+	stubGlobal("GainNode", MockGainNode);
+	stubGlobal("AudioWorkletNode", () => mockAudioWorkletNode);
+	stubGlobal("HTMLCanvasElement", () => mockCanvas);
+	stubGlobal("HTMLVideoElement", () => mockVideo);
 
 	// Mock console.warn for testing
-	(globalThis as any).originalConsoleWarn = console.warn;
-	(globalThis as any).warnCalls = [];
-	console.warn = (...args: any[]) => {
-		(globalThis as any).warnCalls.push(args);
+	stubGlobal("originalConsoleWarn", console.warn);
+	stubGlobal("warnCalls", []);
+	console.warn = (...args: unknown[]) => {
+		const warnCalls = (globalThis as unknown as Record<string, unknown[][]>).warnCalls!;
+		warnCalls.push(args);
 	};
 }
 
@@ -84,7 +104,7 @@ export function resetGlobalMocks() {
 	mockWorkletPort.postMessage.calls.length = 0;
 
 	// Reset console.warn calls
-	(globalThis as any).warnCalls = [];
+	stubGlobal("warnCalls", []);
 
 	// Re-setup global mocks
 	setupGlobalMocks();

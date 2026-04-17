@@ -1,3 +1,4 @@
+/// <reference path="../../../test_globals.d.ts" />
 import { VideoContext } from "./context.ts";
 import { VideoNode } from "./video_node.ts";
 
@@ -123,7 +124,7 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 
 		if ("MediaStreamTrackProcessor" in globalThis) {
 			// deno-lint-ignore no-explicit-any
-			stream = new (globalThis as any).MediaStreamTrackProcessor({ track }).readable;
+			stream = new globalThis.MediaStreamTrackProcessor({ track }).readable;
 		} else {
 			console.warn(
 				"[MediaStreamVideoSourceNode] MediaStreamTrackProcessor not available; using polyfill",

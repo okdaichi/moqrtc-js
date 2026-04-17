@@ -1,4 +1,5 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
+import { stubGlobal } from "../test-utils_test.ts";
 
 class FakeElement extends EventTarget {
 	readonly tagName: string;
@@ -117,13 +118,13 @@ class FakeCustomElementsRegistry {
 }
 
 if (!("HTMLElement" in globalThis)) {
-	(globalThis as any).HTMLElement = FakeElement;
+	stubGlobal("HTMLElement", FakeElement);
 }
 if (!("document" in globalThis)) {
-	(globalThis as any).document = new FakeDocument();
+	stubGlobal("document", new FakeDocument());
 }
 if (!("customElements" in globalThis)) {
-	(globalThis as any).customElements = new FakeCustomElementsRegistry();
+	stubGlobal("customElements", new FakeCustomElementsRegistry());
 }
 
 const roomElementModule = await import("./room.ts");

@@ -1,11 +1,12 @@
 import { assert, assertEquals } from "@std/assert";
+import { stubGlobal } from "../../../test-utils_test.ts";
 import { VideoContext } from "./context.ts";
 import { VideoEncodeDestination, VideoEncodeNode } from "./encode_node.ts";
 import { FakeVideoEncoder } from "./fake_videoencoder_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 
 // Mock document for Deno
-(globalThis as any).document = {
+stubGlobal("document", {
 	createElement: (tag: string) => {
 		if (tag === "canvas") {
 			return {
@@ -16,10 +17,10 @@ import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 		}
 		return {};
 	},
-};
+});
 
 // Mock VideoEncoder for Deno (basic functionality tests)
-(globalThis as any).VideoEncoder = FakeVideoEncoder;
+stubGlobal("VideoEncoder", FakeVideoEncoder);
 
 Deno.test("VideoEncodeNode - basic functionality", async (t) => {
 	let context: VideoContext;
@@ -96,13 +97,13 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		});
 		// When the code calls new VideoEncoder(init) we want the mock instance to receive
 		// the init callbacks (output/error) so the node's handlers are wired to the mock.
-		(globalThis as any).VideoEncoder = class FakeVideoEncoderConstructor {
+		stubGlobal("VideoEncoder", class FakeVideoEncoderConstructor {
 			constructor(init: any) {
 				// copy the init handlers onto the existing mock instance
 				Object.assign(mockEncoder, init);
 				return mockEncoder;
 			}
-		};
+		});
 
 		context = new VideoContext();
 		onChunk = () => {}; // Default empty handler

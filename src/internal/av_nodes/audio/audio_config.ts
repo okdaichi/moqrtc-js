@@ -24,6 +24,18 @@ export interface AudioEncoderOptions {
 	preferredCodecs?: readonly string[]; // default: DEFAULT_AUDIO_CODECS
 }
 
+/** AudioEncoderConfig extended with Opus tuning hints and SDP-style parameters. */
+export interface ExtendedAudioEncoderConfig extends AudioEncoderConfig {
+	opus?: OpusEncoderConfig & {
+		application?: string;
+		signal?: string;
+	};
+	parameters?: {
+		useinbandfec?: number;
+		stereo?: number;
+	};
+}
+
 // Audio encoder config helper
 // Returns a supported AudioEncoderConfig for common codecs (Opus preferred).
 // Implements browser-specific tuning informed by MDN's AudioEncoder compatibility notes.
@@ -47,14 +59,12 @@ export async function audioEncoderConfig(
 		const cfg = upgradeAudioEncoderConfig(base, codec, targetBitrate);
 
 		try {
-			const audioEncoderCtor: any = AudioEncoder;
-			// Some implementations may not expose isConfigSupported for AudioEncoder; guard with optional chaining.
-			const res = await audioEncoderCtor.isConfigSupported?.(cfg);
+			const res = await AudioEncoder.isConfigSupported(cfg);
 			if (res && res.supported && res.config) {
 				console.debug("using audio encoding:", res.config);
 				return res.config;
 			}
-		} catch (err) {
+		} catch (_err) {
 			// ignore and try next codec
 		}
 	}
@@ -66,8 +76,8 @@ export function upgradeAudioEncoderConfig(
 	base: AudioEncoderConfig,
 	codec: string,
 	bitrate?: number,
-): AudioEncoderConfig {
-	const cfg: AudioEncoderConfig = {
+): ExtendedAudioEncoderConfig {
+	const cfg: ExtendedAudioEncoderConfig = {
 		...base,
 		codec,
 	};
@@ -76,33 +86,31 @@ export function upgradeAudioEncoderConfig(
 
 	// Browser-specific tuning for Opus
 	if (codec === "opus") {
-		const anyCfg: any = cfg;
-
 		// Prefer in-band FEC for robustness if not explicitly disabled.
 		// Stereo flag: enable when numberOfChannels === 2.
 		// application/signal hints: prefer 'voice' for mono/voice, 'music' for stereo/music.
 		const isVoice = cfg.numberOfChannels === 1;
 
 		// Default parameters object used by some UAs (Chrome, Edge, etc.). Use safe assignments.
-		anyCfg.opus = anyCfg.opus ?? {};
-		anyCfg.opus.application = anyCfg.opus.application ??
+		cfg.opus = cfg.opus ?? {};
+		cfg.opus.application = cfg.opus.application ??
 			(isVoice ? "voip" : "audio");
 		// 'signal' is an optional hint (e.g., 'voice' | 'music'), some browsers support it.
-		anyCfg.opus.signal = anyCfg.opus.signal ??
+		cfg.opus.signal = cfg.opus.signal ??
 			(isVoice ? "voice" : "music");
 		// Include some robustness and stereo hints where supported.
-		anyCfg.parameters = anyCfg.parameters ?? {};
-		if (anyCfg.parameters.useinbandfec === undefined) {
-			anyCfg.parameters.useinbandfec = 1;
+		cfg.parameters = cfg.parameters ?? {};
+		if (cfg.parameters.useinbandfec === undefined) {
+			cfg.parameters.useinbandfec = 1;
 		}
-		if (anyCfg.parameters.stereo === undefined) {
-			anyCfg.parameters.stereo = cfg.numberOfChannels === 2 ? 1 : 0;
+		if (cfg.parameters.stereo === undefined) {
+			cfg.parameters.stereo = cfg.numberOfChannels === 2 ? 1 : 0;
 		}
 
 		// bitrateMode is broadly supported; prefer variable for voice/music and constant for high quality streams.
-		anyCfg.bitrateMode = (isChrome && !isFirefox)
+		cfg.bitrateMode = (isChrome && !isFirefox)
 			? "variable"
-			: (anyCfg.bitrateMode ?? "variable");
+			: (cfg.bitrateMode ?? "variable");
 	}
 
 	return cfg;

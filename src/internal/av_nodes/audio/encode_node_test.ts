@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
+import { stubGlobal } from "../../../test-utils_test.ts";
 import type { EncodedChunk } from "../container.ts";
-// Must be first: sets globalThis.GainNode before AudioEncodeNode is imported
+// Must be imported BEFORE encode_node.ts: sets globalThis.GainNode
 import { AudioEncodeDestination, AudioEncodeNode } from "./encode_node.ts";
 import { FakeAudioData } from "./fake_audiodata_test.ts";
 import { FakeAudioEncoder } from "./fake_audioencoder_test.ts";
@@ -69,12 +70,12 @@ Deno.test("AudioEncodeNode", async (t) => {
 		// Store originals
 		originalAudioEncoder = globalThis.AudioEncoder;
 		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-		originalGainNode = (globalThis as any).GainNode;
+		originalGainNode = globalThis.GainNode;
 
 		// Setup mocks
-		(globalThis as any).AudioEncoder = FakeAudioEncoder;
-		(globalThis as any).AudioWorkletNode = MockAudioWorkletNode;
-		(globalThis as any).GainNode = FakeGainNode;
+		stubGlobal("AudioEncoder", FakeAudioEncoder);
+		stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
+		stubGlobal("GainNode", FakeGainNode);
 
 		context = new MockAudioContext() as any;
 		encodeNode = new AudioEncodeNode(context);
@@ -459,9 +460,9 @@ Deno.test("AudioEncodeNode", async (t) => {
 
 	await t.step("cleanup", () => {
 		// Restore originals
-		globalThis.AudioEncoder = originalAudioEncoder;
-		globalThis.AudioWorkletNode = originalAudioWorkletNode;
-		(globalThis as any).GainNode = originalGainNode;
+		stubGlobal("AudioEncoder", originalAudioEncoder);
+		stubGlobal("AudioWorkletNode", originalAudioWorkletNode);
+		stubGlobal("GainNode", originalGainNode);
 
 		encodeNode.dispose();
 	});
@@ -477,15 +478,15 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 	await t.step("setup", () => {
 		originalAudioEncoder = globalThis.AudioEncoder;
 		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-		originalGainNode = (globalThis as any).GainNode;
+		originalGainNode = globalThis.GainNode;
 
 		originalAudioEncoder = globalThis.AudioEncoder;
 		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-		originalGainNode = (globalThis as any).GainNode;
+		originalGainNode = globalThis.GainNode;
 
-		(globalThis as any).AudioEncoder = FakeAudioEncoder;
-		(globalThis as any).AudioWorkletNode = MockAudioWorkletNode;
-		(globalThis as any).GainNode = FakeGainNode;
+		stubGlobal("AudioEncoder", FakeAudioEncoder);
+		stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
+		stubGlobal("GainNode", FakeGainNode);
 
 		context = new MockAudioContext() as any;
 	});
@@ -533,9 +534,9 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 	}
 
 	await t.step("cleanup", () => {
-		globalThis.AudioEncoder = originalAudioEncoder;
-		globalThis.AudioWorkletNode = originalAudioWorkletNode;
-		(globalThis as any).GainNode = originalGainNode;
+		stubGlobal("AudioEncoder", originalAudioEncoder);
+		stubGlobal("AudioWorkletNode", originalAudioWorkletNode);
+		stubGlobal("GainNode", originalGainNode);
 	});
 });
 
@@ -550,12 +551,11 @@ Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 	await t.step("setup", () => {
 		originalAudioEncoder = globalThis.AudioEncoder;
 		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-		originalGainNode = (globalThis as any).GainNode;
+		originalGainNode = globalThis.GainNode;
 
-		(globalThis as any).AudioEncoder = FakeAudioEncoder;
-		(globalThis as any).AudioEncoder = FakeAudioEncoder;
-		(globalThis as any).AudioWorkletNode = MockAudioWorkletNode;
-		(globalThis as any).GainNode = FakeGainNode;
+		stubGlobal("AudioEncoder", FakeAudioEncoder);
+		stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
+		stubGlobal("GainNode", FakeGainNode);
 
 		context = new MockAudioContext() as any;
 		encodeNode = new AudioEncodeNode(context);
@@ -603,9 +603,9 @@ Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 	);
 
 	await t.step("cleanup", () => {
-		globalThis.AudioEncoder = originalAudioEncoder;
-		globalThis.AudioWorkletNode = originalAudioWorkletNode;
-		(globalThis as any).GainNode = originalGainNode;
+		stubGlobal("AudioEncoder", originalAudioEncoder);
+		stubGlobal("AudioWorkletNode", originalAudioWorkletNode);
+		stubGlobal("GainNode", originalGainNode);
 		encodeNode.dispose();
 	});
 });

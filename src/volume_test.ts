@@ -1,16 +1,9 @@
+/// <reference path="./test_globals.d.ts" />
 // Set up global mocks before importing volume.ts
-import { setupGlobalMocks } from "./test-utils_test.ts";
+import { deleteGlobal, resetGlobalMocks, setupGlobalMocks, stubGlobal } from "./test-utils_test.ts";
 setupGlobalMocks();
 
 import { assertEquals } from "@std/assert";
-import { resetGlobalMocks } from "./test-utils_test.ts";
-
-// Type augmentation for testing globalThis properties
-declare global {
-	var __DEFAULT_VOLUME__: number | undefined;
-	var __DEFAULT_MIN_GAIN__: number | undefined;
-	var __DEFAULT_FADE_TIME__: number | undefined;
-}
 
 // Import types statically
 import type { VolumeController } from "./volume.ts";
@@ -36,14 +29,14 @@ Deno.test("Volume", async (t) => {
 
 	const setupTest = () => {
 		// Save original globalThis values
-		originalVolume = (globalThis as any).__DEFAULT_VOLUME__;
-		originalMinGain = (globalThis as any).__DEFAULT_MIN_GAIN__;
-		originalFadeTime = (globalThis as any).__DEFAULT_FADE_TIME__;
+		originalVolume = (globalThis as unknown as Record<string, unknown>).__DEFAULT_VOLUME__ as number | undefined;
+		originalMinGain = (globalThis as unknown as Record<string, unknown>).__DEFAULT_MIN_GAIN__ as number | undefined;
+		originalFadeTime = (globalThis as unknown as Record<string, unknown>).__DEFAULT_FADE_TIME__ as number | undefined;
 
 		// Clear globalThis properties
-		delete (globalThis as any).__DEFAULT_VOLUME__;
-		delete (globalThis as any).__DEFAULT_MIN_GAIN__;
-		delete (globalThis as any).__DEFAULT_FADE_TIME__;
+		deleteGlobal("__DEFAULT_VOLUME__");
+		deleteGlobal("__DEFAULT_MIN_GAIN__");
+		deleteGlobal("__DEFAULT_FADE_TIME__");
 
 		// Mock console.warn
 		originalConsoleWarn = console.warn;
@@ -56,21 +49,21 @@ Deno.test("Volume", async (t) => {
 	const cleanupTest = () => {
 		// Restore original globalThis values
 		if (originalVolume !== undefined) {
-			(globalThis as any).__DEFAULT_VOLUME__ = originalVolume;
+			stubGlobal("__DEFAULT_VOLUME__", originalVolume);
 		} else {
-			delete (globalThis as any).__DEFAULT_VOLUME__;
+			deleteGlobal("__DEFAULT_VOLUME__");
 		}
 
 		if (originalMinGain !== undefined) {
-			(globalThis as any).__DEFAULT_MIN_GAIN__ = originalMinGain;
+			stubGlobal("__DEFAULT_MIN_GAIN__", originalMinGain);
 		} else {
-			delete (globalThis as any).__DEFAULT_MIN_GAIN__;
+			deleteGlobal("__DEFAULT_MIN_GAIN__");
 		}
 
 		if (originalFadeTime !== undefined) {
-			(globalThis as any).__DEFAULT_FADE_TIME__ = originalFadeTime;
+			stubGlobal("__DEFAULT_FADE_TIME__", originalFadeTime);
 		} else {
-			delete (globalThis as any).__DEFAULT_FADE_TIME__;
+			deleteGlobal("__DEFAULT_FADE_TIME__");
 		}
 
 		// Restore console.warn
@@ -100,9 +93,9 @@ Deno.test("Volume", async (t) => {
 			setupTest();
 			try {
 				// Simulate Vite define injection
-				(globalThis as any).__DEFAULT_VOLUME__ = 0.7;
-				(globalThis as any).__DEFAULT_MIN_GAIN__ = 0.002;
-				(globalThis as any).__DEFAULT_FADE_TIME__ = 0.09;
+				stubGlobal("__DEFAULT_VOLUME__", 0.7);
+				stubGlobal("__DEFAULT_MIN_GAIN__", 0.002);
+				stubGlobal("__DEFAULT_FADE_TIME__", 0.09);
 
 				const volume = DefaultVolume();
 				const minGain = DefaultMinGain();
@@ -120,9 +113,9 @@ Deno.test("Volume", async (t) => {
 			setupTest();
 			try {
 				// Simulate invalid Vite define injection
-				(globalThis as any).__DEFAULT_VOLUME__ = 1.5;
-				(globalThis as any).__DEFAULT_MIN_GAIN__ = NaN;
-				(globalThis as any).__DEFAULT_FADE_TIME__ = Infinity;
+				stubGlobal("__DEFAULT_VOLUME__", 1.5);
+				stubGlobal("__DEFAULT_MIN_GAIN__", NaN);
+				stubGlobal("__DEFAULT_FADE_TIME__", Infinity);
 
 				const volume = DefaultVolume();
 				const minGain = DefaultMinGain();
@@ -132,12 +125,13 @@ Deno.test("Volume", async (t) => {
 				assertEquals(minGain, MIN_GAIN_FALLBACK);
 				assertEquals(fadeTime, FADE_TIME_FALLBACK);
 
-				assertEquals((globalThis as any).warnCalls.length, 1);
+				const warnCalls = (globalThis as unknown as Record<string, unknown[][]>).warnCalls!;
+				assertEquals(warnCalls.length, 1);
 				assertEquals(
-					(globalThis as any).warnCalls[0][0],
+					warnCalls[0]![0],
 					"[volume] __DEFAULT_VOLUME__ is out of range, fallback to 0.5:",
 				);
-				assertEquals((globalThis as any).warnCalls[0][1], 1.5);
+				assertEquals(warnCalls[0]![1], 1.5);
 			} finally {
 				cleanupTest();
 			}

@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
-import { spy } from "@std/testing/mock";
+import { stubGlobal } from "../../../test-utils_test.ts";
 import { FakeAudioEncoder } from "./fake_audioencoder_test.ts";
 
 import {
@@ -7,20 +7,21 @@ import {
 	AudioEncoderOptions,
 	DEFAULT_AUDIO_CODECS,
 	DEFAULT_AUDIO_CONFIG,
+	type ExtendedAudioEncoderConfig,
 	upgradeAudioEncoderConfig,
 } from "./audio_config.ts";
 
 // FakeAudioEncoder setup
 
-let originalAudioEncoder: any;
-let originalConsoleDebug: any;
+let originalAudioEncoder: unknown;
+let originalConsoleDebug: typeof console.debug;
 
 function setupMocks() {
 	originalAudioEncoder = globalThis.AudioEncoder;
 	originalConsoleDebug = console.debug;
 	FakeAudioEncoder.isConfigSupportedCalls = [];
-	(globalThis as any).AudioEncoder = FakeAudioEncoder;
-	console.debug = spy();
+	stubGlobal("AudioEncoder", FakeAudioEncoder);
+	console.debug = () => {};
 	// Set up navigator
 	Object.defineProperty(navigator, "userAgent", {
 		value:
@@ -30,7 +31,7 @@ function setupMocks() {
 }
 
 function restoreMocks() {
-	globalThis.AudioEncoder = originalAudioEncoder;
+	stubGlobal("AudioEncoder", originalAudioEncoder);
 	console.debug = originalConsoleDebug;
 }
 
@@ -81,13 +82,13 @@ Deno.test("audioEncoderConfig: returns supported config for valid options", asyn
 		assertEquals(result.bitrate, 64000);
 		// Check the config passed
 		assertEquals(FakeAudioEncoder.isConfigSupportedCalls.length, 1);
-		const calledConfig = FakeAudioEncoder.isConfigSupportedCalls[0] as any;
+		const calledConfig = FakeAudioEncoder.isConfigSupportedCalls[0]! as ExtendedAudioEncoderConfig;
 		assertExists(calledConfig.opus);
-		assertEquals(calledConfig.opus.application, "audio");
-		assertEquals(calledConfig.opus.signal, "music");
+		assertEquals(calledConfig.opus!.application, "audio");
+		assertEquals(calledConfig.opus!.signal, "music");
 		assertExists(calledConfig.parameters);
-		assertEquals(calledConfig.parameters.useinbandfec, 1);
-		assertEquals(calledConfig.parameters.stereo, 1);
+		assertEquals(calledConfig.parameters!.useinbandfec, 1);
+		assertEquals(calledConfig.parameters!.stereo, 1);
 		// console.debug called
 		// assertEquals((console.debug as any).calls.length, 1);
 		// assertEquals((console.debug as any).calls[0][0], 'using audio encoding:');
@@ -105,7 +106,7 @@ Deno.test("audioEncoderConfig: uses default bitrate when not provided", async ()
 		};
 		await audioEncoderConfig(options);
 		assertEquals(FakeAudioEncoder.isConfigSupportedCalls.length, 1);
-		const calledConfig = FakeAudioEncoder.isConfigSupportedCalls[0] as any;
+		const calledConfig = FakeAudioEncoder.isConfigSupportedCalls[0]!;
 		assertEquals(calledConfig.bitrate, DEFAULT_AUDIO_CONFIG.bitrate);
 	} finally {
 		restoreMocks();
@@ -123,7 +124,7 @@ Deno.test("audioEncoderConfig: uses custom bitrate when provided", async () => {
 		};
 		await audioEncoderConfig(options);
 		assertEquals(FakeAudioEncoder.isConfigSupportedCalls.length, 1);
-		const calledConfig = FakeAudioEncoder.isConfigSupportedCalls[0] as any;
+		const calledConfig = FakeAudioEncoder.isConfigSupportedCalls[0]!;
 		assertEquals(calledConfig.bitrate, customBitrate);
 	} finally {
 		restoreMocks();
@@ -139,7 +140,7 @@ Deno.test("audioEncoderConfig: uses default codecs when preferredCodecs not prov
 		};
 		await audioEncoderConfig(options);
 		assertEquals(FakeAudioEncoder.isConfigSupportedCalls.length, 1);
-		const calledConfig = FakeAudioEncoder.isConfigSupportedCalls[0] as any;
+		const calledConfig = FakeAudioEncoder.isConfigSupportedCalls[0]!;
 		assertEquals(calledConfig.codec, "opus");
 	} finally {
 		restoreMocks();
@@ -148,17 +149,15 @@ Deno.test("audioEncoderConfig: uses default codecs when preferredCodecs not prov
 
 Deno.test("audioEncoderConfig: uses custom preferredCodecs when provided", async () => {
 	setupMocks();
+	const calls: AudioEncoderConfig[] = [];
 	let callCount = 0;
-	const customSpy = spy((_cfg: any) => {
-		callCount++;
-		if (callCount === 1) return Promise.resolve({ supported: false });
-		return Promise.resolve({
-			supported: true,
-			config: { codec: "opus" },
-		});
-	});
 	const origIsConfigSupported = FakeAudioEncoder.isConfigSupported;
-	(FakeAudioEncoder as any).isConfigSupported = customSpy;
+	FakeAudioEncoder.isConfigSupported = async (cfg) => {
+		calls.push(cfg);
+		callCount++;
+		if (callCount === 1) return { supported: false };
+		return { supported: true, config: { codec: "opus" } };
+	};
 	try {
 		const customCodecs = ["pcmu", "opus"] as const;
 		const options: AudioEncoderOptions = {
@@ -167,34 +166,32 @@ Deno.test("audioEncoderConfig: uses custom preferredCodecs when provided", async
 			preferredCodecs: customCodecs,
 		};
 		await audioEncoderConfig(options);
-		assertEquals(customSpy.calls.length, 2);
+		assertEquals(calls.length, 2);
 		assertEquals(
-			customSpy.calls[0]!.args[0].codec,
+			calls[0]!.codec,
 			"pcmu",
 		);
 		assertEquals(
-			customSpy.calls[1]!.args[0].codec,
+			calls[1]!.codec,
 			"opus",
 		);
 	} finally {
-		(FakeAudioEncoder as any).isConfigSupported = origIsConfigSupported;
+		FakeAudioEncoder.isConfigSupported = origIsConfigSupported;
 		restoreMocks();
 	}
 });
 
 Deno.test("audioEncoderConfig: tries all codecs until one is supported", async () => {
 	setupMocks();
+	const calls: AudioEncoderConfig[] = [];
 	let callCount = 0;
-	const customSpy = spy((_cfg: any) => {
-		callCount++;
-		if (callCount <= 3) return Promise.resolve({ supported: false });
-		return Promise.resolve({
-			supported: true,
-			config: { codec: "pcmu" },
-		});
-	});
 	const origIsConfigSupported = FakeAudioEncoder.isConfigSupported;
-	(FakeAudioEncoder as any).isConfigSupported = customSpy;
+	FakeAudioEncoder.isConfigSupported = async (cfg) => {
+		calls.push(cfg);
+		callCount++;
+		if (callCount <= 3) return { supported: false };
+		return { supported: true, config: { codec: "pcmu" } };
+	};
 	try {
 		const options: AudioEncoderOptions = {
 			sampleRate: 48000,
@@ -202,18 +199,17 @@ Deno.test("audioEncoderConfig: tries all codecs until one is supported", async (
 		};
 		const result = await audioEncoderConfig(options);
 		assertEquals(result.codec, "pcmu");
-		assertEquals(customSpy.calls.length, 4);
+		assertEquals(calls.length, 4);
 	} finally {
-		(FakeAudioEncoder as any).isConfigSupported = origIsConfigSupported;
+		FakeAudioEncoder.isConfigSupported = origIsConfigSupported;
 		restoreMocks();
 	}
 });
 
 Deno.test("audioEncoderConfig: throws error when no codec is supported", async () => {
 	setupMocks();
-	const customSpy = spy(() => Promise.resolve({ supported: false }));
 	const origIsConfigSupported = FakeAudioEncoder.isConfigSupported;
-	(FakeAudioEncoder as any).isConfigSupported = customSpy;
+	FakeAudioEncoder.isConfigSupported = async () => ({ supported: false });
 	try {
 		const options: AudioEncoderOptions = {
 			sampleRate: 48000,
@@ -225,7 +221,7 @@ Deno.test("audioEncoderConfig: throws error when no codec is supported", async (
 			"no supported audio codec",
 		);
 	} finally {
-		(FakeAudioEncoder as any).isConfigSupported = origIsConfigSupported;
+		FakeAudioEncoder.isConfigSupported = origIsConfigSupported;
 		restoreMocks();
 	}
 });
@@ -233,7 +229,7 @@ Deno.test("audioEncoderConfig: throws error when no codec is supported", async (
 Deno.test("audioEncoderConfig: handles missing isConfigSupported method", async () => {
 	setupMocks();
 	const origIsConfigSupported = FakeAudioEncoder.isConfigSupported;
-	(FakeAudioEncoder as any).isConfigSupported = undefined;
+	FakeAudioEncoder.isConfigSupported = undefined;
 	try {
 		const options: AudioEncoderOptions = {
 			sampleRate: 48000,
@@ -245,16 +241,15 @@ Deno.test("audioEncoderConfig: handles missing isConfigSupported method", async 
 			"no supported audio codec",
 		);
 	} finally {
-		(FakeAudioEncoder as any).isConfigSupported = origIsConfigSupported;
+		FakeAudioEncoder.isConfigSupported = origIsConfigSupported;
 		restoreMocks();
 	}
 });
 
 Deno.test("audioEncoderConfig: handles isConfigSupported throwing error", async () => {
 	setupMocks();
-	const customSpy = spy(() => Promise.reject(new Error("Config check failed")));
 	const origIsConfigSupported = FakeAudioEncoder.isConfigSupported;
-	(FakeAudioEncoder as any).isConfigSupported = customSpy;
+	FakeAudioEncoder.isConfigSupported = () => Promise.reject(new Error("Config check failed"));
 	try {
 		const options: AudioEncoderOptions = {
 			sampleRate: 48000,
@@ -266,7 +261,7 @@ Deno.test("audioEncoderConfig: handles isConfigSupported throwing error", async 
 			"no supported audio codec",
 		);
 	} finally {
-		(FakeAudioEncoder as any).isConfigSupported = origIsConfigSupported;
+		FakeAudioEncoder.isConfigSupported = origIsConfigSupported;
 		restoreMocks();
 	}
 });
@@ -345,13 +340,13 @@ Deno.test("upgradeAudioEncoderConfig: applies Opus-specific enhancements for ste
 		numberOfChannels: 2,
 		bitrate: 64000,
 	};
-	const result = upgradeAudioEncoderConfig(baseConfig, "opus") as any;
+	const result = upgradeAudioEncoderConfig(baseConfig, "opus");
 	assertExists(result.opus);
-	assertEquals(result.opus.application, "audio"); // stereo defaults to 'audio'
-	assertEquals(result.opus.signal, "music"); // stereo defaults to 'music'
+	assertEquals(result.opus!.application, "audio"); // stereo defaults to 'audio'
+	assertEquals(result.opus!.signal, "music"); // stereo defaults to 'music'
 	assertExists(result.parameters);
-	assertEquals(result.parameters.useinbandfec, 1);
-	assertEquals(result.parameters.stereo, 1); // stereo enabled
+	assertEquals(result.parameters!.useinbandfec, 1);
+	assertEquals(result.parameters!.stereo, 1); // stereo enabled
 	assertEquals(result.bitrateMode, "variable"); // Chrome default
 });
 
@@ -363,10 +358,10 @@ Deno.test("upgradeAudioEncoderConfig: applies Opus-specific enhancements for mon
 		bitrate: 64000,
 	};
 	const monoConfig = { ...baseConfig, numberOfChannels: 1 };
-	const result = upgradeAudioEncoderConfig(monoConfig, "opus") as any;
-	assertEquals(result.opus.application, "voip"); // mono defaults to 'voip'
-	assertEquals(result.opus.signal, "voice"); // mono defaults to 'voice'
-	assertEquals(result.parameters.stereo, 0); // stereo disabled
+	const result = upgradeAudioEncoderConfig(monoConfig, "opus");
+	assertEquals(result.opus?.application, "voip"); // mono defaults to 'voip'
+	assertEquals(result.opus?.signal, "voice"); // mono defaults to 'voice'
+	assertEquals(result.parameters?.stereo, 0); // stereo disabled
 });
 
 Deno.test("upgradeAudioEncoderConfig: does not override existing Opus parameters", () => {
@@ -376,14 +371,14 @@ Deno.test("upgradeAudioEncoderConfig: does not override existing Opus parameters
 		numberOfChannels: 2,
 		bitrate: 64000,
 	};
-	const configWithOpus = {
+	const configWithOpus: ExtendedAudioEncoderConfig = {
 		...baseConfig,
 		opus: { application: "existing" },
 		parameters: { useinbandfec: 0 },
-	} as any;
-	const result = upgradeAudioEncoderConfig(configWithOpus, "opus") as any;
-	assertEquals(result.opus.application, "existing"); // preserved
-	assertEquals(result.parameters.useinbandfec, 0); // preserved
+	};
+	const result = upgradeAudioEncoderConfig(configWithOpus, "opus");
+	assertEquals(result.opus?.application, "existing"); // preserved
+	assertEquals(result.parameters?.useinbandfec, 0); // preserved
 });
 
 Deno.test("upgradeAudioEncoderConfig: does not apply Opus enhancements for non-Opus codecs", () => {
@@ -393,7 +388,7 @@ Deno.test("upgradeAudioEncoderConfig: does not apply Opus enhancements for non-O
 		numberOfChannels: 2,
 		bitrate: 64000,
 	};
-	const result = upgradeAudioEncoderConfig(baseConfig, "pcmu") as any;
+	const result = upgradeAudioEncoderConfig(baseConfig, "pcmu");
 	assertEquals(result.opus, undefined);
 	assertEquals(result.parameters, undefined);
 	assertEquals(result.bitrateMode, undefined);
@@ -420,9 +415,9 @@ Deno.test("upgradeAudioEncoderConfig: preserves all base config properties", () 
 	const extendedBase = {
 		...baseConfig,
 		customProperty: "test",
-	} as any;
-	const result = upgradeAudioEncoderConfig(extendedBase, "pcmu") as any;
-	assertEquals(result.customProperty, "test");
+	};
+	const result = upgradeAudioEncoderConfig(extendedBase, "pcmu");
+	assertEquals((result as unknown as Record<string, unknown>).customProperty, "test");
 	assertEquals(result.sampleRate, extendedBase.sampleRate);
 	assertEquals(result.numberOfChannels, extendedBase.numberOfChannels);
 });
@@ -435,7 +430,7 @@ Deno.test("upgradeAudioEncoderConfig: applies browser-specific bitrate mode for 
 		bitrate: 64000,
 	};
 	// Mock is already set to Chrome=true, Firefox=false in the mock above
-	const result = upgradeAudioEncoderConfig(baseConfig, "opus") as any;
+	const result = upgradeAudioEncoderConfig(baseConfig, "opus");
 	assertEquals(result.bitrateMode, "variable");
 });
 
@@ -462,7 +457,7 @@ Deno.test("AudioEncoderOptions interface: supports optional properties", () => {
 Deno.test("Error Handling: handles null AudioEncoder", async () => {
 	setupMocks();
 	try {
-		globalThis.AudioEncoder = null as any;
+		stubGlobal("AudioEncoder", null);
 		const options: AudioEncoderOptions = {
 			sampleRate: 48000,
 			channels: 2,
@@ -476,7 +471,7 @@ Deno.test("Error Handling: handles null AudioEncoder", async () => {
 Deno.test("Error Handling: handles AudioEncoder without isConfigSupported", async () => {
 	setupMocks();
 	try {
-		globalThis.AudioEncoder = {} as any;
+		stubGlobal("AudioEncoder", {});
 		const options: AudioEncoderOptions = {
 			sampleRate: 48000,
 			channels: 2,
@@ -567,7 +562,7 @@ Deno.test("Advanced Configuration Tests: handles malformed codec responses grace
 		];
 		for (const response of malformedResponses) {
 			const origIsConfigSupported = FakeAudioEncoder.isConfigSupported;
-			(FakeAudioEncoder as any).isConfigSupported = spy(() => Promise.resolve(response));
+			FakeAudioEncoder.isConfigSupported = async () => response;
 			try {
 				await assertRejects(
 					async () =>
@@ -580,7 +575,7 @@ Deno.test("Advanced Configuration Tests: handles malformed codec responses grace
 					"no supported audio codec",
 				);
 			} finally {
-				(FakeAudioEncoder as any).isConfigSupported = origIsConfigSupported;
+				FakeAudioEncoder.isConfigSupported = origIsConfigSupported;
 			}
 		}
 	} finally {
@@ -631,12 +626,12 @@ Deno.test("Performance and Memory Tests: handles different codec configurations"
 	};
 	// Test opus-specific enhancements
 	const opusConfig = upgradeAudioEncoderConfig(baseConfig, "opus");
-	assertExists((opusConfig as any).opus);
-	assertExists((opusConfig as any).parameters);
+	assertExists(opusConfig.opus);
+	assertExists(opusConfig.parameters);
 	// Test non-opus codec (should not have opus enhancements)
 	const g722Config = upgradeAudioEncoderConfig(baseConfig, "g722");
 	assertEquals(g722Config.codec, "g722");
-	assertEquals((g722Config as any).opus, undefined);
+	assertEquals(g722Config.opus, undefined);
 });
 
 Deno.test("Real-world Integration Scenarios: handles voice chat mono configuration", () => {
@@ -647,10 +642,10 @@ Deno.test("Real-world Integration Scenarios: handles voice chat mono configurati
 		bitrate: 32000,
 	}, "opus");
 	// Voice-specific settings
-	assertEquals((voiceConfig as any).opus?.application, "voip");
-	assertEquals((voiceConfig as any).opus?.signal, "voice");
-	assertEquals((voiceConfig as any).parameters?.stereo, 0);
-	assertEquals((voiceConfig as any).parameters?.useinbandfec, 1);
+	assertEquals(voiceConfig.opus?.application, "voip");
+	assertEquals(voiceConfig.opus?.signal, "voice");
+	assertEquals(voiceConfig.parameters?.stereo, 0);
+	assertEquals(voiceConfig.parameters?.useinbandfec, 1);
 });
 
 Deno.test("Real-world Integration Scenarios: handles music streaming stereo configuration", () => {
@@ -661,10 +656,10 @@ Deno.test("Real-world Integration Scenarios: handles music streaming stereo conf
 		bitrate: 128000,
 	}, "opus");
 	// Music-specific settings
-	assertEquals((musicConfig as any).opus?.application, "audio");
-	assertEquals((musicConfig as any).opus?.signal, "music");
-	assertEquals((musicConfig as any).parameters?.stereo, 1);
-	assertEquals((musicConfig as any).parameters?.useinbandfec, 1);
+	assertEquals(musicConfig.opus?.application, "audio");
+	assertEquals(musicConfig.opus?.signal, "music");
+	assertEquals(musicConfig.parameters?.stereo, 1);
+	assertEquals(musicConfig.parameters?.useinbandfec, 1);
 });
 
 Deno.test("Real-world Integration Scenarios: handles browser-specific bitrate modes", () => {
@@ -675,5 +670,5 @@ Deno.test("Real-world Integration Scenarios: handles browser-specific bitrate mo
 		numberOfChannels: 2,
 		bitrate: 64000,
 	}, "opus");
-	assertEquals((chromeConfig as any).bitrateMode, "variable");
+	assertEquals(chromeConfig.bitrateMode, "variable");
 });
