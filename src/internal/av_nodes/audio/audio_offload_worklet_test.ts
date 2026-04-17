@@ -19,9 +19,12 @@ Deno.test("audio_offload_worklet", async (t) => {
 			const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
 			const originalRegisterProcessor = globalThis.registerProcessor;
 
-			stubGlobal("AudioWorkletProcessor", class {
-				port = { onmessage: undefined };
-			});
+			stubGlobal(
+				"AudioWorkletProcessor",
+				class {
+					port = { onmessage: undefined };
+				},
+			);
 			stubGlobal("registerProcessor", (
 				name: string,
 				processor: any,
@@ -321,9 +324,12 @@ Deno.test("audio_offload_worklet", async (t) => {
 		const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
 		const originalRegisterProcessor = globalThis.registerProcessor;
 
-		stubGlobal("AudioWorkletProcessor", class {
-			port = { onmessage: undefined };
-		});
+		stubGlobal(
+			"AudioWorkletProcessor",
+			class {
+				port = { onmessage: undefined };
+			},
+		);
 		stubGlobal("registerProcessor", (
 			name: string,
 			processor: any,
@@ -453,9 +459,12 @@ Deno.test("audio_offload_worklet", async (t) => {
 			const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
 			const originalRegisterProcessor = globalThis.registerProcessor;
 
-			stubGlobal("AudioWorkletProcessor", class MockAudioWorkletProcessor {
-				port = mockPort;
-			});
+			stubGlobal(
+				"AudioWorkletProcessor",
+				class MockAudioWorkletProcessor {
+					port = mockPort;
+				},
+			);
 
 			// Mock registerProcessor
 			const mockRegisterProcessor = { calls: [] as any[] };

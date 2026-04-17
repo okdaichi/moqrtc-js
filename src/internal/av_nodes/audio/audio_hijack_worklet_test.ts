@@ -176,9 +176,12 @@ Deno.test("audio_hijack_worklet", async (t) => {
 			const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
 			const originalRegisterProcessor = globalThis.registerProcessor;
 
-			stubGlobal("AudioWorkletProcessor", class MockAudioWorkletProcessor {
-				port = mockPort;
-			});
+			stubGlobal(
+				"AudioWorkletProcessor",
+				class MockAudioWorkletProcessor {
+					port = mockPort;
+				},
+			);
 
 			// Mock registerProcessor
 			const mockRegisterProcessor = { calls: [] as any[] };
@@ -196,8 +199,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 						"undefined"
 				) {
 					// Simulate the worklet code execution
-					class TestAudioHijackProcessor
-						extends globalThis.AudioWorkletProcessor {
+					class TestAudioHijackProcessor extends globalThis.AudioWorkletProcessor {
 						#currentFrame: number = 0;
 						#sampleRate: number;
 						#targetChannels: number;
@@ -341,8 +343,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 			});
 
 			try {
-				class InitTestAudioHijackProcessor
-					extends globalThis.AudioWorkletProcessor {
+				class InitTestAudioHijackProcessor extends globalThis.AudioWorkletProcessor {
 					constructor(_options: AudioWorkletNodeOptions) {
 						super();
 					}

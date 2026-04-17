@@ -108,9 +108,7 @@ export function upgradeAudioEncoderConfig(
 		}
 
 		// bitrateMode is broadly supported; prefer variable for voice/music and constant for high quality streams.
-		cfg.bitrateMode = (isChrome && !isFirefox)
-			? "variable"
-			: (cfg.bitrateMode ?? "variable");
+		cfg.bitrateMode = (isChrome && !isFirefox) ? "variable" : (cfg.bitrateMode ?? "variable");
 	}
 
 	return cfg;

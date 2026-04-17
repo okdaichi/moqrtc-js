@@ -91,10 +91,13 @@ Deno.test(
 
 			let requestedId = 0;
 			stubGlobal("cancelAnimationFrame", () => {});
-			stubGlobal("requestAnimationFrame", (() => {
-				requestedId = 123;
-				return requestedId;
-			}) as any);
+			stubGlobal(
+				"requestAnimationFrame",
+				(() => {
+					requestedId = 123;
+					return requestedId;
+				}) as any,
+			);
 
 			const destinationNode = new VideoDestinationNode(
 				context,
@@ -128,11 +131,14 @@ Deno.test(
 				const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
 
 				let nextId = 1;
-				stubGlobal("requestAnimationFrame", ((cb: FrameRequestCallback) => {
-					// Intentionally do not invoke cb
-					void cb;
-					return nextId++;
-				}) as any);
+				stubGlobal(
+					"requestAnimationFrame",
+					((cb: FrameRequestCallback) => {
+						// Intentionally do not invoke cb
+						void cb;
+						return nextId++;
+					}) as any,
+				);
 				stubGlobal("cancelAnimationFrame", (() => {}) as any);
 
 				try {

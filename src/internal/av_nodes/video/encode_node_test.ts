@@ -97,13 +97,16 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		});
 		// When the code calls new VideoEncoder(init) we want the mock instance to receive
 		// the init callbacks (output/error) so the node's handlers are wired to the mock.
-		stubGlobal("VideoEncoder", class FakeVideoEncoderConstructor {
-			constructor(init: any) {
-				// copy the init handlers onto the existing mock instance
-				Object.assign(mockEncoder, init);
-				return mockEncoder;
-			}
-		});
+		stubGlobal(
+			"VideoEncoder",
+			class FakeVideoEncoderConstructor {
+				constructor(init: any) {
+					// copy the init handlers onto the existing mock instance
+					Object.assign(mockEncoder, init);
+					return mockEncoder;
+				}
+			},
+		);
 
 		context = new VideoContext();
 		onChunk = () => {}; // Default empty handler

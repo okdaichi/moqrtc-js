@@ -20,20 +20,20 @@ import { mockVideo } from "./mock_video_test.ts";
 export {
 	mockAudioContext,
 	mockAudioContextClose,
-	mockAudioWorkletAddModule
+	mockAudioWorkletAddModule,
 } from "./mock_audio_context_test.ts";
 export {
 	mockAudioWorkletNode,
 	mockWorkletConnect,
 	mockWorkletDisconnect,
-	mockWorkletPort
+	mockWorkletPort,
 } from "./mock_audio_worklet_node_test.ts";
 export { mockCanvas, mockCanvasContext } from "./mock_canvas_test.ts";
 export {
 	MockGainNode,
 	mockGainNode,
 	mockGainNodeConnect,
-	mockGainNodeDisconnect
+	mockGainNodeDisconnect,
 } from "./mock_gain_node_test.ts";
 export { mockVideo } from "./mock_video_test.ts";
 

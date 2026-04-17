@@ -211,12 +211,12 @@ export function setupFakeMediaDevices(
 	const ogSetTimeout = globalThis.setTimeout;
 	const ogClearTimeout = globalThis.clearTimeout;
 
-	stubGlobal("setTimeout", ((fn: Function) => {
+	stubGlobal("setTimeout", (fn: Function) => {
 		fn();
 		return 1;
-	}));
+	});
 
-	stubGlobal("clearTimeout", (() => {}));
+	stubGlobal("clearTimeout", () => {});
 
 	return {
 		fake,

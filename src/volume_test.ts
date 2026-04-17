@@ -29,9 +29,14 @@ Deno.test("Volume", async (t) => {
 
 	const setupTest = () => {
 		// Save original globalThis values
-		originalVolume = (globalThis as unknown as Record<string, unknown>).__DEFAULT_VOLUME__ as number | undefined;
-		originalMinGain = (globalThis as unknown as Record<string, unknown>).__DEFAULT_MIN_GAIN__ as number | undefined;
-		originalFadeTime = (globalThis as unknown as Record<string, unknown>).__DEFAULT_FADE_TIME__ as number | undefined;
+		originalVolume = (globalThis as unknown as Record<string, unknown>).__DEFAULT_VOLUME__ as
+			| number
+			| undefined;
+		originalMinGain = (globalThis as unknown as Record<string, unknown>).__DEFAULT_MIN_GAIN__ as
+			| number
+			| undefined;
+		originalFadeTime = (globalThis as unknown as Record<string, unknown>)
+			.__DEFAULT_FADE_TIME__ as number | undefined;
 
 		// Clear globalThis properties
 		deleteGlobal("__DEFAULT_VOLUME__");

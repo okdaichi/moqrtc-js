@@ -8,22 +8,25 @@ import { VideoNode } from "./video_node.ts";
 
 // Mock globals for Deno environment
 if (typeof OffscreenCanvas === "undefined") {
-	stubGlobal("OffscreenCanvas", class {
-		width: number;
-		height: number;
-		constructor(width: number, height: number) {
-			this.width = width;
-			this.height = height;
-		}
-		getContext() {
-			return {
-				drawImage: () => {},
-				getImageData: (_x: number, _y: number, w: number, h: number) => ({
-					data: new Uint8ClampedArray(w * h * 4).fill(128), // Gray pixels
-				}),
-			};
-		}
-	});
+	stubGlobal(
+		"OffscreenCanvas",
+		class {
+			width: number;
+			height: number;
+			constructor(width: number, height: number) {
+				this.width = width;
+				this.height = height;
+			}
+			getContext() {
+				return {
+					drawImage: () => {},
+					getImageData: (_x: number, _y: number, w: number, h: number) => ({
+						data: new Uint8ClampedArray(w * h * 4).fill(128), // Gray pixels
+					}),
+				};
+			}
+		},
+	);
 }
 
 if (typeof requestIdleCallback === "undefined") {

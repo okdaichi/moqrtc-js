@@ -82,7 +82,8 @@ Deno.test("audioEncoderConfig: returns supported config for valid options", asyn
 		assertEquals(result.bitrate, 64000);
 		// Check the config passed
 		assertEquals(FakeAudioEncoder.isConfigSupportedCalls.length, 1);
-		const calledConfig = FakeAudioEncoder.isConfigSupportedCalls[0]! as ExtendedAudioEncoderConfig;
+		const calledConfig = FakeAudioEncoder
+			.isConfigSupportedCalls[0]! as ExtendedAudioEncoderConfig;
 		assertExists(calledConfig.opus);
 		assertEquals(calledConfig.opus!.application, "audio");
 		assertEquals(calledConfig.opus!.signal, "music");

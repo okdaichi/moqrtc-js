@@ -45,5 +45,4 @@ declare global {
 	var __DEFAULT_FADE_TIME__: number | undefined;
 }
 
-export { };
-
+export {};
