@@ -19,7 +19,13 @@ export interface LocalBroadcast extends TrackHandler {
 	close?(cause?: Error): Promise<void> | void;
 }
 
-export type RoomState = "idle" | "connecting" | "connected" | "disconnecting" | "disconnected" | "error";
+export type RoomState =
+	| "idle"
+	| "connecting"
+	| "connected"
+	| "disconnecting"
+	| "disconnected"
+	| "error";
 
 export const RoomEvents = {
 	StateChange: "statechange",
@@ -385,9 +391,11 @@ export class Room extends EventTarget {
 		};
 
 		this.#onmember.onJoin(member);
-		this.dispatchEvent(new CustomEvent<{ member: JoinedMember | LeftMember }>("memberjoin", {
-			detail: { member },
-		}));
+		this.dispatchEvent(
+			new CustomEvent<{ member: JoinedMember | LeftMember }>("memberjoin", {
+				detail: { member },
+			}),
+		);
 	}
 
 	#removeLocal(local: LocalBroadcast): void {
@@ -402,9 +410,11 @@ export class Room extends EventTarget {
 		this.#hasLocalMember = false;
 
 		this.#onmember.onLeave(member);
-		this.dispatchEvent(new CustomEvent<{ member: JoinedMember | LeftMember }>("memberleave", {
-			detail: { member },
-		}));
+		this.dispatchEvent(
+			new CustomEvent<{ member: JoinedMember | LeftMember }>("memberleave", {
+				detail: { member },
+			}),
+		);
 	}
 
 	#removeRemote(remote: RemoteBroadcast): void {
@@ -431,9 +441,11 @@ export class Room extends EventTarget {
 		};
 
 		this.#onmember.onLeave(member);
-		this.dispatchEvent(new CustomEvent<{ member: JoinedMember | LeftMember }>("memberleave", {
-			detail: { member },
-		}));
+		this.dispatchEvent(
+			new CustomEvent<{ member: JoinedMember | LeftMember }>("memberleave", {
+				detail: { member },
+			}),
+		);
 	}
 
 	#addRemote(remote: RemoteBroadcast): void {
@@ -462,9 +474,11 @@ export class Room extends EventTarget {
 		};
 
 		this.#onmember.onJoin(member);
-		this.dispatchEvent(new CustomEvent<{ member: JoinedMember | LeftMember }>("memberjoin", {
-			detail: { member },
-		}));
+		this.dispatchEvent(
+			new CustomEvent<{ member: JoinedMember | LeftMember }>("memberjoin", {
+				detail: { member },
+			}),
+		);
 	}
 
 	#setState(next: RoomState): void {
@@ -474,16 +488,20 @@ export class Room extends EventTarget {
 
 		const previous = this.#state;
 		this.#state = next;
-		this.dispatchEvent(new CustomEvent<{ previous: RoomState; current: RoomState }>(RoomEvents.StateChange, {
-			detail: { previous, current: next },
-		}));
+		this.dispatchEvent(
+			new CustomEvent<{ previous: RoomState; current: RoomState }>(RoomEvents.StateChange, {
+				detail: { previous, current: next },
+			}),
+		);
 	}
 
 	#emitError(cause: unknown, context: string): void {
 		const error = cause instanceof Error ? cause : new Error(String(cause));
-		this.dispatchEvent(new CustomEvent<{ error: Error; context: string }>(RoomEvents.Error, {
-			detail: { error, context },
-		}));
+		this.dispatchEvent(
+			new CustomEvent<{ error: Error; context: string }>(RoomEvents.Error, {
+				detail: { error, context },
+			}),
+		);
 	}
 
 	// get isJoined(): boolean {

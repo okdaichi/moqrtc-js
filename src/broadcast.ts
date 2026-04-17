@@ -9,9 +9,9 @@ import type {
 import { SubscribeErrorCode } from "@okdaichi/moq";
 import {
 	Broadcast,
+	type Catalog,
 	DefaultCatalogTrackName,
 	parseCatalog,
-	type Catalog,
 	type Track,
 } from "@okdaichi/moq/msf";
 import type { CancelCauseFunc, Context } from "golikejs/context";
@@ -116,4 +116,3 @@ export class BroadcastSubscriber {
 		}
 	}
 }
-

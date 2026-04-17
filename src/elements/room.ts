@@ -1,6 +1,6 @@
 import type { Session } from "@okdaichi/moq";
 import type { JoinedMember, LeftMember } from "../member.ts";
-import { Room, type LocalBroadcast } from "../room.ts";
+import { type LocalBroadcast, Room } from "../room.ts";
 
 // Extended status type includes lifecycle states
 export type RoomLifecycleStatus = {

@@ -365,13 +365,13 @@ Deno.test("Device", async (t) => {
 						getVideoTracks: () => [],
 					} as any;
 				};
-				
+
 				const device = new Device("audio");
 				await device.requestPermission(); // First call grants permission
-				
+
 				// Reset call count
 				const callCountAfterFirst = mockMediaDevices.getUserMediaCallCount;
-				
+
 				// Second call should skip getUserMedia
 				const result = await device.requestPermission();
 

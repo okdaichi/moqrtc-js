@@ -130,7 +130,11 @@ const roomElementModule = await import("./room.ts");
 const defineRoom = roomElementModule.defineRoom;
 const RoomElement = roomElementModule.RoomElement;
 
-function createSession(roomID: string, localName: string, options?: { includeRemote?: boolean; failAccept?: boolean }) {
+function createSession(
+	roomID: string,
+	localName: string,
+	options?: { includeRemote?: boolean; failAccept?: boolean },
+) {
 	let callCount = 0;
 
 	if (options?.failAccept) {

@@ -1,6 +1,6 @@
 import { DefaultCatalogTrackName } from "@okdaichi/moq/msf";
 import { assertEquals, assertRejects } from "@std/assert";
-import { Room, RoomEvents, broadcastPath, participantName } from "./room.ts";
+import { broadcastPath, participantName, Room, RoomEvents } from "./room.ts";
 
 Deno.test("room utils generate and parse participant paths", () => {
 	assertEquals(broadcastPath("myroom", "alice"), "/myroom/alice.hang");
@@ -103,19 +103,26 @@ Deno.test("Room exposes remote catalogs and role-based subscribe helpers", async
 				return [{ trackName }, undefined] as const;
 			}
 
-			return [undefined, new Error(`unexpected subscribe: ${broadcastPath}/${trackName}`)] as const;
+			return [
+				undefined,
+				new Error(`unexpected subscribe: ${broadcastPath}/${trackName}`),
+			] as const;
 		},
 		acceptAnnounce: async () => [
 			{
 				receive: async () => {
 					announceCount += 1;
 					if (announceCount === 1) {
-						return [{ broadcastPath: localPath, ended: () => new Promise<void>(() => {}) }, undefined];
+						return [{
+							broadcastPath: localPath,
+							ended: () => new Promise<void>(() => {}),
+						}, undefined];
 					}
 					if (announceCount === 2) {
 						return [{
 							broadcastPath: "/test-room/bob.hang",
-							ended: () => keepRemoteOpen ? new Promise<void>(() => {}) : Promise.resolve(),
+							ended: () =>
+								keepRemoteOpen ? new Promise<void>(() => {}) : Promise.resolve(),
 						}, undefined];
 					}
 					return [undefined, new Error("done")];
@@ -199,7 +206,10 @@ Deno.test("Room.connect uses URL + dial and exposes on/once helpers", async () =
 				receive: async () => {
 					if (!received) {
 						received = true;
-						return [{ broadcastPath: localPath, ended: () => Promise.resolve() }, undefined] as const;
+						return [
+							{ broadcastPath: localPath, ended: () => Promise.resolve() },
+							undefined,
+						] as const;
 					}
 					return [undefined, new Error("done")] as const;
 				},
