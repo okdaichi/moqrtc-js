@@ -9,12 +9,8 @@ import {
 	type VideoEncoderOptions,
 } from "./video_config.ts";
 
-// Mock the browser module - TODO: convert to Deno mock
-// vi.mock('./browser', () => ({
-//     isFirefox: false
-// }));
-
-// Mock VideoEncoder
+// Mock the browser module
+stubGlobal("isFirefox", false);
 
 // Mock global VideoEncoder
 stubGlobal("VideoEncoder", FakeVideoEncoder);
