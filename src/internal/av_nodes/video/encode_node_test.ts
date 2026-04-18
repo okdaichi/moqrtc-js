@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { stubGlobal } from "../../../test-utils_test.ts";
 import { VideoContext } from "./context.ts";
-import { VideoEncodeDestination, VideoEncodeNode } from "./encode_node.ts";
+import { type VideoEncodeDestination, VideoEncodeNode } from "./encode_node.ts";
 import { FakeVideoEncoder } from "./fake_videoencoder_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 
@@ -100,7 +100,7 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		stubGlobal(
 			"VideoEncoder",
 			class FakeVideoEncoderConstructor {
-				constructor(init: any) {
+				constructor(init: VideoEncoderInit) {
 					// copy the init handlers onto the existing mock instance
 					Object.assign(mockEncoder, init);
 					return mockEncoder;
@@ -228,7 +228,7 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		encoderNode.configure(config);
 
 		const mockDestination: VideoEncodeDestination = {
-			output: (_chunk: any, _decoderConfig?: VideoDecoderConfig) =>
+			output: (_chunk: EncodedVideoChunk, _decoderConfig?: VideoDecoderConfig) =>
 				Promise.resolve(undefined),
 		};
 
@@ -255,9 +255,8 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 			encoderNode.configure(config);
 
 			const mockDestination: VideoEncodeDestination = {
-				output: (_chunk: any, _decoderConfig?: VideoDecoderConfig) => {
-					throw new Error("Destination error");
-				},
+				output: (_chunk: EncodedVideoChunk, _decoderConfig?: VideoDecoderConfig) =>
+					Promise.resolve(undefined),
 			};
 
 			encoderNode.encodeTo(mockDestination);

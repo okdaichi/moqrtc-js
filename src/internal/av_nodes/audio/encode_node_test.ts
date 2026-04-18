@@ -5,6 +5,8 @@ import type {
 	AudioEncodeDestination,
 	AudioEncodeNode as AudioEncodeNodeType,
 } from "./encode_node.ts";
+import { FakeAudioContext } from "./fake_audio_context_test.ts";
+import { FakeAudioWorkletNode } from "./fake_audio_workletnode_test.ts";
 import { FakeAudioData } from "./fake_audiodata_test.ts";
 import { FakeAudioEncoder } from "./fake_audioencoder_test.ts";
 import { FakeGainNode } from "./fake_gainnode_test.ts";
@@ -14,61 +16,11 @@ import { FakeGainNode } from "./fake_gainnode_test.ts";
 // use a dynamic import so the module evaluation order is deterministic.
 const { AudioEncodeNode } = await import("./encode_node.ts");
 
-// Mock AudioWorkletNode
-class MockAudioWorkletNode {
-	context: AudioContext;
-	channelCount = 2;
-	channelCountMode: ChannelCountMode = "explicit";
-	channelInterpretation: ChannelInterpretation = "speakers";
-	numberOfInputs = 1;
-	numberOfOutputs = 0;
-	port: MessagePort;
-	#disconnected = false;
-
-	constructor(
-		context: AudioContext,
-		_name: string,
-		_options?: AudioWorkletNodeOptions,
-	) {
-		this.context = context;
-		// Create a mock MessagePort
-		this.port = {
-			onmessage: null,
-			postMessage: () => {},
-		} as unknown as MessagePort;
-	}
-
-	connect(): AudioNode {
-		throw new Error("Not implemented in mock");
-	}
-
-	disconnect(): void {
-		this.#disconnected = true;
-	}
-
-	get isDisconnected(): boolean {
-		return this.#disconnected;
-	}
-}
-
-// Mock AudioContext
-class MockAudioContext {
-	sampleRate = 48000;
-	destination = {
-		channelCount: 2,
-	};
-	audioWorklet = {
-		addModule: async (_url: string) => {
-			// Mock module loading
-		},
-	};
-}
-
 Deno.test("AudioEncodeNode", async (t) => {
 	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
 	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
 	let originalGainNode: typeof globalThis.GainNode | undefined;
-	let context: MockAudioContext;
+	let context: FakeAudioContext;
 	let encodeNode: AudioEncodeNodeType;
 
 	await t.step("setup", () => {
@@ -79,10 +31,10 @@ Deno.test("AudioEncodeNode", async (t) => {
 
 		// Setup mocks
 		stubGlobal("AudioEncoder", FakeAudioEncoder);
-		stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
+		stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
 		stubGlobal("GainNode", FakeGainNode);
 
-		context = new MockAudioContext();
+		context = new FakeAudioContext();
 		encodeNode = new AudioEncodeNode(context);
 	});
 
@@ -368,9 +320,9 @@ Deno.test("AudioEncodeNode", async (t) => {
 		});
 
 		const mockDest: AudioEncodeDestination = {
-			output: async (chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => {
+			output: (chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => {
 				outputChunk = chunk;
-				return undefined;
+				return Promise.resolve(undefined);
 			},
 		};
 
@@ -409,9 +361,7 @@ Deno.test("AudioEncodeNode", async (t) => {
 			});
 
 			const mockDest: AudioEncodeDestination = {
-				output: async (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => {
-					return undefined;
-				},
+				output: (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => Promise.resolve(undefined),
 			};
 
 			const config: AudioEncoderConfig = {
@@ -444,9 +394,8 @@ Deno.test("AudioEncodeNode", async (t) => {
 			const node = new AudioEncodeNode(context);
 
 			const mockDest: AudioEncodeDestination = {
-				output: async (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => {
-					return undefined;
-				},
+				output: (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) =>
+					Promise.resolve(undefined),
 			};
 
 			const config: AudioEncoderConfig = {
@@ -478,7 +427,7 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
 	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
 	let originalGainNode: typeof globalThis.GainNode | undefined;
-	let context: MockAudioContext;
+	let context: FakeAudioContext;
 
 	await t.step("setup", () => {
 		originalAudioEncoder = globalThis.AudioEncoder;
@@ -490,16 +439,16 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 		originalGainNode = globalThis.GainNode;
 
 		stubGlobal("AudioEncoder", FakeAudioEncoder);
-		stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
+		stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
 		stubGlobal("GainNode", FakeGainNode);
 
-		context = new MockAudioContext();
+		context = new FakeAudioContext();
 	});
 
 	const testCases = new Map([
 		["should handle null channelCount gracefully", {
 			setupContext: () => {
-				const ctx = new MockAudioContext();
+				const ctx = new FakeAudioContext();
 				ctx.destination.channelCount = 0;
 				return ctx;
 			},
@@ -550,7 +499,7 @@ Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
 	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
 	let originalGainNode: typeof globalThis.GainNode | undefined;
-	let context: MockAudioContext;
+	let context: FakeAudioContext;
 	let encodeNode: AudioEncodeNodeType;
 
 	await t.step("setup", () => {
@@ -559,10 +508,10 @@ Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 		originalGainNode = globalThis.GainNode;
 
 		stubGlobal("AudioEncoder", FakeAudioEncoder);
-		stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
+		stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
 		stubGlobal("GainNode", FakeGainNode);
 
-		context = new MockAudioContext();
+		context = new FakeAudioContext();
 		encodeNode = new AudioEncodeNode(context);
 	});
 

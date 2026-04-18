@@ -4,8 +4,8 @@ import type { VideoFrameAnalysis } from "./analyse_node.ts";
 import { VideoAnalyserNode } from "./analyse_node.ts";
 import { VideoContext } from "./context.ts";
 import type { CanvasLike } from "./destination_node.ts";
+import { FakeVideoNode } from "./fake_video_node_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
-import { VideoNode } from "./video_node.ts";
 
 // Mock globals for Deno environment
 if (typeof OffscreenCanvas === "undefined") {
@@ -49,18 +49,6 @@ const canvas: CanvasLike = {
 			getImageData: () => ({ data: new Uint8ClampedArray(4) }),
 		}) as unknown as CanvasRenderingContext2D,
 };
-
-class MockVideoNode extends VideoNode {
-	processedFrames: VideoFrame[] = [];
-
-	constructor() {
-		super({ numberOfInputs: 1, numberOfOutputs: 1 });
-	}
-
-	process(input: VideoFrame): void {
-		this.processedFrames.push(input);
-	}
-}
 
 Deno.test("VideoAnalyserNode", async (t) => {
 	let context: VideoContext;
@@ -337,7 +325,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		context = new VideoContext({ canvas });
 		analyserNode = new VideoAnalyserNode(context);
 
-		const outputNode = new MockVideoNode();
+		const outputNode = new FakeVideoNode();
 		analyserNode.connect(outputNode);
 
 		const frame = new FakeVideoFrame(320, 240);
@@ -351,7 +339,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		context = new VideoContext({ canvas });
 		analyserNode = new VideoAnalyserNode(context);
 
-		const errorNode = new MockVideoNode();
+const errorNode = new FakeVideoNode();
 		errorNode.process = () => {
 			throw new Error("Processing error");
 		};
@@ -362,7 +350,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		analyserNode.process(frame);
 	});
 
-	await t.step("should cleanup on dispose", async () => {
+	await t.step("should cleanup on dispose", () => {
 		context = new VideoContext({ canvas });
 		analyserNode = new VideoAnalyserNode(context);
 

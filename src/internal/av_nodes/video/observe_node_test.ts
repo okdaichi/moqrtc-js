@@ -2,13 +2,9 @@ import { assert, assertEquals } from "@std/assert";
 import { deleteGlobal, stubGlobal } from "../../../test-utils_test.ts";
 import { VideoContext } from "./context.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
+import { FakeVideoNode } from "./fake_video_node_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 import { VideoObserveNode } from "./observe_node.ts";
-import { VideoNode } from "./video_node.ts";
-
-class MockVideoNode extends VideoNode {
-	process(_input?: VideoFrame): void {}
-}
 
 Deno.test("VideoObserveNode", async (t) => {
 	interface MockObserver {
@@ -66,7 +62,7 @@ Deno.test("VideoObserveNode", async (t) => {
 	await t.step(
 		"should process frames and pass to outputs when visible",
 		() => {
-			const outputNode = new MockVideoNode();
+			const outputNode = new FakeVideoNode();
 			observeNode.connect(outputNode);
 
 			const frame = new FakeVideoFrame();
@@ -85,7 +81,7 @@ Deno.test("VideoObserveNode", async (t) => {
 	);
 
 	await t.step("should not process frames when not visible", () => {
-		const outputNode = new MockVideoNode();
+		const outputNode = new FakeVideoNode();
 		observeNode.connect(outputNode);
 
 		// Make not visible
@@ -115,8 +111,8 @@ Deno.test("VideoObserveNode", async (t) => {
 	});
 
 	await t.step("should handle process errors gracefully", () => {
-		const errorNode = new MockVideoNode();
-		const outputNode = new MockVideoNode();
+const errorNode = new FakeVideoNode();
+	const outputNode = new FakeVideoNode();
 		observeNode.connect(errorNode);
 		observeNode.connect(outputNode);
 
@@ -142,7 +138,7 @@ Deno.test("VideoObserveNode", async (t) => {
 	});
 
 	await t.step("should dispose and disconnect observer", () => {
-		const outputNode = new MockVideoNode();
+const outputNode = new FakeVideoNode();
 		observeNode.connect(outputNode);
 
 		observeNode.dispose();

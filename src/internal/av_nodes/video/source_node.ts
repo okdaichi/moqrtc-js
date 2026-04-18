@@ -1,5 +1,5 @@
 /// <reference path="../../../test_globals.d.ts" />
-import { VideoContext } from "./context.ts";
+import type { VideoContext } from "./context.ts";
 import { VideoNode } from "./video_node.ts";
 
 export class VideoSourceNode extends VideoNode {
@@ -123,7 +123,6 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 		let stream: ReadableStream<VideoFrame>;
 
 		if ("MediaStreamTrackProcessor" in globalThis) {
-			// deno-lint-ignore no-explicit-any
 			stream = new globalThis.MediaStreamTrackProcessor({ track }).readable;
 		} else {
 			console.warn(

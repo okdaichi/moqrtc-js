@@ -159,10 +159,12 @@ Deno.test("VideoConfig", async (t) => {
 		await t2.step("throws error when no codec is supported", async () => {
 			// Mock VideoEncoder to return no supported codecs
 			const originalIsConfigSupported = FakeVideoEncoder.isConfigSupported;
-			FakeVideoEncoder.isConfigSupported = async () => ({
-				supported: false,
-				config: undefined,
-			});
+			FakeVideoEncoder.isConfigSupported = () => (new Promise((resolve) => {
+				resolve({
+					supported: false,
+					config: undefined,
+				});
+			})) ;
 
 			const options: VideoEncoderOptions = {
 				width: 1280,

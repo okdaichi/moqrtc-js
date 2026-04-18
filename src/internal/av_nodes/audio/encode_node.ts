@@ -65,7 +65,7 @@ export class AudioEncodeNode extends GainNode {
 		).then(
 			() => {
 				const worklet = new AudioWorkletNode(
-					context,
+					context as unknown as BaseAudioContext,
 					hijackWorkletName,
 					{
 						numberOfInputs: 1,

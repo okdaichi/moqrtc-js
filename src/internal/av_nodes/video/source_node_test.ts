@@ -1,12 +1,8 @@
 import { assert, assertEquals } from "@std/assert";
 import { VideoContext } from "./context.ts";
+import { FakeVideoNode } from "./fake_video_node_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 import { VideoSourceNode } from "./source_node.ts";
-import { VideoNode } from "./video_node.ts";
-
-class MockVideoNode extends VideoNode {
-	process(_input?: VideoFrame): void {}
-}
 
 Deno.test("VideoSourceNode", async (t) => {
 	let context: VideoContext;
@@ -38,7 +34,7 @@ Deno.test("VideoSourceNode", async (t) => {
 		});
 		sourceNode = new VideoSourceNode(context, stream);
 
-		const outputNode = new MockVideoNode();
+		const outputNode = new FakeVideoNode();
 		sourceNode.connect(outputNode);
 
 		const frame = new FakeVideoFrame();

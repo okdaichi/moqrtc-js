@@ -21,9 +21,8 @@ export class FakeGainNode extends EventTarget {
 		super();
 		this.context = context ?? ({} as AudioContext);
 		const initialGain = options?.gain ?? 1.0;
-		const gainNode = this;
 		let _value = initialGain;
-		this.gain = {
+		const gainParam: AudioParam = {
 			get value() {
 				return _value;
 			},
@@ -31,30 +30,30 @@ export class FakeGainNode extends EventTarget {
 				_value = v;
 			},
 			cancelScheduledValues(_startTime: number): AudioParam {
-				return gainNode.gain;
+				return gainParam;
 			},
 			setValueAtTime(value: number, _startTime: number): AudioParam {
 				_value = value;
-				return gainNode.gain;
+				return gainParam;
 			},
 			exponentialRampToValueAtTime(value: number, _endTime: number): AudioParam {
 				_value = value;
-				return gainNode.gain;
+				return gainParam;
 			},
 			linearRampToValueAtTime(value: number, _endTime: number): AudioParam {
 				_value = value;
-				return gainNode.gain;
+				return gainParam;
 			},
 			setTargetAtTime(target: number, _startTime: number, _timeConstant: number): AudioParam {
 				_value = target;
-				return gainNode.gain;
+				return gainParam;
 			},
 			setValueCurveAtTime(
 				_values: Iterable<number>,
 				_startTime: number,
 				_duration: number,
 			): AudioParam {
-				return gainNode.gain;
+				return gainParam;
 			},
 			automationRate: "a-rate" as AutomationRate,
 			defaultValue: 1,
@@ -63,7 +62,8 @@ export class FakeGainNode extends EventTarget {
 			addEventListener: this.addEventListener.bind(this),
 			removeEventListener: this.removeEventListener.bind(this),
 			dispatchEvent: this.dispatchEvent.bind(this),
-		} as unknown as GainNode["gain"];
+		} as unknown as AudioParam;
+		this.gain = gainParam;
 	}
 
 	connect(_destination: AudioNode | AudioParam): AudioNode | void {

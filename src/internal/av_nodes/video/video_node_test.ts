@@ -2,16 +2,9 @@ import { assert, assertEquals } from "@std/assert";
 import { VideoContext } from "./context.ts";
 import { VideoDestinationNode } from "./destination_node.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
-import { VideoNode } from "./video_node.ts";
+import { FakeVideoNode } from "./fake_video_node_test.ts";
 
-// Using shared MockVideoEncoder from test-stubs
-
-// Mock VideoNode for testing abstract class behavior
-class MockVideoNode extends VideoNode {
-	process(_input?: VideoFrame): void {
-		// Mock implementation
-	}
-}
+// Using shared FakeVideoNode for abstract VideoNode behavior tests
 
 Deno.test("VideoContext", async (t) => {
 	const canvas = new FakeHTMLCanvasElement();
@@ -60,7 +53,7 @@ Deno.test("VideoContext", async (t) => {
 	});
 
 	await t.step("should register and unregister nodes", () => {
-		const node = new MockVideoNode();
+		const node = new FakeVideoNode();
 		context["_register"](node);
 		context["_unregister"](node);
 		// No direct assertions possible, but should not throw
@@ -83,7 +76,7 @@ Deno.test("VideoContext", async (t) => {
 });
 
 Deno.test("VideoNode", async (t) => {
-	const node = new MockVideoNode();
+	const node = new FakeVideoNode();
 
 	await t.step("should create VideoNode with default options", () => {
 		assertEquals(node.numberOfInputs, 1);
@@ -93,7 +86,7 @@ Deno.test("VideoNode", async (t) => {
 	});
 
 	await t.step("should create VideoNode with custom options", () => {
-		const customNode = new MockVideoNode({
+		const customNode = new FakeVideoNode({
 			numberOfInputs: 2,
 			numberOfOutputs: 3,
 		});
@@ -102,7 +95,7 @@ Deno.test("VideoNode", async (t) => {
 	});
 
 	await t.step("should connect to another node", () => {
-		const node2 = new MockVideoNode();
+		const node2 = new FakeVideoNode();
 		const result = node.connect(node2);
 		assertEquals(result, node2);
 		assert(node.outputs.has(node2));
@@ -117,7 +110,7 @@ Deno.test("VideoNode", async (t) => {
 	});
 
 	await t.step("should disconnect from specific node", () => {
-		const node2 = new MockVideoNode();
+		const node2 = new FakeVideoNode();
 		node.connect(node2);
 		node.disconnect(node2);
 		assert(!node.outputs.has(node2));
@@ -125,8 +118,8 @@ Deno.test("VideoNode", async (t) => {
 	});
 
 	await t.step("should disconnect from all nodes", () => {
-		const node2 = new MockVideoNode();
-		const node3 = new MockVideoNode();
+		const node2 = new FakeVideoNode();
+		const node3 = new FakeVideoNode();
 		node.connect(node2);
 		node.connect(node3);
 		node.disconnect();
@@ -136,7 +129,7 @@ Deno.test("VideoNode", async (t) => {
 	});
 
 	await t.step("should dispose and disconnect", () => {
-		const node2 = new MockVideoNode();
+		const node2 = new FakeVideoNode();
 		node.connect(node2);
 		node.dispose();
 		assertEquals(node.outputs.size, 0);

@@ -40,7 +40,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 			);
 			stubGlobal("registerProcessor", (
 				name: string,
-				processor: any,
+				processor: Parameters<typeof registerProcessor>[1],
 			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
 			});
@@ -245,13 +245,11 @@ Deno.test("audio_offload_worklet", async (t) => {
 				}
 
 				assertEquals(mockRegisterProcessor.calls.length, 1);
-				const [name, processorCtor] = mockRegisterProcessor.calls[0];
+				const [name, processorCtor] = mockRegisterProcessor.calls[0]!;
 				assertEquals(name, "audio-offloader");
 				assertEquals(typeof processorCtor, "function");
 
-				const ProcessorCtor = processorCtor as new (
-					options: any,
-				) => any;
+				const ProcessorCtor = processorCtor as AudioOffloadProcessorConstructor;
 				const instance = new ProcessorCtor({
 					channelCount: 2,
 					processorOptions: {
@@ -300,7 +298,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 
 			stubGlobal("registerProcessor", (
 				name: string,
-				processor: any,
+				processor: Parameters<typeof registerProcessor>[1],
 			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
 			});
@@ -313,13 +311,13 @@ Deno.test("audio_offload_worklet", async (t) => {
 					globalThis.registerProcessor(
 						"audio-offloader",
 						class AudioOffloadProcessor extends AudioWorkletProcessor {
-							constructor(_options: any) {
+							constructor(_options: AudioWorkletNodeOptions) {
 								super();
-								this.port = { onmessage: undefined };
+								this.port = ({ onmessage: undefined } as unknown as MessagePort);
 							}
-							override port: any;
+							override port: MessagePort;
 
-							process(_inputs: any) {
+							process(_inputs: Float32Array[][]) {
 								return true;
 							}
 						},
@@ -345,7 +343,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 		);
 		stubGlobal("registerProcessor", (
 			name: string,
-			processor: any,
+			processor: Parameters<typeof registerProcessor>[1],
 		) => {
 			mockRegisterProcessor.calls.push([name, processor]);
 		});
@@ -357,7 +355,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 					class AudioOffloadProcessor extends AudioWorkletProcessor {
 						#channelsBuffer: Float32Array[] = [];
 
-						constructor(options: any) {
+						constructor(options: AudioWorkletNodeOptions) {
 							super();
 							if (!options.processorOptions) {
 								throw new Error("processorOptions is required");
@@ -414,9 +412,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 				);
 			}
 
-			const ProcessorCtor = mockRegisterProcessor.calls[0][1] as new (
-				options: any,
-			) => any;
+			const ProcessorCtor = mockRegisterProcessor.calls[0]![1] as AudioOffloadProcessorConstructor;
 
 			assertThrows(
 				() => new ProcessorCtor({}),
@@ -453,16 +449,21 @@ Deno.test("audio_offload_worklet", async (t) => {
 	});
 
 	await t.step("AudioOffloadProcessor", async (t) => {
-		let processor: any;
-		let mockPort: any;
+		let processor: AudioOffloadProcessorInstance;
+		let mockPort: {
+			messages?: unknown[];
+			postedMessages?: unknown[];
+			onmessage?: (message: { data: { channels: Float32Array[]; timestamp: number } }) => void;
+			postMessage?: (message: unknown) => void;
+		};
 
 		await t.step("setup", () => {
 			mockPort = {
-				onmessage: (message: any) => {
+				onmessage: (message: { data: { channels: Float32Array[]; timestamp: number } }) => {
 					mockPort.messages = mockPort.messages || [];
 					mockPort.messages.push(message);
 				},
-				postMessage: (message: any) => {
+				postMessage: (message: unknown) => {
 					mockPort.postedMessages = mockPort.postedMessages || [];
 					mockPort.postedMessages.push(message);
 				},
@@ -475,7 +476,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 			stubGlobal(
 				"AudioWorkletProcessor",
 				class MockAudioWorkletProcessor {
-					port = mockPort;
+					port = mockPort as unknown as MessagePort;
 				},
 			);
 
@@ -483,7 +484,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
 			stubGlobal("registerProcessor", (
 				name: string,
-				processor: any,
+				processor: Parameters<typeof registerProcessor>[1],
 			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
 			});
@@ -682,7 +683,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 				}
 
 				// Create processor instance
-				const AudioOffloadProcessor = mockRegisterProcessor.calls[0][1];
+				const AudioOffloadProcessor = mockRegisterProcessor.calls[0]![1] as AudioOffloadProcessorConstructor;
 				processor = new AudioOffloadProcessor({
 					channelCount: 2,
 					processorOptions: {
@@ -813,6 +814,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 			const message = { data: { channels, timestamp: 123 } };
 
 			// Call the onmessage handler directly
+			assertExists(mockPort.onmessage);
 			mockPort.onmessage(message);
 
 			// Verify data was appended

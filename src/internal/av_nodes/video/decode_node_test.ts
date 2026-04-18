@@ -3,13 +3,9 @@ import { deleteGlobal, stubGlobal } from "../../../test-utils_test.ts";
 import { VideoContext } from "./context.ts";
 import { VideoDecodeNode } from "./decode_node.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
+import { FakeVideoNode } from "./fake_video_node_test.ts";
 import { FakeVideoDecoder } from "./fake_videodecoder_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
-import { VideoNode } from "./video_node.ts";
-
-class MockVideoNode extends VideoNode {
-	process(_input?: VideoFrame): void {}
-}
 
 Deno.test("VideoDecodeNode", async (t) => {
 	let context: VideoContext;
@@ -21,7 +17,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 		// Mock the global VideoDecoder, capturing the config so we can trigger callbacks
 		mockDecoder = new FakeVideoDecoder({ output: () => {}, error: () => {} });
 		let capturedOutput: ((frame: VideoFrame) => void) | undefined;
-		stubGlobal("VideoDecoder", function (config: any) {
+		stubGlobal("VideoDecoder", function (config: VideoDecoderInit) {
 			capturedOutput = config.output;
 			return mockDecoder;
 		});
@@ -71,7 +67,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 		// VideoDecodeNode decodes in decodeFrom method, not in process
 		// process method passes decoded frames to next nodes
 		const frame = new FakeVideoFrame();
-		const outputNode = new MockVideoNode();
+		const outputNode = new FakeVideoNode();
 		decoderNode.connect(outputNode);
 		let processCalled = false;
 		let processFrame: VideoFrame | undefined;
@@ -110,7 +106,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 
 	await t.step(
 		"should pass decoded frames to outputs when decoder outputs frame",
-		async () => {
+		() => {
 			const config: VideoDecoderConfig = {
 				codec: "vp8",
 				codedWidth: 640,
@@ -119,7 +115,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 			decoderNode.configure(config);
 
 			// Connect an output node
-			const outputNode = new MockVideoNode();
+			const outputNode = new FakeVideoNode();
 			decoderNode.connect(outputNode);
 			let processCalled = false;
 			let processFrame: VideoFrame | undefined;
@@ -148,7 +144,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 			decoderNode.configure(config);
 
 			// Connect an output node that throws an error
-			const outputNode = new MockVideoNode();
+			const outputNode = new FakeVideoNode();
 			decoderNode.connect(outputNode);
 			let processCalled = false;
 			let processFrame: VideoFrame | undefined;
@@ -245,7 +241,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 		const freshMockDecoder = new FakeVideoDecoder(
 			{ output: () => {}, error: () => {} },
 		);
-		stubGlobal("VideoDecoder", function (_config: any) {
+		stubGlobal("VideoDecoder", function (_config: VideoDecoderInit) {
 			return freshMockDecoder;
 		});
 		const freshNode = new VideoDecodeNode(context);
