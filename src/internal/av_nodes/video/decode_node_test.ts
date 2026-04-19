@@ -274,8 +274,8 @@ Deno.test("VideoDecodeNode", async (t) => {
 		const mockReader = new ReadableStream({
 			start(controller) {
 				controller.enqueue({
-					bytes: new Uint8Array([0, 0, 0, 0, 1, 2, 3]),
-				});
+						timestamp: 0,
+					} as EncodedVideoChunk);
 				controller.close();
 			},
 		});
@@ -284,4 +284,150 @@ Deno.test("VideoDecodeNode", async (t) => {
 
 		assert(freshMockDecoder.decodeCalled);
 	});
+
+	await t.step(
+		"should recover from backpressure when dequeue fires",
+		async () => {
+			// Decoder that fills the queue, then drains via dequeue event
+			class SlowDrainVideoDecoder extends EventTarget {
+				state: CodecState = "configured";
+				decodeQueueSize = 0;
+				decodeCalls: EncodedVideoChunk[][] = [];
+
+				constructor() {
+					super();
+				}
+
+				configure(): void {
+					this.state = "configured";
+				}
+
+				decode(chunk: EncodedVideoChunk): void {
+					this.decodeCalls.push([chunk]);
+					this.decodeQueueSize++;
+					// Drain after a microtask (simulates real decoder)
+					queueMicrotask(() => {
+						this.decodeQueueSize--;
+						this.dispatchEvent(new Event("dequeue"));
+					});
+				}
+
+				flush(): Promise<void> {
+					return Promise.resolve();
+				}
+
+				close(): void {
+					this.state = "closed";
+				}
+			}
+
+			const slowDecoder = new SlowDrainVideoDecoder();
+			const restoreSlowDecoder = overrideVideoDecoder(
+				function (_config: VideoDecoderInit) {
+					return slowDecoder;
+				},
+			);
+
+			const slowNode = new VideoDecodeNode(context);
+			restoreSlowDecoder();
+
+			slowNode.configure({
+				codec: "vp8",
+				codedWidth: 640,
+				codedHeight: 480,
+			});
+
+			// Prefill queue above MAX_QUEUE_SIZE (3)
+			slowDecoder.decodeQueueSize = 4;
+
+			const stream = new ReadableStream<EncodedVideoChunk>({
+				start(controller) {
+					controller.enqueue({ timestamp: 0 } as EncodedVideoChunk);
+					controller.close();
+				},
+			});
+
+			// Fire dequeue after a microtask to simulate drain
+			queueMicrotask(() => {
+				slowDecoder.decodeQueueSize = 0;
+				slowDecoder.dispatchEvent(new Event("dequeue"));
+			});
+
+			await slowNode.decodeFrom(stream).done;
+
+			// Chunk should have been decoded after queue drained
+			assertEquals(slowDecoder.decodeCalls.length, 1);
+		},
+	);
+
+	await t.step(
+		"should drop stalled chunks after dequeue timeout",
+		async () => {
+			const originalSetTimeout = globalThis.setTimeout;
+			globalThis.setTimeout = (callback: TimerHandler, ...args: unknown[]) =>
+				originalSetTimeout(callback, 1, ...args);
+
+			class StalledVideoDecoder extends EventTarget {
+				state: CodecState = "configured";
+				decodeQueueSize = 0;
+				decodeCalls: EncodedVideoChunk[][] = [];
+
+				constructor() {
+					super();
+				}
+
+				configure(): void {
+					this.state = "configured";
+				}
+
+				decode(chunk: EncodedVideoChunk): void {
+					this.decodeCalls.push([chunk]);
+					this.decodeQueueSize++;
+				}
+
+				flush(): Promise<void> {
+					return Promise.resolve();
+				}
+
+				close(): void {
+					this.state = "closed";
+				}
+			}
+
+			const restoreStalledVideoDecoder = overrideVideoDecoder(
+				function (_config: VideoDecoderInit) {
+					return new StalledVideoDecoder();
+				},
+			);
+
+			const stalledNode = new VideoDecodeNode(context);
+			restoreStalledVideoDecoder();
+
+			const config: VideoDecoderConfig = {
+				codec: "vp8",
+				codedWidth: 640,
+				codedHeight: 480,
+			};
+			stalledNode.configure(config);
+
+			const stream = new ReadableStream<EncodedVideoChunk>({
+				start(controller) {
+					for (let i = 0; i < 5; i++) {
+						controller.enqueue({
+							timestamp: i * 1000,
+						} as EncodedVideoChunk);
+					}
+					controller.close();
+				},
+			});
+
+			try {
+				await stalledNode.decodeFrom(stream).done;
+
+				assertEquals(stalledNode.decodeQueueSize, 4);
+			} finally {
+				globalThis.setTimeout = originalSetTimeout;
+			}
+		},
+	);
 });
