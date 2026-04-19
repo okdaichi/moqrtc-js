@@ -86,12 +86,10 @@ Deno.test(
 			canvas = new FakeHTMLCanvasElement();
 
 			// Mock global functions
-			const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
-			const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
 
 			let requestedId = 0;
-			stubGlobal("cancelAnimationFrame", () => {});
-			stubGlobal(
+			const restoreCancelAnimationFrame = stubGlobal("cancelAnimationFrame", () => {});
+			const restoreRequestAnimationFrame = stubGlobal(
 				"requestAnimationFrame",
 				() => {
 					requestedId = 123;
@@ -116,8 +114,8 @@ Deno.test(
 			// assert(cancelAnimationFrame called with 123);
 
 			// Restore globals
-			stubGlobal("cancelAnimationFrame", originalCancelAnimationFrame);
-			stubGlobal("requestAnimationFrame", originalRequestAnimationFrame);
+			restoreCancelAnimationFrame();
+			restoreRequestAnimationFrame();
 		});
 
 		await t.step(
@@ -127,11 +125,9 @@ Deno.test(
 				canvas = new FakeHTMLCanvasElement();
 
 				// Mock global functions so rAF callback never runs (we only test pending replacement)
-				const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
-				const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
 
 				let nextId = 1;
-				stubGlobal(
+				const restoreRequestAF = stubGlobal(
 					"requestAnimationFrame",
 					(cb: FrameRequestCallback) => {
 						// Intentionally do not invoke cb
@@ -139,7 +135,7 @@ Deno.test(
 						return nextId++;
 					},
 				);
-				stubGlobal("cancelAnimationFrame", () => {});
+				const restoreCancelAF = stubGlobal("cancelAnimationFrame", () => {});
 
 				try {
 					const destinationNode = new VideoDestinationNode(
@@ -167,8 +163,8 @@ Deno.test(
 					assertEquals(closed, 1);
 				} finally {
 					// Restore globals
-					stubGlobal("cancelAnimationFrame", originalCancelAnimationFrame);
-					stubGlobal("requestAnimationFrame", originalRequestAnimationFrame);
+					restoreCancelAF();
+					restoreRequestAF();
 				}
 			},
 		);
