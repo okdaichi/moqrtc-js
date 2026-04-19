@@ -123,6 +123,14 @@ export function createWorkletBlobUrl(): string {
 
 	// Write the generated file
 	await Deno.writeTextFile(info.outputFile, tsContent);
+
+	// Format the generated file according to deno.json fmt settings
+	const fmt = new Deno.Command("deno", { args: ["fmt", info.outputFile] });
+	const fmtResult = await fmt.output();
+	if (!fmtResult.success) {
+		throw new Error(`deno fmt failed for ${basename(info.outputFile)}`);
+	}
+
 	console.log(`✅ Generated ${basename(info.outputFile)}`);
 }
 
