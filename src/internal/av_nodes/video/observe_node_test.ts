@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { deleteGlobal, stubGlobal } from "../../test-utils_test.ts";
+import { deleteGlobal, stubGlobal } from "../test-utils.ts";
 import { VideoContext } from "./context.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
 import { FakeVideoNode } from "./fake_video_node_test.ts";

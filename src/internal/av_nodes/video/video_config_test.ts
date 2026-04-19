@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
-import { stubGlobal } from "../../test-utils_test.ts";
+import { stubGlobal } from "../test-utils.ts";
 import { FakeVideoEncoder } from "./fake_videoencoder_test.ts";
 import {
 	upgradeEncoderConfig,

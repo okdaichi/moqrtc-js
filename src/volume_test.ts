@@ -2,22 +2,7 @@
 import { assertEquals } from "@std/assert";
 import { FakeAudioContext } from "./internal/av_nodes/audio/fake_audio_context_test.ts";
 import { FakeGainNode } from "./internal/av_nodes/audio/fake_gainnode_test.ts";
-
-// Local test-only stubbing utilities (keeps stubs scoped to this package/test file)
-function stubGlobal(key: string, value: unknown): () => void {
-	const g = globalThis as unknown as Record<string, unknown>;
-	const had = Object.prototype.hasOwnProperty.call(g, key);
-	const original = g[key];
-	g[key] = value;
-	return () => {
-		if (had) g[key] = original;
-		else delete g[key];
-	};
-}
-
-function deleteGlobal(key: string): void {
-	delete (globalThis as unknown as Record<string, unknown>)[key];
-}
+import { deleteGlobal, stubGlobal } from "./test-utils.ts";
 
 const originalAudioContext = (globalThis as unknown as Record<string, unknown>).AudioContext as
 	| (new (...args: unknown[]) => AudioContext)

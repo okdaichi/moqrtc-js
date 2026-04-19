@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { stubGlobal } from "../../test-utils_test.ts";
+import { stubGlobal } from "../test-utils.ts";
 import type { VideoFrameAnalysis } from "./analyse_node.ts";
 import { VideoAnalyserNode } from "./analyse_node.ts";
 import { VideoContext } from "./context.ts";
