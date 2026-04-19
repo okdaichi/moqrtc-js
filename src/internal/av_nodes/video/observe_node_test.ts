@@ -111,8 +111,8 @@ Deno.test("VideoObserveNode", async (t) => {
 	});
 
 	await t.step("should handle process errors gracefully", () => {
-const errorNode = new FakeVideoNode();
-	const outputNode = new FakeVideoNode();
+		const errorNode = new FakeVideoNode();
+		const outputNode = new FakeVideoNode();
 		observeNode.connect(errorNode);
 		observeNode.connect(outputNode);
 
@@ -138,7 +138,7 @@ const errorNode = new FakeVideoNode();
 	});
 
 	await t.step("should dispose and disconnect observer", () => {
-const outputNode = new FakeVideoNode();
+		const outputNode = new FakeVideoNode();
 		observeNode.connect(outputNode);
 
 		observeNode.dispose();

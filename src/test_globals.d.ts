@@ -36,13 +36,6 @@ declare global {
 	/* ------------------------------------------------------------------ */
 	var originalConsoleWarn: typeof console.warn;
 	var warnCalls: unknown[][];
-
-	/* ------------------------------------------------------------------ */
-	/*  Build-time injection constants (also declared in volume.ts)        */
-	/* ------------------------------------------------------------------ */
-	var __DEFAULT_VOLUME__: number | undefined;
-	var __DEFAULT_MIN_GAIN__: number | undefined;
-	var __DEFAULT_FADE_TIME__: number | undefined;
 }
 
 export {};

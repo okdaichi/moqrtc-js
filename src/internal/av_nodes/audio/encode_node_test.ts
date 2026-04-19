@@ -11,15 +11,16 @@ import { FakeAudioData } from "./fake_audiodata_test.ts";
 import { FakeAudioEncoder } from "./fake_audioencoder_test.ts";
 import { FakeGainNode } from "./fake_gainnode_test.ts";
 
-// encode_node.ts must be loaded AFTER GainNode is stubbed (fake_gainnode_test.ts
-// side-effect). Because `deno fmt` reorders static imports alphabetically, we
-// use a dynamic import so the module evaluation order is deterministic.
+const originalGlobalGainNode = (globalThis as unknown as Record<string, unknown>).GainNode as
+	| typeof GainNode
+	| undefined;
+stubGlobal("GainNode", FakeGainNode);
+
 const { AudioEncodeNode } = await import("./encode_node.ts");
 
 Deno.test("AudioEncodeNode", async (t) => {
 	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
 	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
-	let originalGainNode: typeof globalThis.GainNode | undefined;
 	let context: FakeAudioContext;
 	let encodeNode: AudioEncodeNodeType;
 
@@ -27,12 +28,10 @@ Deno.test("AudioEncodeNode", async (t) => {
 		// Store originals
 		originalAudioEncoder = globalThis.AudioEncoder;
 		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-		originalGainNode = globalThis.GainNode;
 
 		// Setup mocks
 		stubGlobal("AudioEncoder", FakeAudioEncoder);
 		stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
-		stubGlobal("GainNode", FakeGainNode);
 
 		context = new FakeAudioContext();
 		encodeNode = new AudioEncodeNode(context);
@@ -361,7 +360,8 @@ Deno.test("AudioEncodeNode", async (t) => {
 			});
 
 			const mockDest: AudioEncodeDestination = {
-				output: (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => Promise.resolve(undefined),
+				output: (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) =>
+					Promise.resolve(undefined),
 			};
 
 			const config: AudioEncoderConfig = {
@@ -416,7 +416,7 @@ Deno.test("AudioEncodeNode", async (t) => {
 		// Restore originals
 		stubGlobal("AudioEncoder", originalAudioEncoder);
 		stubGlobal("AudioWorkletNode", originalAudioWorkletNode);
-		stubGlobal("GainNode", originalGainNode);
+		stubGlobal("GainNode", originalGlobalGainNode);
 
 		encodeNode.dispose();
 	});
@@ -426,21 +426,14 @@ Deno.test("AudioEncodeNode", async (t) => {
 Deno.test("AudioEncodeNode - edge cases", async (t) => {
 	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
 	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
-	let originalGainNode: typeof globalThis.GainNode | undefined;
 	let context: FakeAudioContext;
 
 	await t.step("setup", () => {
 		originalAudioEncoder = globalThis.AudioEncoder;
 		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-		originalGainNode = globalThis.GainNode;
-
-		originalAudioEncoder = globalThis.AudioEncoder;
-		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-		originalGainNode = globalThis.GainNode;
 
 		stubGlobal("AudioEncoder", FakeAudioEncoder);
 		stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
-		stubGlobal("GainNode", FakeGainNode);
 
 		context = new FakeAudioContext();
 	});
@@ -490,7 +483,7 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 	await t.step("cleanup", () => {
 		stubGlobal("AudioEncoder", originalAudioEncoder);
 		stubGlobal("AudioWorkletNode", originalAudioWorkletNode);
-		stubGlobal("GainNode", originalGainNode);
+		stubGlobal("GainNode", originalGlobalGainNode);
 	});
 });
 
@@ -498,18 +491,15 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
 	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
-	let originalGainNode: typeof globalThis.GainNode | undefined;
 	let context: FakeAudioContext;
 	let encodeNode: AudioEncodeNodeType;
 
 	await t.step("setup", () => {
 		originalAudioEncoder = globalThis.AudioEncoder;
 		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-		originalGainNode = globalThis.GainNode;
 
 		stubGlobal("AudioEncoder", FakeAudioEncoder);
 		stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
-		stubGlobal("GainNode", FakeGainNode);
 
 		context = new FakeAudioContext();
 		encodeNode = new AudioEncodeNode(context);
@@ -559,7 +549,7 @@ Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 	await t.step("cleanup", () => {
 		stubGlobal("AudioEncoder", originalAudioEncoder);
 		stubGlobal("AudioWorkletNode", originalAudioWorkletNode);
-		stubGlobal("GainNode", originalGainNode);
+		stubGlobal("GainNode", originalGlobalGainNode);
 		encodeNode.dispose();
 	});
 });

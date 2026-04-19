@@ -164,7 +164,7 @@ Deno.test("VideoConfig", async (t) => {
 					supported: false,
 					config: undefined,
 				});
-			})) ;
+			}));
 
 			const options: VideoEncoderOptions = {
 				width: 1280,

@@ -339,7 +339,7 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		context = new VideoContext({ canvas });
 		analyserNode = new VideoAnalyserNode(context);
 
-const errorNode = new FakeVideoNode();
+		const errorNode = new FakeVideoNode();
 		errorNode.process = () => {
 			throw new Error("Processing error");
 		};

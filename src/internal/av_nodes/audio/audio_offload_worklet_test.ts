@@ -313,7 +313,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 						class AudioOffloadProcessor extends AudioWorkletProcessor {
 							constructor(_options: AudioWorkletNodeOptions) {
 								super();
-								this.port = ({ onmessage: undefined } as unknown as MessagePort);
+								this.port = { onmessage: undefined } as unknown as MessagePort;
 							}
 							override port: MessagePort;
 
@@ -412,7 +412,8 @@ Deno.test("audio_offload_worklet", async (t) => {
 				);
 			}
 
-			const ProcessorCtor = mockRegisterProcessor.calls[0]![1] as AudioOffloadProcessorConstructor;
+			const ProcessorCtor = mockRegisterProcessor
+				.calls[0]![1] as AudioOffloadProcessorConstructor;
 
 			assertThrows(
 				() => new ProcessorCtor({}),
@@ -453,7 +454,9 @@ Deno.test("audio_offload_worklet", async (t) => {
 		let mockPort: {
 			messages?: unknown[];
 			postedMessages?: unknown[];
-			onmessage?: (message: { data: { channels: Float32Array[]; timestamp: number } }) => void;
+			onmessage?: (
+				message: { data: { channels: Float32Array[]; timestamp: number } },
+			) => void;
 			postMessage?: (message: unknown) => void;
 		};
 
@@ -683,7 +686,8 @@ Deno.test("audio_offload_worklet", async (t) => {
 				}
 
 				// Create processor instance
-				const AudioOffloadProcessor = mockRegisterProcessor.calls[0]![1] as AudioOffloadProcessorConstructor;
+				const AudioOffloadProcessor = mockRegisterProcessor
+					.calls[0]![1] as AudioOffloadProcessorConstructor;
 				processor = new AudioOffloadProcessor({
 					channelCount: 2,
 					processorOptions: {

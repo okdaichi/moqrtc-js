@@ -75,7 +75,3 @@ export class FakeGainNode extends EventTarget {
 
 	disconnect(): void {}
 }
-
-// Set globally so `class X extends GainNode` works when this module is imported first.
-import { stubGlobal } from "../../../test-utils_test.ts";
-stubGlobal("GainNode", FakeGainNode);
