@@ -32,23 +32,19 @@ export class VolumeController extends GainNode {
 			...gainOptions
 		} = options ?? {};
 
-		const normalizedDefaultVolume = VolumeController.normalizeNumber(
-			defaultVolume ?? VolumeController.DEFAULT_VOLUME,
-			VolumeController.DEFAULT_VOLUME,
-			(value) => value >= 0 && value <= 1,
-		);
+		const normalizedDefaultVolume =
+			defaultVolume != undefined && defaultVolume >= 0 && defaultVolume <= 1
+				? defaultVolume
+				: VolumeController.DEFAULT_VOLUME;
 
-		const normalizedMinGain = VolumeController.normalizeNumber(
-			minGain ?? VolumeController.DEFAULT_MIN_GAIN,
-			VolumeController.DEFAULT_MIN_GAIN,
-			(value) => value > 0 && value < 0.01,
-		);
+		const normalizedMinGain = minGain != undefined && minGain > 0 && minGain < 0.01
+			? minGain
+			: VolumeController.DEFAULT_MIN_GAIN;
 
-		const normalizedFadeTimeMs = VolumeController.normalizeNumber(
-			fadeTimeMs ?? VolumeController.DEFAULT_FADE_TIME_MS,
-			VolumeController.DEFAULT_FADE_TIME_MS,
-			(value) => value > 0.01 && value < 1.0,
-		);
+		const normalizedFadeTimeMs =
+			fadeTimeMs != undefined && fadeTimeMs > 0.01 && fadeTimeMs < 1.0
+				? fadeTimeMs
+				: VolumeController.DEFAULT_FADE_TIME_MS;
 
 		const initialVolumeValue = initialVolume ?? normalizedDefaultVolume;
 		const clampedInitial = Math.min(
@@ -62,16 +58,6 @@ export class VolumeController extends GainNode {
 		this.#minGain = normalizedMinGain;
 		this.#fadeTimeMs = normalizedFadeTimeMs;
 		this.#unmuteVolume = clampedInitial === 0 ? normalizedDefaultVolume : clampedInitial;
-	}
-
-	static normalizeNumber(
-		value: unknown,
-		fallback: number,
-		validator: (value: number) => boolean,
-	): number {
-		return typeof value === "number" && Number.isFinite(value) && validator(value)
-			? value
-			: fallback;
 	}
 
 	#clamp(v: number): number {
