@@ -5,31 +5,38 @@
  * Optional defaults are passed through constructor options instead of build-time globals.
  */
 
-export interface VolumeControllerOptions extends GainOptions {
+export interface VolumeControllerOptions {
 	initialVolume?: number;
 	defaultVolume?: number;
 	minGain?: number;
 	fadeTimeMs?: number;
 }
 
-export class VolumeController extends GainNode {
+type VolumeGainNode = {
+	readonly context: AudioContext;
+	readonly gain: AudioParam;
+};
+
+export class VolumeController {
 	static readonly DEFAULT_VOLUME = 0.5;
 	static readonly DEFAULT_MIN_GAIN = 0.001;
 	static readonly DEFAULT_FADE_TIME_MS = 80;
 
+	readonly gainNode: VolumeGainNode;
 	#muted = false;
 	#unmuteVolume: number;
 	#defaultVolume: number;
 	#minGain: number;
 	#fadeTimeMs: number;
 
-	constructor(audioContext: AudioContext, options?: VolumeControllerOptions) {
+	constructor(gainNode: VolumeGainNode, options?: VolumeControllerOptions) {
+		this.gainNode = gainNode;
+
 		const {
 			initialVolume,
 			defaultVolume,
 			minGain,
 			fadeTimeMs,
-			...gainOptions
 		} = options ?? {};
 
 		const normalizedDefaultVolume =
@@ -52,7 +59,10 @@ export class VolumeController extends GainNode {
 			Math.max(0, isFinite(initialVolumeValue) ? initialVolumeValue : 1),
 		);
 
-		super(audioContext, { ...gainOptions, gain: clampedInitial });
+		const now = this.gainNode.context.currentTime;
+		const gainParam = this.gainNode.gain;
+		gainParam.cancelScheduledValues(now);
+		gainParam.setValueAtTime(clampedInitial, now);
 
 		this.#defaultVolume = normalizedDefaultVolume;
 		this.#minGain = normalizedMinGain;
@@ -66,8 +76,8 @@ export class VolumeController extends GainNode {
 
 	setVolume(v: number) {
 		const clamped = this.#clamp(v);
-		const now = this.context.currentTime;
-		const gainParam = this.gain;
+		const now = this.gainNode.context.currentTime;
+		const gainParam = this.gainNode.gain;
 
 		gainParam.cancelScheduledValues(now);
 		gainParam.setValueAtTime(gainParam.value, now);
@@ -88,8 +98,8 @@ export class VolumeController extends GainNode {
 		if (m === this.#muted) return;
 		this.#muted = m;
 
-		const now = this.context.currentTime;
-		const gainParam = this.gain;
+		const now = this.gainNode.context.currentTime;
+		const gainParam = this.gainNode.gain;
 		gainParam.cancelScheduledValues(now);
 		gainParam.setValueAtTime(gainParam.value, now);
 
@@ -115,6 +125,6 @@ export class VolumeController extends GainNode {
 	}
 
 	get volume(): number {
-		return this.gain.value;
+		return this.gainNode.gain.value;
 	}
 }

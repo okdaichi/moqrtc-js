@@ -770,9 +770,9 @@ Deno.test("audio_offload_worklet", async (t) => {
 			];
 			const message = { data: { channels, timestamp: 123 } };
 
-			// Call the onmessage handler directly
-			assertExists(mockPort.onmessage);
-			mockPort.onmessage(message);
+			// Call the actual processor port onmessage handler directly
+			assertExists(processor.port.onmessage);
+			processor.port.onmessage(message);
 
 			// Verify data was appended
 			const outputs = [[new Float32Array(2), new Float32Array(2)]];

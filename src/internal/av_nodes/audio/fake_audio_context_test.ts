@@ -5,6 +5,7 @@
  */
 export class FakeAudioContext {
 	sampleRate = 44100;
+	currentTime = 0;
 	destination = {
 		channelCount: 2,
 	};

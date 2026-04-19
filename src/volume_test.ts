@@ -2,230 +2,127 @@
 import { assertEquals } from "@std/assert";
 import { FakeAudioContext } from "./internal/av_nodes/audio/fake_audio_context_test.ts";
 import { FakeGainNode } from "./internal/av_nodes/audio/fake_gainnode_test.ts";
-
-function overrideAudioContext(value: unknown): () => void {
-	const g = globalThis as unknown as Record<string, unknown>;
-	const hasAudioContext = Object.prototype.hasOwnProperty.call(g, "AudioContext");
-	const originalAudioContext = g.AudioContext;
-	g.AudioContext = value;
-	return () => {
-		if (hasAudioContext) {
-			g.AudioContext = originalAudioContext;
-		} else {
-			delete g.AudioContext;
-		}
-	};
-}
-
-function overrideGainNode(value: unknown): () => void {
-	const g = globalThis as unknown as Record<string, unknown>;
-	const hasGainNode = Object.prototype.hasOwnProperty.call(g, "GainNode");
-	const originalGainNode = g.GainNode;
-	g.GainNode = value;
-	return () => {
-		if (hasGainNode) {
-			g.GainNode = originalGainNode;
-		} else {
-			delete g.GainNode;
-		}
-	};
-}
-
-function setupVolumeMocks(): () => void {
-	const restoreAudioContext = overrideAudioContext(FakeAudioContext);
-	const restoreGainNode = overrideGainNode(FakeGainNode);
-	return () => {
-		restoreAudioContext();
-		restoreGainNode();
-	};
-}
-
-import type { VolumeController } from "./volume.ts";
-const { VolumeController: VolumeControllerClass } = await import("./volume.ts");
+import { VolumeController } from "./volume.ts";
 
 Deno.test("VolumeController", async (t) => {
-	const restoreVolumeMocks = setupVolumeMocks();
-	try {
-		let audioContext: AudioContext;
-		let controller: VolumeController;
+	let audioContext: AudioContext;
+	let controller: VolumeController;
 
-		const setupControllerTest = () => {
-			audioContext = new AudioContext();
-			controller = new VolumeControllerClass(audioContext);
-		};
+	const setupControllerTest = (options?: {
+		initialVolume?: number;
+		defaultVolume?: number;
+		minGain?: number;
+		fadeTimeMs?: number;
+	}) => {
+		audioContext = new FakeAudioContext() as unknown as AudioContext;
+		const gainNode = new FakeGainNode(audioContext);
+		controller = new VolumeController(gainNode, options);
+	};
 
-		const cleanupControllerTest = () => {
-			controller.disconnect();
-		};
-
-		await t.step("constructor", async (t) => {
-			await t.step("creates with default volume", () => {
-				setupControllerTest();
-				try {
-					assertEquals(controller.volume, 0.5);
-					assertEquals(controller.muted, false);
-				} finally {
-					cleanupControllerTest();
-				}
-			});
-
-			await t.step("creates with custom initial volume", () => {
-				audioContext = new AudioContext();
-				const customController = new VolumeControllerClass(audioContext, {
-					initialVolume: 0.8,
-				});
-				try {
-					assertEquals(customController.volume, 0.8);
-				} finally {
-					customController.disconnect();
-				}
-			});
-
-			await t.step("creates with custom default volume", () => {
-				audioContext = new AudioContext();
-				const customController = new VolumeControllerClass(audioContext, {
-					defaultVolume: 0.7,
-				});
-				try {
-					assertEquals(customController.volume, 0.7);
-				} finally {
-					customController.disconnect();
-				}
-			});
-
-			await t.step("uses custom fade time", () => {
-				audioContext = new AudioContext();
-				const customController = new VolumeControllerClass(audioContext, {
-					fadeTimeMs: 0.1,
-				});
-				try {
-					customController.setVolume(0.3);
-					assertEquals(customController.volume, 0.3);
-				} finally {
-					customController.disconnect();
-				}
-			});
+	await t.step("constructor", async (t) => {
+		await t.step("creates with default volume", () => {
+			setupControllerTest();
+			assertEquals(controller.volume, 0.5);
+			assertEquals(controller.muted, false);
 		});
 
-		await t.step("setVolume", async (t) => {
-			await t.step("sets volume with fade", () => {
-				setupControllerTest();
-				try {
-					controller.setVolume(0.8);
-					assertEquals(controller.volume, 0.8);
-				} finally {
-					cleanupControllerTest();
-				}
-			});
-
-			await t.step("clamps volume to valid range", () => {
-				setupControllerTest();
-				try {
-					controller.setVolume(-0.1);
-					assertEquals(controller.volume, 0);
-
-					controller.setVolume(1.5);
-					assertEquals(controller.volume, 1);
-
-					controller.setVolume(NaN);
-					assertEquals(controller.volume, 1);
-
-					controller.setVolume(Infinity);
-					assertEquals(controller.volume, 1);
-				} finally {
-					cleanupControllerTest();
-				}
-			});
-
-			await t.step("handles very low volume with exponential ramp", () => {
-				setupControllerTest();
-				try {
-					controller.setVolume(0.0005);
-					assertEquals(controller.volume, 0);
-				} finally {
-					cleanupControllerTest();
-				}
-			});
+		await t.step("creates with custom initial volume", () => {
+			setupControllerTest({ initialVolume: 0.8 });
+			assertEquals(controller.volume, 0.8);
 		});
 
-		await t.step("mute", async (t) => {
-			await t.step("mutes and unmutes", () => {
-				setupControllerTest();
-				try {
-					controller.setVolume(0.7);
-					assertEquals(controller.muted, false);
-
-					controller.mute(true);
-					assertEquals(controller.muted, true);
-
-					controller.mute(false);
-					assertEquals(controller.muted, false);
-				} finally {
-					cleanupControllerTest();
-				}
-			});
-
-			await t.step("mutes low volume correctly", () => {
-				setupControllerTest();
-				try {
-					controller.setVolume(0.0005);
-					controller.mute(true);
-					assertEquals(controller.volume, 0);
-				} finally {
-					cleanupControllerTest();
-				}
-			});
-
-			await t.step("restores previous volume when unmuting", () => {
-				setupControllerTest();
-				try {
-					controller.setVolume(0.6);
-					controller.mute(true);
-					assertEquals(controller.volume, 0);
-
-					controller.mute(false);
-					assertEquals(controller.volume, 0.6);
-				} finally {
-					cleanupControllerTest();
-				}
-			});
-
-			await t.step("uses default volume if unmuting with zero volume", () => {
-				setupControllerTest();
-				try {
-					controller.setVolume(0);
-					controller.mute(true);
-					controller.mute(false);
-					assertEquals(controller.volume, 0.5);
-				} finally {
-					cleanupControllerTest();
-				}
-			});
+		await t.step("creates with custom default volume", () => {
+			setupControllerTest({ defaultVolume: 0.7 });
+			assertEquals(controller.volume, 0.7);
 		});
 
-		await t.step("getters", async (t) => {
-			await t.step("volume getter returns current gain value", () => {
-				setupControllerTest();
-				try {
-					controller.setVolume(0.4);
-					assertEquals(controller.volume, 0.4);
-				} finally {
-					cleanupControllerTest();
-				}
-			});
-
-			await t.step("muted getter returns mute state", () => {
-				setupControllerTest();
-				try {
-					assertEquals(controller.muted, false);
-					controller.mute(true);
-					assertEquals(controller.muted, true);
-				} finally {
-					cleanupControllerTest();
-				}
-			});
+		await t.step("uses custom fade time", () => {
+			setupControllerTest({ fadeTimeMs: 0.1 });
+			controller.setVolume(0.3);
+			assertEquals(controller.volume, 0.3);
 		});
-	} finally {
-		restoreVolumeMocks();
-	}
+	});
+
+	await t.step("setVolume", async (t) => {
+		await t.step("sets volume with fade", () => {
+			setupControllerTest();
+			controller.setVolume(0.8);
+			assertEquals(controller.volume, 0.8);
+		});
+
+		await t.step("clamps volume to valid range", () => {
+			setupControllerTest();
+			controller.setVolume(-0.1);
+			assertEquals(controller.volume, 0);
+
+			controller.setVolume(1.5);
+			assertEquals(controller.volume, 1);
+
+			controller.setVolume(NaN);
+			assertEquals(controller.volume, 1);
+
+			controller.setVolume(Infinity);
+			assertEquals(controller.volume, 1);
+		});
+
+		await t.step("handles very low volume with exponential ramp", () => {
+			setupControllerTest();
+			controller.setVolume(0.0005);
+			assertEquals(controller.volume, 0);
+		});
+	});
+
+	await t.step("mute", async (t) => {
+		await t.step("mutes and unmutes", () => {
+			setupControllerTest();
+			controller.setVolume(0.7);
+			assertEquals(controller.muted, false);
+
+			controller.mute(true);
+			assertEquals(controller.muted, true);
+
+			controller.mute(false);
+			assertEquals(controller.muted, false);
+		});
+
+		await t.step("mutes low volume correctly", () => {
+			setupControllerTest();
+			controller.setVolume(0.0005);
+			controller.mute(true);
+			assertEquals(controller.volume, 0);
+		});
+
+		await t.step("restores previous volume when unmuting", () => {
+			setupControllerTest();
+			controller.setVolume(0.6);
+			controller.mute(true);
+			assertEquals(controller.volume, 0);
+
+			controller.mute(false);
+			assertEquals(controller.volume, 0.6);
+		});
+
+		await t.step("uses default volume if unmuting with zero volume", () => {
+			setupControllerTest();
+			controller.setVolume(0);
+			controller.mute(true);
+			controller.mute(false);
+			assertEquals(controller.volume, 0.5);
+		});
+	});
+
+	await t.step("getters", async (t) => {
+		await t.step("volume getter returns current gain value", () => {
+			setupControllerTest();
+			controller.setVolume(0.4);
+			assertEquals(controller.volume, 0.4);
+		});
+
+		await t.step("muted getter returns mute state", () => {
+			setupControllerTest();
+			assertEquals(controller.muted, false);
+			controller.mute(true);
+			assertEquals(controller.muted, true);
+		});
+	});
 });

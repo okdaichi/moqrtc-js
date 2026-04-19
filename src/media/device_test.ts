@@ -46,6 +46,7 @@ Deno.test("MediaDeviceContext", async (t) => {
 	await t.step("subscribe/unsubscribe and trigger devicechange", async () => {
 		using _fakeMap = setupFakeMediaDevices(devices);
 		const context = new MediaDeviceContext();
+		await context.updateDevices();
 
 		let callCount = 0;
 		const unsubscribe = context.subscribe((_devices) => {
