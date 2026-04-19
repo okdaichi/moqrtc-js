@@ -1,6 +1,4 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { stubGlobal } from "../test-utils.ts";
-
 import type {
 	AudioEncodeDestination,
 	AudioEncodeNode as AudioEncodeNodeType,
@@ -11,27 +9,62 @@ import { FakeAudioData } from "./fake_audiodata_test.ts";
 import { FakeAudioEncoder } from "./fake_audioencoder_test.ts";
 import { FakeGainNode } from "./fake_gainnode_test.ts";
 
-const originalGlobalGainNode = (globalThis as unknown as Record<string, unknown>).GainNode as
-	| typeof GainNode
-	| undefined;
-stubGlobal("GainNode", FakeGainNode);
+function overrideAudioEncoder(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasAudioEncoder = Object.prototype.hasOwnProperty.call(g, "AudioEncoder");
+	const originalAudioEncoder = g.AudioEncoder;
+	g.AudioEncoder = value;
+	return () => {
+		if (hasAudioEncoder) {
+			g.AudioEncoder = originalAudioEncoder;
+		} else {
+			delete g.AudioEncoder;
+		}
+	};
+}
+
+function overrideAudioWorkletNode(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasAudioWorkletNode = Object.prototype.hasOwnProperty.call(g, "AudioWorkletNode");
+	const originalAudioWorkletNode = g.AudioWorkletNode;
+	g.AudioWorkletNode = value;
+	return () => {
+		if (hasAudioWorkletNode) {
+			g.AudioWorkletNode = originalAudioWorkletNode;
+		} else {
+			delete g.AudioWorkletNode;
+		}
+	};
+}
+
+function overrideGainNode(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasGainNode = Object.prototype.hasOwnProperty.call(g, "GainNode");
+	const originalGainNode = g.GainNode;
+	g.GainNode = value;
+	return () => {
+		if (hasGainNode) {
+			g.GainNode = originalGainNode;
+		} else {
+			delete g.GainNode;
+		}
+	};
+}
+
+const restoreGlobalGainNode = overrideGainNode(FakeGainNode);
 
 const { AudioEncodeNode } = await import("./encode_node.ts");
 
 Deno.test("AudioEncodeNode", async (t) => {
-	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
-	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
+	let restoreAudioEncoder: () => void;
+	let restoreAudioWorkletNode: () => void;
 	let context: FakeAudioContext;
 	let encodeNode: AudioEncodeNodeType;
 
 	await t.step("setup", () => {
-		// Store originals
-		originalAudioEncoder = globalThis.AudioEncoder;
-		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-
 		// Setup mocks
-		stubGlobal("AudioEncoder", FakeAudioEncoder);
-		stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
+		restoreAudioEncoder = overrideAudioEncoder(FakeAudioEncoder);
+		restoreAudioWorkletNode = overrideAudioWorkletNode(FakeAudioWorkletNode);
 
 		context = new FakeAudioContext();
 		encodeNode = new AudioEncodeNode(context);
@@ -414,9 +447,9 @@ Deno.test("AudioEncodeNode", async (t) => {
 
 	await t.step("cleanup", () => {
 		// Restore originals
-		stubGlobal("AudioEncoder", originalAudioEncoder);
-		stubGlobal("AudioWorkletNode", originalAudioWorkletNode);
-		stubGlobal("GainNode", originalGlobalGainNode);
+		restoreAudioEncoder();
+		restoreAudioWorkletNode();
+		restoreGlobalGainNode();
 
 		encodeNode.dispose();
 	});
@@ -424,19 +457,16 @@ Deno.test("AudioEncodeNode", async (t) => {
 
 // Table-driven tests for multiple scenarios
 Deno.test("AudioEncodeNode - edge cases", async (t) => {
-	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
-	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
+	let restoreAudioEncoder: () => void;
+	let restoreAudioWorkletNode: () => void;
 	let context: FakeAudioContext;
 
 	await t.step("setup", () => {
-		originalAudioEncoder = globalThis.AudioEncoder;
-		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-
-		stubGlobal("AudioEncoder", FakeAudioEncoder);
-		stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
+		restoreAudioEncoder = overrideAudioEncoder(FakeAudioEncoder);
+		restoreAudioWorkletNode = overrideAudioWorkletNode(FakeAudioWorkletNode);
 
 		context = new FakeAudioContext();
-	});
+});
 
 	const testCases = new Map([
 		["should handle null channelCount gracefully", {
@@ -481,25 +511,22 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 	}
 
 	await t.step("cleanup", () => {
-		stubGlobal("AudioEncoder", originalAudioEncoder);
-		stubGlobal("AudioWorkletNode", originalAudioWorkletNode);
-		stubGlobal("GainNode", originalGlobalGainNode);
+		restoreAudioEncoder();
+		restoreAudioWorkletNode();
+		restoreGlobalGainNode();
 	});
 });
 
 // Backpressure tests
 Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
-	let originalAudioEncoder: typeof globalThis.AudioEncoder | undefined;
-	let originalAudioWorkletNode: typeof globalThis.AudioWorkletNode | undefined;
+	let restoreAudioEncoder: () => void;
+	let restoreAudioWorkletNode: () => void;
 	let context: FakeAudioContext;
 	let encodeNode: AudioEncodeNodeType;
 
 	await t.step("setup", () => {
-		originalAudioEncoder = globalThis.AudioEncoder;
-		originalAudioWorkletNode = globalThis.AudioWorkletNode;
-
-		stubGlobal("AudioEncoder", FakeAudioEncoder);
-		stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
+		restoreAudioEncoder = overrideAudioEncoder(FakeAudioEncoder);
+		restoreAudioWorkletNode = overrideAudioWorkletNode(FakeAudioWorkletNode);
 
 		context = new FakeAudioContext();
 		encodeNode = new AudioEncodeNode(context);
@@ -547,9 +574,9 @@ Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 	);
 
 	await t.step("cleanup", () => {
-		stubGlobal("AudioEncoder", originalAudioEncoder);
-		stubGlobal("AudioWorkletNode", originalAudioWorkletNode);
-		stubGlobal("GainNode", originalGlobalGainNode);
+		restoreAudioEncoder();
+		restoreAudioWorkletNode();
+		restoreGlobalGainNode();
 		encodeNode.dispose();
 	});
 });

@@ -1,7 +1,48 @@
 import type { Session } from "@okdaichi/moq";
 import { assert, assertEquals, assertExists } from "@std/assert";
 import type { Room } from "../room.ts";
-import { stubGlobal } from "./test-utils.ts";
+
+function overrideHTMLElement(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasHTMLElement = Object.prototype.hasOwnProperty.call(g, "HTMLElement");
+	const originalHTMLElement = g.HTMLElement;
+	g.HTMLElement = value;
+	return () => {
+		if (hasHTMLElement) {
+			g.HTMLElement = originalHTMLElement;
+		} else {
+			delete g.HTMLElement;
+		}
+	};
+}
+
+function overrideDocument(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasDocument = Object.prototype.hasOwnProperty.call(g, "document");
+	const originalDocument = g.document;
+	g.document = value;
+	return () => {
+		if (hasDocument) {
+			g.document = originalDocument;
+		} else {
+			delete g.document;
+		}
+	};
+}
+
+function overrideCustomElements(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasCustomElements = Object.prototype.hasOwnProperty.call(g, "customElements");
+	const originalCustomElements = g.customElements;
+	g.customElements = value;
+	return () => {
+		if (hasCustomElements) {
+			g.customElements = originalCustomElements;
+		} else {
+			delete g.customElements;
+		}
+	};
+}
 
 class FakeElement extends EventTarget {
 	readonly tagName: string;
@@ -119,21 +160,38 @@ class FakeCustomElementsRegistry {
 	}
 }
 
-if (!("HTMLElement" in globalThis)) {
-	stubGlobal("HTMLElement", FakeElement);
-}
-if (!("document" in globalThis)) {
-	stubGlobal("document", new FakeDocument());
-}
-if (!("customElements" in globalThis)) {
-	stubGlobal("customElements", new FakeCustomElementsRegistry());
+function createFakeDOMFixture(): () => void {
+	const restoreHTMLElement = typeof HTMLElement === "undefined"
+		? overrideHTMLElement(FakeElement)
+		: () => {};
+	const restoreDocument = typeof document === "undefined"
+		? overrideDocument(new FakeDocument())
+		: () => {};
+	const restoreCustomElements = typeof customElements === "undefined"
+		? overrideCustomElements(new FakeCustomElementsRegistry())
+		: () => {};
+
+	return () => {
+		restoreHTMLElement();
+		restoreDocument();
+		restoreCustomElements();
+	};
 }
 
-const roomElementModule = await import("./room.ts");
-const defineRoom = roomElementModule.defineRoom;
-const RoomElement = roomElementModule.RoomElement;
+async function createRoomModuleFixture() {
+	const restoreDOM = createFakeDOMFixture();
+	const roomModule = await import("./room.ts");
+	roomModule.defineRoom();
+	return { restoreDOM, roomModule };
+}
 
-function createSession(
+async function createRoomElementFixture() {
+	const { restoreDOM, roomModule } = await createRoomModuleFixture();
+	const element = new roomModule.RoomElement();
+	return { restoreDOM, roomModule, element };
+}
+
+function createFakeSession(
 	roomID: string,
 	localName: string,
 	options?: { includeRemote?: boolean; failAccept?: boolean },
@@ -176,176 +234,183 @@ function createSession(
 	};
 }
 
-Deno.test("RoomElement", async (t) => {
-	await t.step("setup", () => {
-		defineRoom();
-	});
+Deno.test("RoomElement - constructor", async () => {
+	const { restoreDOM, roomModule, element } = await createRoomElementFixture();
+	try {
+		assert(element instanceof roomModule.RoomElement);
+		assert(element instanceof HTMLElement);
+	} finally {
+		restoreDOM();
+	}
+});
 
-	let element: InstanceType<typeof RoomElement>;
+Deno.test("RoomElement - observedAttributes", async () => {
+	const { restoreDOM, roomModule } = await createRoomModuleFixture();
+	try {
+		assertEquals(roomModule.RoomElement.observedAttributes, ["room-id", "description"]);
+	} finally {
+		restoreDOM();
+	}
+});
 
-	await t.step("before each test setup", () => {
-		element = new RoomElement();
-	});
+Deno.test("RoomElement - render builds expected DOM", async () => {
+	const { restoreDOM, element } = await createRoomElementFixture();
+	try {
+		element.render();
+		assertExists(element.querySelector(".room-status-display"));
+		assertExists(element.querySelector(".local-participant"));
+		assertExists(element.querySelector(".remote-participants"));
+	} finally {
+		restoreDOM();
+	}
+});
 
-	await t.step("after each test cleanup", () => {
-		document.body.innerHTML = "";
-	});
+Deno.test("RoomElement - join room successfully", async () => {
+	const { restoreDOM, element } = await createRoomElementFixture();
+	try {
+		element.setAttribute("room-id", "test-room");
+		await element.join(
+			createFakeSession("test-room", "test-publisher") as unknown as Session,
+			{ name: "test-publisher", serveTrack: () => {} },
+		);
 
-	await t.step("constructor", async (t2) => {
-		await t2.step("should create an instance", () => {
-			assert(element instanceof RoomElement);
-			assert(element instanceof HTMLElement);
+		assertExists(element.room);
+		assertEquals(element.room?.roomID, "test-room");
+	} finally {
+		restoreDOM();
+	}
+});
+
+Deno.test("RoomElement - join reports missing room-id", async () => {
+	const { restoreDOM, element } = await createRoomElementFixture();
+	try {
+		let statusCalled = false;
+		let statusArg: any;
+		element.onstatus = (status) => {
+			statusCalled = true;
+			statusArg = status;
+		};
+
+		await element.join(
+			createFakeSession("x", "test-publisher") as unknown as Session,
+			{ name: "test-publisher", serveTrack: () => {} },
+		);
+
+		assert(statusCalled);
+		assertEquals(statusArg.type, "error");
+		assertEquals(statusArg.message, "room-id is missing");
+	} finally {
+		restoreDOM();
+	}
+});
+
+Deno.test("RoomElement - join reports session errors", async () => {
+	const { restoreDOM, element } = await createRoomElementFixture();
+	try {
+		element.setAttribute("room-id", "test-room");
+		let statusCalled = false;
+		let statusArg: any;
+		element.onstatus = (status) => {
+			statusCalled = true;
+			statusArg = status;
+		};
+
+		await element.join(
+			createFakeSession("test-room", "test-publisher", {
+				failAccept: true,
+			}) as unknown as Session,
+			{ name: "test-publisher", serveTrack: () => {} },
+		);
+
+		assert(statusCalled);
+		assertEquals(statusArg.type, "error");
+		assert(statusArg.message.includes("Failed to join: accept failed"));
+	} finally {
+		restoreDOM();
+	}
+});
+
+Deno.test("RoomElement - onjoin callback fires when member joins", async () => {
+	const { restoreDOM, element } = await createRoomElementFixture();
+	try {
+		element.setAttribute("room-id", "test-room");
+		let onjoinCalled = false;
+		let onjoinArg: any;
+		element.onjoin = (member) => {
+			onjoinCalled = true;
+			onjoinArg = member;
+		};
+
+		await element.join(
+			createFakeSession("test-room", "test-publisher", {
+				includeRemote: true,
+			}) as unknown as Session,
+			{ name: "test-publisher", serveTrack: () => {} },
+		);
+		await Promise.resolve();
+
+		assert(onjoinCalled);
+		assertEquals(onjoinArg.name, "test-member");
+		assertEquals(onjoinArg.remote, true);
+	} finally {
+		restoreDOM();
+	}
+});
+
+Deno.test("RoomElement - onleave callback fires when member leaves", async () => {
+	const { restoreDOM, element } = await createRoomElementFixture();
+	try {
+		element.setAttribute("room-id", "test-room");
+		let onleaveCalled = false;
+		let onleaveArg: any;
+		element.onleave = (member) => {
+			onleaveCalled = true;
+			onleaveArg = member;
+		};
+
+		await element.join(
+			createFakeSession("test-room", "test-publisher", {
+				includeRemote: true,
+			}) as unknown as Session,
+			{ name: "test-publisher", serveTrack: () => {} },
+		);
+		await Promise.resolve();
+		element.room?.disconnect();
+
+		assert(onleaveCalled);
+		assertEquals(onleaveArg.name, "test-member");
+		assertEquals(onleaveArg.remote, true);
+	} finally {
+		restoreDOM();
+	}
+});
+
+Deno.test("RoomElement - leave dispatches statuschange event", async () => {
+	const { restoreDOM, roomModule } = await createRoomModuleFixture();
+	try {
+		const element = new roomModule.RoomElement();
+		element.room = {
+			roomID: "test-room",
+			disconnect: () => {},
+		} as unknown as Room;
+
+		let statusChangeEvent: Event | undefined;
+		element.addEventListener("statuschange", (event) => {
+			statusChangeEvent = event;
 		});
-	});
 
-	await t.step("observedAttributes", async (t2) => {
-		await t2.step("should return correct attributes", () => {
-			assertEquals(RoomElement.observedAttributes, ["room-id", "description"]);
-		});
-	});
+		element.leave();
 
-	await t.step("render", async (t2) => {
-		await t2.step("should render the DOM structure", () => {
-			element.render();
-			assertExists(element.querySelector(".room-status-display"));
-			assertExists(element.querySelector(".local-participant"));
-			assertExists(element.querySelector(".remote-participants"));
-		});
-	});
-
-	await t.step("join", async (t2) => {
-		await t2.step("should join room successfully", async () => {
-			element.setAttribute("room-id", "test-room");
-			await element.join(
-				createSession("test-room", "test-publisher") as unknown as Session,
-				{ name: "test-publisher", serveTrack: () => {} },
-			);
-
-			assertExists(element.room);
-			assertEquals(element.room?.roomID, "test-room");
-		});
-
-		await t2.step("should set error status when room-id is missing", async () => {
-			const missingRoomElement = new RoomElement();
-
-			let statusCalled = false;
-			let statusArg: any;
-			missingRoomElement.onstatus = (status) => {
-				statusCalled = true;
-				statusArg = status;
-			};
-
-			await missingRoomElement.join(
-				createSession("x", "test-publisher") as unknown as Session,
-				{ name: "test-publisher", serveTrack: () => {} },
-			);
-
-			assert(statusCalled);
-			assertEquals(statusArg.type, "error");
-			assertEquals(statusArg.message, "room-id is missing");
-		});
-
-		await t2.step("should handle join error", async () => {
-			element.setAttribute("room-id", "test-room");
-
-			let statusCalled = false;
-			let statusArg: any;
-			element.onstatus = (status) => {
-				statusCalled = true;
-				statusArg = status;
-			};
-
-			await element.join(
-				createSession("test-room", "test-publisher", {
-					failAccept: true,
-				}) as unknown as Session,
-				{ name: "test-publisher", serveTrack: () => {} },
-			);
-
-			assert(statusCalled);
-			assertEquals(statusArg.type, "error");
-			assert(statusArg.message.includes("Failed to join: accept failed"));
-		});
-
-		await t2.step("should call onjoin callback when member joins", async () => {
-			element.setAttribute("room-id", "test-room");
-
-			let onjoinCalled = false;
-			let onjoinArg: any;
-			element.onjoin = (member) => {
-				onjoinCalled = true;
-				onjoinArg = member;
-			};
-
-			await element.join(
-				createSession("test-room", "test-publisher", {
-					includeRemote: true,
-				}) as unknown as Session,
-				{ name: "test-publisher", serveTrack: () => {} },
-			);
-			await Promise.resolve();
-
-			assert(onjoinCalled);
-			assertEquals(onjoinArg.name, "test-member");
-			assertEquals(onjoinArg.remote, true);
-		});
-
-		await t2.step("should call onleave callback when member leaves", async () => {
-			element.setAttribute("room-id", "test-room");
-
-			let onleaveCalled = false;
-			let onleaveArg: any;
-			element.onleave = (member) => {
-				onleaveCalled = true;
-				onleaveArg = member;
-			};
-
-			await element.join(
-				createSession("test-room", "test-publisher", {
-					includeRemote: true,
-				}) as unknown as Session,
-				{ name: "test-publisher", serveTrack: () => {} },
-			);
-			await Promise.resolve();
-			element.room?.disconnect();
-
-			assert(onleaveCalled);
-			assertEquals(onleaveArg.name, "test-member");
-			assertEquals(onleaveArg.remote, true);
-		});
-	});
-
-	await t.step("leave", async (t2) => {
-		await t2.step("should leave room and clear state", () => {
-			element.room = {
-				roomID: "test-room",
-				disconnect: () => {},
-			} as unknown as Room;
-		});
-
-		await t2.step("should dispatch statuschange event", () => {
-			let statusChangeEvent: Event | undefined;
-			element.room = {
-				roomID: "test-room",
-				disconnect: () => {},
-			} as unknown as Room;
-
-			element.addEventListener("statuschange", (event) => {
-				statusChangeEvent = event;
-			});
-
-			element.leave();
-
-			assertExists(statusChangeEvent);
-			assertEquals(
-				(statusChangeEvent as CustomEvent<{ type: string; message: string }>).detail.type,
-				"left",
-			);
-			assertEquals(
-				(statusChangeEvent as CustomEvent<{ type: string; message: string }>).detail
-					.message,
-				"Left room test-room",
-			);
-		});
-	});
+		assertExists(statusChangeEvent);
+		assertEquals(
+			(statusChangeEvent as CustomEvent<{ type: string; message: string }>).detail.type,
+			"left",
+		);
+		assertEquals(
+			(statusChangeEvent as CustomEvent<{ type: string; message: string }>).detail.message,
+			"Left room test-room",
+		);
+	} finally {
+		restoreDOM();
+	}
 });

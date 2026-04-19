@@ -1,43 +1,14 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { stubGlobal } from "../test-utils.ts";
 import type { VideoFrameAnalysis } from "./analyse_node.ts";
 import { VideoAnalyserNode } from "./analyse_node.ts";
 import { VideoContext } from "./context.ts";
 import type { CanvasLike } from "./destination_node.ts";
+import { overrideIdleCallback, overrideOffscreenCanvas } from "./fake_offscreen_canvas_test.ts";
 import { FakeVideoNode } from "./fake_video_node_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 
-// Mock globals for Deno environment
-if (typeof OffscreenCanvas === "undefined") {
-	stubGlobal(
-		"OffscreenCanvas",
-		class {
-			width: number;
-			height: number;
-			constructor(width: number, height: number) {
-				this.width = width;
-				this.height = height;
-			}
-			getContext() {
-				return {
-					drawImage: () => {},
-					getImageData: (_x: number, _y: number, w: number, h: number) => ({
-						data: new Uint8ClampedArray(w * h * 4).fill(128), // Gray pixels
-					}),
-				};
-			}
-		},
-	);
-}
-
-if (typeof requestIdleCallback === "undefined") {
-	stubGlobal("requestIdleCallback", (callback: () => void) => {
-		return setTimeout(callback, 1);
-	});
-	stubGlobal("cancelIdleCallback", (id: number) => {
-		clearTimeout(id);
-	});
-}
+overrideOffscreenCanvas();
+overrideIdleCallback();
 
 // Mock canvas for Deno environment
 const canvas: CanvasLike = {

@@ -1,6 +1,6 @@
 import { assertEquals, assertExists } from "@std/assert";
 import { Device, MediaDeviceContext } from "./device.ts";
-import { setupFakeMediaDevices } from "./fake_media_devices.ts";
+import { setupFakeMediaDevices } from "./fake_media_devices_test.ts";
 
 const devices = [
 	{ kind: "audioinput" as MediaDeviceKind, label: "Mic", deviceId: "mic-1" },

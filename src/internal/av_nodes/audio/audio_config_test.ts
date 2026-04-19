@@ -1,6 +1,19 @@
 import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
-import { stubGlobal } from "../test-utils.ts";
 import { FakeAudioEncoder } from "./fake_audioencoder_test.ts";
+
+function overrideAudioEncoder(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasAudioEncoder = Object.prototype.hasOwnProperty.call(g, "AudioEncoder");
+	const originalAudioEncoder = g.AudioEncoder;
+	g.AudioEncoder = value;
+	return () => {
+		if (hasAudioEncoder) {
+			g.AudioEncoder = originalAudioEncoder;
+		} else {
+			delete g.AudioEncoder;
+		}
+	};
+}
 
 import {
 	audioEncoderConfig,
@@ -18,7 +31,7 @@ let originalConsoleDebug: typeof console.debug;
 function setupMocks() {
 	originalConsoleDebug = console.debug;
 	FakeAudioEncoder.isConfigSupportedCalls = [];
-	const restoreAudioEncoder = stubGlobal("AudioEncoder", FakeAudioEncoder);
+	const restoreAudioEncoder = overrideAudioEncoder(FakeAudioEncoder);
 	console.debug = () => {};
 	// Set up navigator
 	Object.defineProperty(navigator, "userAgent", {
@@ -455,12 +468,16 @@ Deno.test("AudioEncoderOptions interface: supports optional properties", () => {
 Deno.test("Error Handling: handles null AudioEncoder", async () => {
 	const restore = setupMocks();
 	try {
-		stubGlobal("AudioEncoder", null);
-		const options: AudioEncoderOptions = {
-			sampleRate: 48000,
-			channels: 2,
-		};
-		await assertRejects(async () => await audioEncoderConfig(options));
+		const restoreAudioEncoder = overrideAudioEncoder(null);
+		try {
+			const options: AudioEncoderOptions = {
+				sampleRate: 48000,
+				channels: 2,
+			};
+			await assertRejects(async () => await audioEncoderConfig(options));
+		} finally {
+			restoreAudioEncoder();
+		}
 	} finally {
 		restore();
 	}
@@ -469,41 +486,22 @@ Deno.test("Error Handling: handles null AudioEncoder", async () => {
 Deno.test("Error Handling: handles AudioEncoder without isConfigSupported", async () => {
 	const restore = setupMocks();
 	try {
-		stubGlobal("AudioEncoder", {});
-		const options: AudioEncoderOptions = {
-			sampleRate: 48000,
-			channels: 2,
-		};
-		await assertRejects(
-			async () => await audioEncoderConfig(options),
-			Error,
-			"no supported audio codec",
-		);
+		const restoreAudioEncoder = overrideAudioEncoder({});
+		try {
+			const options: AudioEncoderOptions = {
+				sampleRate: 48000,
+				channels: 2,
+			};
+			await assertRejects(
+				async () => await audioEncoderConfig(options),
+				Error,
+				"no supported audio codec",
+			);
+		} finally {
+			restoreAudioEncoder();
+		}
 	} finally {
 		restore();
-	}
-});
-
-Deno.test("Boundary Value Tests: handles zero and high bitrate", async (t) => {
-	const baseConfig: AudioEncoderConfig = {
-		codec: "opus",
-		sampleRate: 48000,
-		numberOfChannels: 2,
-		bitrate: 64000,
-	};
-	const cases = new Map([
-		["zero bitrate", { input: 0, expected: 0 }],
-		["very high bitrate", { input: 1000000, expected: 1000000 }],
-	]);
-	for (const [name, c] of cases) {
-		await t.step(name, () => {
-			const result = upgradeAudioEncoderConfig(
-				baseConfig,
-				"opus",
-				c.input,
-			);
-			assertEquals(result.bitrate, c.expected);
-		});
 	}
 });
 

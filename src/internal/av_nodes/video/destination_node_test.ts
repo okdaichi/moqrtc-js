@@ -1,9 +1,44 @@
 import { assert, assertEquals } from "@std/assert";
-import { stubGlobal } from "../test-utils.ts";
 import { VideoContext } from "./context.ts";
 import { VideoDestinationNode, VideoRenderFunctions } from "./destination_node.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
+
+function overrideRequestAnimationFrame(
+	value: (callback: FrameRequestCallback) => number,
+): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasRequestAnimationFrame = Object.prototype.hasOwnProperty.call(
+		g,
+		"requestAnimationFrame",
+	);
+	const originalRequestAnimationFrame = g.requestAnimationFrame;
+	g.requestAnimationFrame = value;
+	return () => {
+		if (hasRequestAnimationFrame) {
+			g.requestAnimationFrame = originalRequestAnimationFrame;
+		} else {
+			delete g.requestAnimationFrame;
+		}
+	};
+}
+
+function overrideCancelAnimationFrame(value: (handle: number) => void): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasCancelAnimationFrame = Object.prototype.hasOwnProperty.call(
+		g,
+		"cancelAnimationFrame",
+	);
+	const originalCancelAnimationFrame = g.cancelAnimationFrame;
+	g.cancelAnimationFrame = value;
+	return () => {
+		if (hasCancelAnimationFrame) {
+			g.cancelAnimationFrame = originalCancelAnimationFrame;
+		} else {
+			delete g.cancelAnimationFrame;
+		}
+	};
+}
 
 Deno.test(
 	{ name: "VideoDestinationNode", sanitizeOps: false, sanitizeResources: false },
@@ -88,21 +123,19 @@ Deno.test(
 			// Mock global functions
 
 			let requestedId = 0;
-			const restoreCancelAnimationFrame = stubGlobal("cancelAnimationFrame", () => {});
-			const restoreRequestAnimationFrame = stubGlobal(
-				"requestAnimationFrame",
-				() => {
+			const restoreCancelAnimationFrame = overrideCancelAnimationFrame(
+				() => {},
+			);
+			const restoreRequestAnimationFrame = overrideRequestAnimationFrame(
+				(_cb: FrameRequestCallback) => {
 					requestedId = 123;
 					return requestedId;
 				},
 			);
 
-			const destinationNode = new VideoDestinationNode(
-				context,
-				canvas,
-			);
-
+			const destinationNode = new VideoDestinationNode(context, canvas);
 			const frame = new FakeVideoFrame(640, 480);
+
 			destinationNode.process(frame);
 
 			// Note: Spy verification would need proper mock implementation
@@ -127,15 +160,14 @@ Deno.test(
 				// Mock global functions so rAF callback never runs (we only test pending replacement)
 
 				let nextId = 1;
-				const restoreRequestAF = stubGlobal(
-					"requestAnimationFrame",
+				const restoreRequestAF = overrideRequestAnimationFrame(
 					(cb: FrameRequestCallback) => {
 						// Intentionally do not invoke cb
 						void cb;
 						return nextId++;
 					},
 				);
-				const restoreCancelAF = stubGlobal("cancelAnimationFrame", () => {});
+				const restoreCancelAF = overrideCancelAnimationFrame(() => {});
 
 				try {
 					const destinationNode = new VideoDestinationNode(

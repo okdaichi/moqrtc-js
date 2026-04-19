@@ -1,12 +1,39 @@
 import { assert, assertEquals } from "@std/assert";
-import { stubGlobal } from "../test-utils.ts";
 import { VideoContext } from "./context.ts";
 import { type VideoEncodeDestination, VideoEncodeNode } from "./encode_node.ts";
 import { FakeVideoEncoder } from "./fake_videoencoder_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 
+function overrideDocument(value: { createElement: (tag: string) => unknown }): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasDocument = Object.prototype.hasOwnProperty.call(g, "document");
+	const originalDocument = g.document;
+	g.document = value;
+	return () => {
+		if (hasDocument) {
+			g.document = originalDocument;
+		} else {
+			delete g.document;
+		}
+	};
+}
+
+function overrideVideoEncoder(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasVideoEncoder = Object.prototype.hasOwnProperty.call(g, "VideoEncoder");
+	const originalVideoEncoder = g.VideoEncoder;
+	g.VideoEncoder = value;
+	return () => {
+		if (hasVideoEncoder) {
+			g.VideoEncoder = originalVideoEncoder;
+		} else {
+			delete g.VideoEncoder;
+		}
+	};
+}
+
 // Mock document for Deno
-stubGlobal("document", {
+const restoreDocument = overrideDocument({
 	createElement: (tag: string) => {
 		if (tag === "canvas") {
 			return {
@@ -20,7 +47,7 @@ stubGlobal("document", {
 });
 
 // Mock VideoEncoder for Deno (basic functionality tests)
-stubGlobal("VideoEncoder", FakeVideoEncoder);
+const restoreVideoEncoder = overrideVideoEncoder(FakeVideoEncoder);
 
 Deno.test("VideoEncodeNode - basic functionality", async (t) => {
 	let context: VideoContext;
@@ -97,8 +124,7 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 		});
 		// When the code calls new VideoEncoder(init) we want the mock instance to receive
 		// the init callbacks (output/error) so the node's handlers are wired to the mock.
-		stubGlobal(
-			"VideoEncoder",
+		const restoreVideoEncoder = overrideVideoEncoder(
 			class FakeVideoEncoderConstructor {
 				constructor(init: VideoEncoderInit) {
 					// copy the init handlers onto the existing mock instance
@@ -108,10 +134,14 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 			},
 		);
 
-		context = new VideoContext();
-		onChunk = () => {}; // Default empty handler
-		mockFrame = new FakeVideoFrame();
-		encoderNode = new VideoEncodeNode(context);
+		try {
+			context = new VideoContext();
+			onChunk = () => {}; // Default empty handler
+			mockFrame = new FakeVideoFrame();
+			encoderNode = new VideoEncodeNode(context);
+		} finally {
+			restoreVideoEncoder();
+		}
 	});
 
 	await t.step("should create VideoEncodeNode", () => {
@@ -268,4 +298,9 @@ Deno.test("VideoEncodeNode - with mocks", async (t) => {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 		},
 	);
+});
+
+Deno.test("VideoEncodeNode - cleanup", () => {
+	restoreDocument();
+	restoreVideoEncoder();
 });

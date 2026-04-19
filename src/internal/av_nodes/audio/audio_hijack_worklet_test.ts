@@ -1,7 +1,7 @@
 /// <reference path="../../../test_globals.d.ts" />
 import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
-import { stubGlobal } from "../test-utils.ts";
 import { importWorkletUrl } from "./audio_hijack_worklet.ts";
+import { setupFakeAudioWorkletEnvironment } from "./fake_audio_worklet_environment_test.ts";
 
 Deno.test("audio_hijack_worklet", async (t) => {
 	await t.step("provides a URL for the worklet script", () => {
@@ -14,18 +14,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 	await t.step(
 		"registers the hijack processor when AudioWorkletProcessor is available",
 		() => {
-			// Setup mocks
-			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
-			const originalRegisterProcessor = globalThis.registerProcessor;
-			const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
-
-			stubGlobal("AudioWorkletProcessor", class {});
-			stubGlobal("registerProcessor", (
-				name: string,
-				processor: Parameters<typeof registerProcessor>[1],
-			) => {
-				mockRegisterProcessor.calls.push([name, processor]);
-			});
+			const env = setupFakeAudioWorkletEnvironment();
 
 			try {
 				// Execute the worklet code directly
@@ -148,14 +137,12 @@ Deno.test("audio_hijack_worklet", async (t) => {
 					);
 				}
 
-				assertEquals(mockRegisterProcessor.calls.length, 1);
-				const [name, processorCtor] = mockRegisterProcessor.calls[0]!;
+				assertEquals(env.registerProcessorCalls.length, 1);
+				const [name, processorCtor] = env.registerProcessorCalls[0]!;
 				assertEquals(name, "AudioHijacker");
 				assertEquals(typeof processorCtor, "function");
 			} finally {
-				// Cleanup
-				stubGlobal("AudioWorkletProcessor", originalAudioWorkletProcessor);
-				stubGlobal("registerProcessor", originalRegisterProcessor);
+				env.restore();
 			}
 		},
 	);
@@ -180,25 +167,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				},
 			};
 
-			// Mock AudioWorkletProcessor
-			const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
-			const originalRegisterProcessor = globalThis.registerProcessor;
-
-			stubGlobal(
-				"AudioWorkletProcessor",
-				class MockAudioWorkletProcessor {
-					port = mockPort;
-				},
-			);
-
-			// Mock registerProcessor
-			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
-			stubGlobal("registerProcessor", (
-				name: string,
-				processor: Parameters<typeof registerProcessor>[1],
-			) => {
-				mockRegisterProcessor.calls.push([name, processor]);
-			});
+			const env = setupFakeAudioWorkletEnvironment();
 			try {
 				// Import the worklet code by simulating the worklet context
 				if (
@@ -322,7 +291,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				}
 
 				// Create processor instance
-				const TestAudioHijackProcessor = mockRegisterProcessor.calls[0]![1] as new (
+				const TestAudioHijackProcessor = env.registerProcessorCalls[0]![1] as new (
 					options: AudioWorkletNodeOptions,
 				) => { process(inputs: Float32Array[][]): boolean };
 				processor = new TestAudioHijackProcessor({
@@ -332,47 +301,34 @@ Deno.test("audio_hijack_worklet", async (t) => {
 					},
 				});
 			} finally {
-				// Restore globals
-				stubGlobal("AudioWorkletProcessor", originalAudioWorkletProcessor);
-				stubGlobal("registerProcessor", originalRegisterProcessor);
+				env.restore();
 			}
 		});
 
 		await t.step("initializes with default values", async () => {
-			const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
-			const originalRegisterProcessor = globalThis.registerProcessor;
+			const env = setupFakeAudioWorkletEnvironment();
 
-			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
-			stubGlobal("AudioWorkletProcessor", class {});
-			stubGlobal("registerProcessor", (
-				name: string,
-				processor: Parameters<typeof registerProcessor>[1],
-			) => {
-				mockRegisterProcessor.calls.push([name, processor]);
-				try {
-					class InitTestAudioHijackProcessor extends globalThis.AudioWorkletProcessor {
-						constructor(_options: AudioWorkletNodeOptions) {
-							super();
-						}
+			try {
+				class InitTestAudioHijackProcessor extends globalThis.AudioWorkletProcessor {
+					constructor(_options: AudioWorkletNodeOptions) {
+						super();
 					}
-					globalThis.registerProcessor(
-						"AudioHijacker",
-						InitTestAudioHijackProcessor,
-					);
-
-					const ProcessorClass = mockRegisterProcessor.calls[0]![1] as new (
-						options: AudioWorkletNodeOptions,
-					) => unknown;
-					const proc = new ProcessorClass({
-						processorOptions: {},
-					});
-					assertExists(proc);
-				} finally {
-					stubGlobal("AudioWorkletProcessor", originalAudioWorkletProcessor);
-					stubGlobal("registerProcessor", originalRegisterProcessor);
 				}
-			});
+				globalThis.registerProcessor(
+					"AudioHijacker",
+					InitTestAudioHijackProcessor,
+				);
 
+				const ProcessorClass = env.registerProcessorCalls[0]![1] as new (
+					options: AudioWorkletNodeOptions,
+				) => unknown;
+				const proc = new ProcessorClass({
+					processorOptions: {},
+				});
+				assertExists(proc);
+			} finally {
+				env.restore();
+			}
 			await t.step("processes mono input correctly", () => {
 				const inputData = new Float32Array([0.1, 0.2, 0.3]);
 				const inputs = [[inputData]];

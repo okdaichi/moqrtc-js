@@ -1,11 +1,24 @@
 import { assert, assertEquals } from "@std/assert";
-import { stubGlobal } from "../test-utils.ts";
 import { VideoContext } from "./context.ts";
 import { VideoDecodeNode } from "./decode_node.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
 import { FakeVideoNode } from "./fake_video_node_test.ts";
 import { FakeVideoDecoder } from "./fake_videodecoder_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
+
+function overrideVideoDecoder(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasVideoDecoder = Object.prototype.hasOwnProperty.call(g, "VideoDecoder");
+	const originalVideoDecoder = g.VideoDecoder;
+	g.VideoDecoder = value;
+	return () => {
+		if (hasVideoDecoder) {
+			g.VideoDecoder = originalVideoDecoder;
+		} else {
+			delete g.VideoDecoder;
+		}
+	};
+}
 
 Deno.test("VideoDecodeNode", async (t) => {
 	let context: VideoContext;
@@ -18,7 +31,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 		// Mock the global VideoDecoder, capturing the config so we can trigger callbacks
 		mockDecoder = new FakeVideoDecoder({ output: () => {}, error: () => {} });
 		let capturedOutput: ((frame: VideoFrame) => void) | undefined;
-		restoreVideoDecoder = stubGlobal("VideoDecoder", function (config: VideoDecoderInit) {
+		restoreVideoDecoder = overrideVideoDecoder(function (config: VideoDecoderInit) {
 			capturedOutput = config.output;
 			return mockDecoder;
 		});
@@ -242,9 +255,11 @@ Deno.test("VideoDecodeNode", async (t) => {
 		const freshMockDecoder = new FakeVideoDecoder(
 			{ output: () => {}, error: () => {} },
 		);
-		const restoreFreshVideoDecoder = stubGlobal("VideoDecoder", function (_config: VideoDecoderInit) {
-			return freshMockDecoder;
-		});
+		const restoreFreshVideoDecoder = overrideVideoDecoder(
+			function (_config: VideoDecoderInit) {
+				return freshMockDecoder;
+			},
+		);
 		const freshNode = new VideoDecodeNode(context);
 		restoreFreshVideoDecoder();
 

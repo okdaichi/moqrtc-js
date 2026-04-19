@@ -1,5 +1,4 @@
 import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
-import { stubGlobal } from "../test-utils.ts";
 import { FakeVideoEncoder } from "./fake_videoencoder_test.ts";
 import {
 	upgradeEncoderConfig,
@@ -9,11 +8,21 @@ import {
 	type VideoEncoderOptions,
 } from "./video_config.ts";
 
-// Mock the browser module
-stubGlobal("isFirefox", false);
+function overrideVideoEncoder(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasVideoEncoder = Object.prototype.hasOwnProperty.call(g, "VideoEncoder");
+	const originalVideoEncoder = g.VideoEncoder;
+	g.VideoEncoder = value;
+	return () => {
+		if (hasVideoEncoder) {
+			g.VideoEncoder = originalVideoEncoder;
+		} else {
+			delete g.VideoEncoder;
+		}
+	};
+}
 
-// Mock global VideoEncoder
-stubGlobal("VideoEncoder", FakeVideoEncoder);
+const restoreVideoEncoder = overrideVideoEncoder(FakeVideoEncoder);
 
 Deno.test("VideoConfig", async (t) => {
 	await t.step("Constants", async (t2) => {
@@ -435,4 +444,8 @@ Deno.test("VideoConfig", async (t) => {
 			assertEquals(softwareConfig.hardwareAcceleration, undefined);
 		});
 	});
+});
+
+Deno.test("VideoConfig cleanup", () => {
+	restoreVideoEncoder();
 });

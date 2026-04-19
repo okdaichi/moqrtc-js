@@ -1,7 +1,7 @@
 import { assertEquals, assertNotEquals, assertRejects } from "@std/assert";
 import { Camera } from "./camera.ts";
 import { MediaDeviceContext } from "./device.ts";
-import { setupFakeMediaDevices } from "./fake_media_devices.ts";
+import { setupFakeMediaDevices } from "./fake_media_devices_test.ts";
 
 Deno.test("Camera", async (t) => {
 	await t.step("constructor", async (t) => {

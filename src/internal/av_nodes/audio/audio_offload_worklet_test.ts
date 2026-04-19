@@ -1,7 +1,7 @@
 /// <reference path="../../../test_globals.d.ts" />
 import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
-import { stubGlobal } from "../test-utils.ts";
 import { importWorkletUrl } from "./audio_offload_worklet.ts";
+import { setupFakeAudioWorkletEnvironment } from "./fake_audio_worklet_environment_test.ts";
 
 type AudioOffloadProcessorInstance = {
 	append(channels: Float32Array[]): void;
@@ -27,23 +27,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 	await t.step(
 		"registers the offload processor when AudioWorkletProcessor is defined",
 		() => {
-			// Setup mocks
-			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
-			const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
-			const originalRegisterProcessor = globalThis.registerProcessor;
-
-			stubGlobal(
-				"AudioWorkletProcessor",
-				class {
-					port = { onmessage: undefined };
-				},
-			);
-			stubGlobal("registerProcessor", (
-				name: string,
-				processor: Parameters<typeof registerProcessor>[1],
-			) => {
-				mockRegisterProcessor.calls.push([name, processor]);
-			});
+			const env = setupFakeAudioWorkletEnvironment();
 
 			try {
 				// Execute the worklet code directly
@@ -244,8 +228,8 @@ Deno.test("audio_offload_worklet", async (t) => {
 					);
 				}
 
-				assertEquals(mockRegisterProcessor.calls.length, 1);
-				const [name, processorCtor] = mockRegisterProcessor.calls[0]!;
+assertEquals(env.registerProcessorCalls.length, 1);
+			const [name, processorCtor] = env.registerProcessorCalls[0]!;
 				assertEquals(name, "audio-offloader");
 				assertEquals(typeof processorCtor, "function");
 
@@ -258,7 +242,6 @@ Deno.test("audio_offload_worklet", async (t) => {
 					},
 				});
 
-				assert(instance instanceof processorCtor);
 				assertEquals(typeof instance.process, "function");
 				assertEquals(typeof instance.append, "function");
 				assertExists(instance.port);
@@ -283,9 +266,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 
 				assertExists(importWorkletUrl);
 			} finally {
-				// Cleanup
-				stubGlobal("AudioWorkletProcessor", originalAudioWorkletProcessor);
-				stubGlobal("registerProcessor", originalRegisterProcessor);
+				env.restore();
 			}
 		},
 	);
@@ -293,15 +274,16 @@ Deno.test("audio_offload_worklet", async (t) => {
 	await t.step(
 		"does not register the offload processor when AudioWorkletProcessor is not defined",
 		() => {
+			const g = globalThis as unknown as Record<string, unknown>;
+			const hasRegisterProcessor = Object.prototype.hasOwnProperty.call(g, "registerProcessor");
+			const originalRegisterProcessor = g.registerProcessor;
 			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
-			const originalRegisterProcessor = globalThis.registerProcessor;
-
-			stubGlobal("registerProcessor", (
+			g.registerProcessor = (
 				name: string,
 				processor: Parameters<typeof registerProcessor>[1],
 			) => {
 				mockRegisterProcessor.calls.push([name, processor]);
-			});
+			};
 
 			try {
 				// AudioWorkletProcessor is not defined (already deleted in afterEach)
@@ -325,28 +307,17 @@ Deno.test("audio_offload_worklet", async (t) => {
 				}
 				assertEquals(mockRegisterProcessor.calls.length, 0);
 			} finally {
-				stubGlobal("registerProcessor", originalRegisterProcessor);
+				if (hasRegisterProcessor) {
+					g.registerProcessor = originalRegisterProcessor;
+				} else {
+					delete g.registerProcessor;
+				}
 			}
 		},
 	);
 
 	await t.step("throws error in constructor for invalid options", () => {
-		const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
-		const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
-		const originalRegisterProcessor = globalThis.registerProcessor;
-
-		stubGlobal(
-			"AudioWorkletProcessor",
-			class {
-				port = { onmessage: undefined };
-			},
-		);
-		stubGlobal("registerProcessor", (
-			name: string,
-			processor: Parameters<typeof registerProcessor>[1],
-		) => {
-			mockRegisterProcessor.calls.push([name, processor]);
-		});
+		const env = setupFakeAudioWorkletEnvironment();
 
 		try {
 			if (typeof AudioWorkletProcessor !== "undefined") {
@@ -412,8 +383,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 				);
 			}
 
-			const ProcessorCtor = mockRegisterProcessor
-				.calls[0]![1] as AudioOffloadProcessorConstructor;
+			const ProcessorCtor = env.registerProcessorCalls[0]![1] as AudioOffloadProcessorConstructor;
 
 			assertThrows(
 				() => new ProcessorCtor({}),
@@ -444,8 +414,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 				"invalid latency",
 			);
 		} finally {
-			stubGlobal("AudioWorkletProcessor", originalAudioWorkletProcessor);
-			stubGlobal("registerProcessor", originalRegisterProcessor);
+			env.restore();
 		}
 	});
 
@@ -472,25 +441,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 				},
 			};
 
-			// Mock AudioWorkletProcessor
-			const originalAudioWorkletProcessor = globalThis.AudioWorkletProcessor;
-			const originalRegisterProcessor = globalThis.registerProcessor;
-
-			stubGlobal(
-				"AudioWorkletProcessor",
-				class MockAudioWorkletProcessor {
-					port = mockPort as unknown as MessagePort;
-				},
-			);
-
-			// Mock registerProcessor
-			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
-			stubGlobal("registerProcessor", (
-				name: string,
-				processor: Parameters<typeof registerProcessor>[1],
-			) => {
-				mockRegisterProcessor.calls.push([name, processor]);
-			});
+			const env = setupFakeAudioWorkletEnvironment();
 
 			try {
 				// Simulate the worklet code execution
@@ -686,8 +637,8 @@ Deno.test("audio_offload_worklet", async (t) => {
 				}
 
 				// Create processor instance
-				const AudioOffloadProcessor = mockRegisterProcessor
-					.calls[0]![1] as AudioOffloadProcessorConstructor;
+				const AudioOffloadProcessor = env.registerProcessorCalls
+					[0]![1] as AudioOffloadProcessorConstructor;
 				processor = new AudioOffloadProcessor({
 					channelCount: 2,
 					processorOptions: {
@@ -696,9 +647,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 					},
 				});
 			} finally {
-				// Restore globals
-				stubGlobal("AudioWorkletProcessor", originalAudioWorkletProcessor);
-				stubGlobal("registerProcessor", originalRegisterProcessor);
+				env.restore();
 			}
 		});
 

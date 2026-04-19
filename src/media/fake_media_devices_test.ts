@@ -1,5 +1,3 @@
-import { stubGlobal } from "./test-utils.ts";
-
 export class FakeMediaStreamTrack implements MediaStreamTrack {
 	id: string = crypto.randomUUID();
 	kind: string;
@@ -207,27 +205,19 @@ export function setupFakeMediaDevices(
 		value: { mediaDevices: fake },
 	});
 
-	// Mock setTimeout/clearTimeout for instant debounce resolution if needed
-	const ogSetTimeout = globalThis.setTimeout;
-	const ogClearTimeout = globalThis.clearTimeout;
-
-	stubGlobal("setTimeout", (fn: Function) => {
-		fn();
-		return 1;
-	});
-
-	stubGlobal("clearTimeout", () => {});
+	function restore() {
+		Object.defineProperty(globalThis, "navigator", {
+			writable: true,
+			configurable: true,
+			value: originalNavigator,
+		});
+	}
 
 	return {
 		fake,
+		restore,
 		[Symbol.dispose]() {
-			Object.defineProperty(globalThis, "navigator", {
-				writable: true,
-				configurable: true,
-				value: originalNavigator,
-			});
-			stubGlobal("setTimeout", ogSetTimeout);
-			stubGlobal("clearTimeout", ogClearTimeout);
+			restore();
 		},
 	};
 }

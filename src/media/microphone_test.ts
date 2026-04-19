@@ -1,6 +1,6 @@
 import { assertEquals, assertExists, assertRejects } from "@std/assert";
 import { MediaDeviceContext } from "./device.ts";
-import { setupFakeMediaDevices } from "./fake_media_devices.ts";
+import { setupFakeMediaDevices } from "./fake_media_devices_test.ts";
 import { Microphone } from "./microphone.ts";
 
 const devices = [

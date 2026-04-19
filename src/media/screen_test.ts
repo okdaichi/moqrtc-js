@@ -1,5 +1,5 @@
 import { assertEquals, assertExists, assertRejects } from "@std/assert";
-import { setupFakeMediaDevices } from "./fake_media_devices.ts";
+import { setupFakeMediaDevices } from "./fake_media_devices_test.ts";
 import { Screen } from "./screen.ts";
 
 Deno.test("Screen", async (t) => {

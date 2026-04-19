@@ -3,8 +3,7 @@
  *
  * Only declares items NOT already present in lib.dom.d.ts.
  * For browser APIs that ARE in lib.dom.d.ts (AudioEncoder, GainNode, etc.),
- * tests use stubGlobal()/deleteGlobal() helpers in each package to assign
- * fake implementations without fighting the strict DOM types.
+ * tests can assign fake implementations without fighting the strict DOM types.
  */
 
 // deno-lint-ignore-file no-var

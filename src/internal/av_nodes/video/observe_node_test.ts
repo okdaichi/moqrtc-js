@@ -1,10 +1,23 @@
 import { assert, assertEquals } from "@std/assert";
-import { deleteGlobal, stubGlobal } from "../test-utils.ts";
 import { VideoContext } from "./context.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
 import { FakeVideoNode } from "./fake_video_node_test.ts";
 import { FakeVideoFrame } from "./fake_videoframe_test.ts";
 import { VideoObserveNode } from "./observe_node.ts";
+
+function overrideIntersectionObserver(value: unknown): () => void {
+	const g = globalThis as unknown as Record<string, unknown>;
+	const hasIntersectionObserver = Object.prototype.hasOwnProperty.call(g, "IntersectionObserver");
+	const originalIntersectionObserver = g.IntersectionObserver;
+	g.IntersectionObserver = value;
+	return () => {
+		if (hasIntersectionObserver) {
+			g.IntersectionObserver = originalIntersectionObserver;
+		} else {
+			delete g.IntersectionObserver;
+		}
+	};
+}
 
 Deno.test("VideoObserveNode", async (t) => {
 	interface MockObserver {
@@ -20,6 +33,7 @@ Deno.test("VideoObserveNode", async (t) => {
 	let observeNode: VideoObserveNode;
 	let mockCanvas: FakeHTMLCanvasElement;
 	let mockObserver: MockObserver;
+	let restoreIntersectionObserver: () => void;
 
 	await t.step("setup", () => {
 		mockCanvas = new FakeHTMLCanvasElement();
@@ -38,18 +52,20 @@ Deno.test("VideoObserveNode", async (t) => {
 				mockObserver.disconnectCalled = true;
 			},
 		};
-		stubGlobal("IntersectionObserver", function (callback: IntersectionObserverCallback) {
-			// Store callback for testing
-			mockObserver.callback = callback;
-			return mockObserver;
-		});
+		restoreIntersectionObserver = overrideIntersectionObserver(
+			function (callback: IntersectionObserverCallback) {
+				// Store callback for testing
+				mockObserver.callback = callback;
+				return mockObserver;
+			},
+		);
 
 		observeNode = new VideoObserveNode(context); // enableBackground defaults to false
 	});
 
 	await t.step("teardown", () => {
 		// Restore global IntersectionObserver
-		deleteGlobal("IntersectionObserver");
+		restoreIntersectionObserver();
 	});
 
 	await t.step("should create VideoObserveNode", () => {
