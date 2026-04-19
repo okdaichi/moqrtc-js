@@ -1,6 +1,6 @@
 /// <reference path="../../../test_globals.d.ts" />
 import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
-import { stubGlobal } from "../../../test-utils_test.ts";
+import { stubGlobal } from "../../test-utils_test.ts";
 import { importWorkletUrl } from "./audio_hijack_worklet.ts";
 
 Deno.test("audio_hijack_worklet", async (t) => {

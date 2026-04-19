@@ -1,4 +1,4 @@
-import { stubGlobal } from "../test-utils_test.ts";
+import { stubGlobal } from "./test-utils_test.ts";
 
 export class FakeMediaStreamTrack implements MediaStreamTrack {
 	id: string = crypto.randomUUID();

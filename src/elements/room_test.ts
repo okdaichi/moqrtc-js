@@ -1,7 +1,7 @@
 import type { Session } from "@okdaichi/moq";
 import { assert, assertEquals, assertExists } from "@std/assert";
 import type { Room } from "../room.ts";
-import { stubGlobal } from "../test-utils_test.ts";
+import { stubGlobal } from "./test-utils_test.ts";
 
 class FakeElement extends EventTarget {
 	readonly tagName: string;
