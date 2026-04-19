@@ -1,7 +1,7 @@
 /// <reference path="./test_globals.d.ts" />
 import { assertEquals } from "@std/assert";
-import { FakeAudioContext } from "./internal/av_nodes/audio/fake_audio_context_test.ts";
-import { FakeGainNode } from "./internal/av_nodes/audio/fake_gainnode_test.ts";
+import { FakeAudioContext } from "../packages/av_nodes/audio/fake_audio_context_test.ts";
+import { FakeGainNode } from "../packages/av_nodes/audio/fake_gainnode_test.ts";
 import { VolumeController } from "./volume.ts";
 
 Deno.test("VolumeController", async (t) => {
