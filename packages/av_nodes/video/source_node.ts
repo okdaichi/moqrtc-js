@@ -1,6 +1,13 @@
-/// <reference path="../../../test_globals.d.ts" />
 import type { VideoContext } from "./context.ts";
 import { VideoNode } from "./video_node.ts";
+
+/** MediaStreamTrackProcessor is not yet in lib.dom.d.ts. */
+interface MediaStreamTrackProcessorInit {
+	track: MediaStreamTrack;
+}
+interface MediaStreamTrackProcessorLike {
+	readable: ReadableStream<VideoFrame>;
+}
 
 export class VideoSourceNode extends VideoNode {
 	readonly context: VideoContext;
@@ -123,7 +130,12 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 		let stream: ReadableStream<VideoFrame>;
 
 		if ("MediaStreamTrackProcessor" in globalThis) {
-			stream = new globalThis.MediaStreamTrackProcessor({ track }).readable;
+			const Ctor = (globalThis as unknown as {
+				MediaStreamTrackProcessor: new (
+					init: MediaStreamTrackProcessorInit,
+				) => MediaStreamTrackProcessorLike;
+			}).MediaStreamTrackProcessor;
+			stream = new Ctor({ track }).readable;
 		} else {
 			console.warn(
 				"[MediaStreamVideoSourceNode] MediaStreamTrackProcessor not available; using polyfill",

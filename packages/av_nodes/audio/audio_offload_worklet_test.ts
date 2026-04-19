@@ -1,4 +1,4 @@
-/// <reference path="../../../test_globals.d.ts" />
+/// <reference path="../../../src/test_globals.d.ts" />
 import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
 import { importWorkletUrl } from "./audio_offload_worklet.ts";
 import { setupFakeAudioWorkletEnvironment } from "./fake_audio_worklet_environment_test.ts";

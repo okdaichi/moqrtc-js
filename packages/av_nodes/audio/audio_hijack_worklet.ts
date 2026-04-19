@@ -1,4 +1,4 @@
-/// <reference path="../../../test_globals.d.ts" />
+/// <reference path="../../../src/test_globals.d.ts" />
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
 	return new URL("./audio_hijack_worklet.js", import.meta.url).href;
