@@ -1,5 +1,5 @@
-import { audioEncoderConfig } from "../audio/audio_config.ts";
-import { AudioDecodeNode, AudioEncodeDestination, AudioEncodeNode } from "../audio/mod.ts";
+import { audioEncoderConfig } from "../src/internal/av_nodes/audio/audio_config.ts";
+import { AudioDecodeNode, AudioEncodeDestination, AudioEncodeNode } from "../src/internal/av_nodes/audio/mod.ts";
 import {
 	MediaStreamVideoSourceNode,
 	VideoAnalyserNode,
@@ -8,8 +8,8 @@ import {
 	VideoEncodeDestination,
 	VideoEncodeNode,
 	VideoOverlayNode,
-} from "../video/mod.ts";
-import { videoEncoderConfig } from "../video/video_config.ts";
+} from "../src/internal/av_nodes/video/mod.ts";
+import { videoEncoderConfig } from "../src/internal/av_nodes/video/video_config.ts";
 
 // ============================================================================
 // Types
