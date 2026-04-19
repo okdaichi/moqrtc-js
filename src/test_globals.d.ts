@@ -6,8 +6,6 @@
  * tests can assign fake implementations without fighting the strict DOM types.
  */
 
-// deno-lint-ignore-file no-var
-
 declare global {
 	/* ------------------------------------------------------------------ */
 	/*  AudioWorkletGlobalScope APIs (not in lib.dom.d.ts)                 */
