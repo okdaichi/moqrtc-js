@@ -36,6 +36,7 @@ export class FakeAudioDecoder extends EventTarget {
 
 	#output: (data: AudioData) => void;
 	#error: WebCodecsErrorCallback;
+	#config: AudioDecoderConfig | null = null;
 
 	constructor(init: AudioDecoderInit) {
 		super();
@@ -46,6 +47,7 @@ export class FakeAudioDecoder extends EventTarget {
 
 	configure(config: AudioDecoderConfig): void {
 		this.configureCalls.push(config);
+		this.#config = config;
 		this.state = "configured";
 	}
 
@@ -57,7 +59,12 @@ export class FakeAudioDecoder extends EventTarget {
 		queueMicrotask(() => {
 			this.decodeQueueSize--;
 			this.dispatchEvent(new Event("dequeue"));
-			const frame = new FakeAudioData(1024, 2, 44100, chunk.timestamp);
+			const frame = new FakeAudioData(
+				1024,
+				this.#config?.numberOfChannels ?? 2,
+				this.#config?.sampleRate ?? 44100,
+				chunk.timestamp,
+			);
 			this.#output(frame);
 		});
 	}

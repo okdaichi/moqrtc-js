@@ -205,8 +205,9 @@ Deno.test("AudioDecodeNode", async (t) => {
 			const originalSetTimeout = globalThis.setTimeout;
 			globalThis.setTimeout = (
 				callback: TimerHandler,
-				...args: unknown[]
-			) => originalSetTimeout(callback, 1, ...args);
+				_delay?: number,
+				...rest: unknown[]
+			) => originalSetTimeout(callback, 1, ...rest);
 
 			class StalledDecoder extends EventTarget {
 				state: CodecState = "configured";
