@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
 import { stubGlobal } from "../../../test-utils_test.ts";
-import type { EncodedChunk } from "../container.ts";
+
 import type {
 	AudioEncodeDestination,
 	AudioEncodeNode as AudioEncodeNodeType,
@@ -312,14 +312,14 @@ Deno.test("AudioEncodeNode", async (t) => {
 		const node = new AudioEncodeNode(context);
 		// const encoder = FakeAudioEncoder.lastCreated!;
 
-		let outputChunk: EncodedChunk | undefined;
+		let outputChunk: EncodedAudioChunk | undefined;
 		let resolveDone!: () => void;
 		new Promise<void>((resolve) => {
 			resolveDone = resolve;
 		});
 
 		const mockDest: AudioEncodeDestination = {
-			output: (chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) => {
+			output: (chunk: EncodedAudioChunk, _decoderConfig?: AudioDecoderConfig) => {
 				outputChunk = chunk;
 				return Promise.resolve(undefined);
 			},
@@ -360,7 +360,7 @@ Deno.test("AudioEncodeNode", async (t) => {
 			});
 
 			const mockDest: AudioEncodeDestination = {
-				output: (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) =>
+				output: (_chunk: EncodedAudioChunk, _decoderConfig?: AudioDecoderConfig) =>
 					Promise.resolve(undefined),
 			};
 
@@ -394,7 +394,7 @@ Deno.test("AudioEncodeNode", async (t) => {
 			const node = new AudioEncodeNode(context);
 
 			const mockDest: AudioEncodeDestination = {
-				output: (_chunk: EncodedChunk, _decoderConfig?: AudioDecoderConfig) =>
+				output: (_chunk: EncodedAudioChunk, _decoderConfig?: AudioDecoderConfig) =>
 					Promise.resolve(undefined),
 			};
 
