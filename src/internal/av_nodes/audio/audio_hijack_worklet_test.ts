@@ -182,6 +182,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 
 						constructor(options: AudioWorkletNodeOptions) {
 							super();
+							this.port = mockPort as unknown as MessagePort;
 							// Get sampleRate from processorOptions or fall back to global sampleRate
 							this.#sampleRate = options.processorOptions?.sampleRate ||
 								globalThis.sampleRate;
@@ -461,6 +462,5 @@ Deno.test("audio_hijack_worklet", async (t) => {
 				`Expected timestamp delta ~${expectedDelta}, got ${actualDelta}`,
 			);
 		});
-
 	});
 });
