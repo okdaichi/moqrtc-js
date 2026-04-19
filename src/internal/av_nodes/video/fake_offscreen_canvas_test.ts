@@ -45,18 +45,18 @@ export function overrideIdleCallback() {
 	const originalCancelIdleCallback = g.cancelIdleCallback;
 
 	if (typeof requestIdleCallback === "undefined") {
-		(g as unknown as { requestIdleCallback: unknown }).requestIdleCallback =
-			(callback: () => void) => {
-				setTimeout(callback, 1);
-				return 1;
-			};
+		(g as unknown as { requestIdleCallback: unknown }).requestIdleCallback = (
+			callback: () => void,
+		) => {
+			setTimeout(callback, 1);
+			return 1;
+		};
 	}
 
 	if (typeof cancelIdleCallback === "undefined") {
-		(g as unknown as { cancelIdleCallback: unknown }).cancelIdleCallback =
-			(_id: number) => {
-				clearTimeout(_id);
-			};
+		(g as unknown as { cancelIdleCallback: unknown }).cancelIdleCallback = (_id: number) => {
+			clearTimeout(_id);
+		};
 	}
 
 	return () => {

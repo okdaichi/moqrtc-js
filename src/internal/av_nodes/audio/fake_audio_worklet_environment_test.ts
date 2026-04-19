@@ -18,7 +18,10 @@ export class FakeAudioWorkletProcessor {
 
 export function setupFakeAudioWorkletEnvironment() {
 	const g = globalThis as unknown as Record<string, unknown>;
-	const hasAudioWorkletProcessor = Object.prototype.hasOwnProperty.call(g, "AudioWorkletProcessor");
+	const hasAudioWorkletProcessor = Object.prototype.hasOwnProperty.call(
+		g,
+		"AudioWorkletProcessor",
+	);
 	const originalAudioWorkletProcessor = g.AudioWorkletProcessor;
 	const hasRegisterProcessor = Object.prototype.hasOwnProperty.call(g, "registerProcessor");
 	const originalRegisterProcessor = g.registerProcessor;

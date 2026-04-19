@@ -228,8 +228,8 @@ Deno.test("audio_offload_worklet", async (t) => {
 					);
 				}
 
-assertEquals(env.registerProcessorCalls.length, 1);
-			const [name, processorCtor] = env.registerProcessorCalls[0]!;
+				assertEquals(env.registerProcessorCalls.length, 1);
+				const [name, processorCtor] = env.registerProcessorCalls[0]!;
 				assertEquals(name, "audio-offloader");
 				assertEquals(typeof processorCtor, "function");
 
@@ -275,7 +275,10 @@ assertEquals(env.registerProcessorCalls.length, 1);
 		"does not register the offload processor when AudioWorkletProcessor is not defined",
 		() => {
 			const g = globalThis as unknown as Record<string, unknown>;
-			const hasRegisterProcessor = Object.prototype.hasOwnProperty.call(g, "registerProcessor");
+			const hasRegisterProcessor = Object.prototype.hasOwnProperty.call(
+				g,
+				"registerProcessor",
+			);
 			const originalRegisterProcessor = g.registerProcessor;
 			const mockRegisterProcessor = { calls: [] as Parameters<typeof registerProcessor>[] };
 			g.registerProcessor = (
@@ -383,7 +386,8 @@ assertEquals(env.registerProcessorCalls.length, 1);
 				);
 			}
 
-			const ProcessorCtor = env.registerProcessorCalls[0]![1] as AudioOffloadProcessorConstructor;
+			const ProcessorCtor = env
+				.registerProcessorCalls[0]![1] as AudioOffloadProcessorConstructor;
 
 			assertThrows(
 				() => new ProcessorCtor({}),
@@ -637,8 +641,8 @@ assertEquals(env.registerProcessorCalls.length, 1);
 				}
 
 				// Create processor instance
-				const AudioOffloadProcessor = env.registerProcessorCalls
-					[0]![1] as AudioOffloadProcessorConstructor;
+				const AudioOffloadProcessor = env
+					.registerProcessorCalls[0]![1] as AudioOffloadProcessorConstructor;
 				processor = new AudioOffloadProcessor({
 					channelCount: 2,
 					processorOptions: {

@@ -466,7 +466,7 @@ Deno.test("AudioEncodeNode - edge cases", async (t) => {
 		restoreAudioWorkletNode = overrideAudioWorkletNode(FakeAudioWorkletNode);
 
 		context = new FakeAudioContext();
-});
+	});
 
 	const testCases = new Map([
 		["should handle null channelCount gracefully", {
