@@ -60,7 +60,7 @@ export class MediaDeviceContext {
 					"devicechange",
 					this.#onchange as EventListener,
 				);
-			} catch (e) {
+			} catch (_e) {
 				// Some environments may not support addEventListener on mediaDevices
 				// Fall back to assigning onchange if available
 				if (typeof navigator.mediaDevices.ondevicechange !== "undefined") {
@@ -219,7 +219,7 @@ export class MediaDeviceContext {
 				} else if (typeof navigator.mediaDevices.ondevicechange !== "undefined") {
 					navigator.mediaDevices.ondevicechange = null;
 				}
-			} catch (e) {
+			} catch (_e) {
 				// Ignore
 			}
 			this.#onchange = undefined;

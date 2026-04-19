@@ -75,12 +75,12 @@ export class Screen {
 		this.#stream = undefined;
 		try {
 			tracks.video?.stop();
-		} catch (error) {
+		} catch (_error) {
 			// Ignore errors when stopping video track
 		}
 		try {
 			tracks.audio?.stop();
-		} catch (error) {
+		} catch (_error) {
 			// Ignore errors when stopping audio track
 		}
 	}

@@ -111,13 +111,13 @@ export class Microphone {
 			// requestPermission is best-effort; continue to try
 		}
 
-		const deviceIdConstraint = this.#device.activeDeviceId
+		const deviceIdConstraint: MediaTrackConstraints = this.#device.activeDeviceId
 			? { deviceId: { exact: this.#device.activeDeviceId } }
 			: {};
 
 		const constraints: MediaStreamConstraints = {
 			audio: {
-				...(deviceIdConstraint as any),
+				...deviceIdConstraint,
 				...(this.#device.constraints ?? {}),
 			},
 		};

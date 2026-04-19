@@ -89,7 +89,7 @@ export class FakeAudioEncoder {
 			const chunk = {
 				type: "key" as EncodedAudioChunkType,
 				timestamp: data.timestamp,
-				duration: (data as any).duration === undefined ? null : (data as any).duration,
+				duration: data.duration ?? null,
 				byteLength: 1024,
 				copyTo: (_dest: AllowSharedBufferSource) => {},
 			} as EncodedAudioChunk;

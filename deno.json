@@ -54,13 +54,7 @@
     "include": ["src/"],
     "rules": {
       "tags": ["recommended"],
-      "exclude": [
-        "require-await",
-        "no-unused-vars",
-        "no-explicit-any",
-        "no-await-in-sync-fn",
-        "no-redeclare"
-      ]
+      "exclude": ["require-await"]
     }
   },
   "exclude": [".git", "dist/", "node_modules/", "cov/"],

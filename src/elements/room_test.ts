@@ -1,6 +1,8 @@
 import type { Session } from "@okdaichi/moq";
 import { assert, assertEquals, assertExists } from "@std/assert";
+import type { JoinedMember, LeftMember } from "../member.ts";
 import type { Room } from "../room.ts";
+import type { RoomLifecycleStatus } from "./room.ts";
 
 function overrideHTMLElement(value: unknown): () => void {
 	const g = globalThis as unknown as Record<string, unknown>;
@@ -285,7 +287,7 @@ Deno.test("RoomElement - join reports missing room-id", async () => {
 	const { restoreDOM, element } = await createRoomElementFixture();
 	try {
 		let statusCalled = false;
-		let statusArg: any;
+		let statusArg: RoomLifecycleStatus | undefined;
 		element.onstatus = (status) => {
 			statusCalled = true;
 			statusArg = status;
@@ -297,6 +299,7 @@ Deno.test("RoomElement - join reports missing room-id", async () => {
 		);
 
 		assert(statusCalled);
+		assertExists(statusArg);
 		assertEquals(statusArg.type, "error");
 		assertEquals(statusArg.message, "room-id is missing");
 	} finally {
@@ -309,7 +312,7 @@ Deno.test("RoomElement - join reports session errors", async () => {
 	try {
 		element.setAttribute("room-id", "test-room");
 		let statusCalled = false;
-		let statusArg: any;
+		let statusArg: RoomLifecycleStatus | undefined;
 		element.onstatus = (status) => {
 			statusCalled = true;
 			statusArg = status;
@@ -323,6 +326,7 @@ Deno.test("RoomElement - join reports session errors", async () => {
 		);
 
 		assert(statusCalled);
+		assertExists(statusArg);
 		assertEquals(statusArg.type, "error");
 		assert(statusArg.message.includes("Failed to join: accept failed"));
 	} finally {
@@ -335,7 +339,7 @@ Deno.test("RoomElement - onjoin callback fires when member joins", async () => {
 	try {
 		element.setAttribute("room-id", "test-room");
 		let onjoinCalled = false;
-		let onjoinArg: any;
+		let onjoinArg: JoinedMember | undefined;
 		element.onjoin = (member) => {
 			onjoinCalled = true;
 			onjoinArg = member;
@@ -350,6 +354,7 @@ Deno.test("RoomElement - onjoin callback fires when member joins", async () => {
 		await Promise.resolve();
 
 		assert(onjoinCalled);
+		assertExists(onjoinArg);
 		assertEquals(onjoinArg.name, "test-member");
 		assertEquals(onjoinArg.remote, true);
 	} finally {
@@ -362,7 +367,7 @@ Deno.test("RoomElement - onleave callback fires when member leaves", async () =>
 	try {
 		element.setAttribute("room-id", "test-room");
 		let onleaveCalled = false;
-		let onleaveArg: any;
+		let onleaveArg: LeftMember | undefined;
 		element.onleave = (member) => {
 			onleaveCalled = true;
 			onleaveArg = member;
@@ -378,6 +383,7 @@ Deno.test("RoomElement - onleave callback fires when member leaves", async () =>
 		element.room?.disconnect();
 
 		assert(onleaveCalled);
+		assertExists(onleaveArg);
 		assertEquals(onleaveArg.name, "test-member");
 		assertEquals(onleaveArg.remote, true);
 	} finally {

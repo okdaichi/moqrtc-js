@@ -291,7 +291,7 @@ export class Room extends EventTarget {
 				// wait forever. The announcements reader will be closed below.
 				try {
 					resolveAck();
-				} catch (e) {
+				} catch (_e) {
 					// ignore if ack already resolved
 				}
 				break;

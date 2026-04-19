@@ -6,8 +6,11 @@ export class FakeMediaStreamTrack implements MediaStreamTrack {
 	enabled = true;
 	contentHint: string = "";
 	readyState: MediaStreamTrackState = "live";
+	// deno-lint-ignore no-explicit-any
 	onended: ((this: MediaStreamTrack, ev: Event) => any) | null = null;
+	// deno-lint-ignore no-explicit-any
 	onmute: ((this: MediaStreamTrack, ev: Event) => any) | null = null;
+	// deno-lint-ignore no-explicit-any
 	onunmute: ((this: MediaStreamTrack, ev: Event) => any) | null = null;
 
 	#constraints: MediaTrackConstraints = {};
@@ -90,6 +93,7 @@ export class FakeMediaStream implements MediaStream {
 }
 
 export class FakeMediaDevices implements MediaDevices {
+	// deno-lint-ignore no-explicit-any
 	ondevicechange: ((this: MediaDevices, ev: Event) => any) | null = null;
 	devices: MediaDeviceInfo[] = [];
 	permissions: { audio: boolean; video: boolean } = { audio: false, video: false };
@@ -179,10 +183,10 @@ export class FakeMediaDevices implements MediaDevices {
 		}
 	}
 
-	addEventListener(type: string, listener: any) {
-		if (type === "devicechange") this.ondevicechange = listener;
+	addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+		if (type === "devicechange") this.ondevicechange = listener as (this: MediaDevices, ev: Event) => void;
 	}
-	removeEventListener(type: string, listener: any) {
+	removeEventListener(type: string, listener: EventListenerOrEventListenerObject) {
 		if (type === "devicechange" && this.ondevicechange === listener) this.ondevicechange = null;
 	}
 	dispatchEvent(): boolean {
