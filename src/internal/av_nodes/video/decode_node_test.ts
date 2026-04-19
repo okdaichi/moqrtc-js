@@ -274,8 +274,8 @@ Deno.test("VideoDecodeNode", async (t) => {
 		const mockReader = new ReadableStream({
 			start(controller) {
 				controller.enqueue({
-						timestamp: 0,
-					} as EncodedVideoChunk);
+					timestamp: 0,
+				} as EncodedVideoChunk);
 				controller.close();
 			},
 		});
