@@ -1,0 +1,16 @@
+{
+	"compilerOptions": {
+		"lib": ["ESNext", "DOM", "dom.iterable", "dom.asynciterable"]
+	},
+	"tasks": {
+		"build": "deno run --allow-read --allow-write --allow-env --allow-net --allow-run build.ts",
+		"dev": "deno task build && deno run --allow-net --allow-read server.ts"
+	},
+	"fmt": {
+		"singleQuote": false,
+		"lineWidth": 100,
+		"indentWidth": 4,
+		"useTabs": true,
+		"semiColons": true
+	}
+}

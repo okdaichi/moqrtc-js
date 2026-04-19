@@ -2,14 +2,79 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "Test hang-web",
+			"label": "Deno: Test",
 			"type": "shell",
-			"command": "npm",
+			"command": "deno",
 			"args": [
-				"run",
-				"test",
-				"--silent"
-			]
+				"task",
+				"test"
+			],
+			"problemMatcher": [],
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "Deno: Test Watch",
+			"type": "shell",
+			"command": "deno",
+			"args": [
+				"task",
+				"test:watch"
+			],
+			"problemMatcher": [],
+			"isBackground": true
+		},
+		{
+			"label": "Deno: Check",
+			"type": "shell",
+			"command": "deno",
+			"args": [
+				"task",
+				"check"
+			],
+			"problemMatcher": [
+				"$deno"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "Deno: Lint",
+			"type": "shell",
+			"command": "deno",
+			"args": [
+				"task",
+				"lint"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Deno: Format",
+			"type": "shell",
+			"command": "deno",
+			"args": [
+				"task",
+				"fmt"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Remove obsolete root mock",
+			"type": "shell",
+			"command": "powershell -NoProfile -Command \"Remove-Item -Force 'src\\\\mock_audio_context_test.ts'\"",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Remove obsolete root mocks",
+			"type": "shell",
+			"command": "powershell -NoProfile -Command \"Remove-Item -Force 'src\\\\mock_audio_context_test.ts','src\\\\mock_audio_worklet_node_test.ts','src\\\\mock_canvas_test.ts','src\\\\mock_gain_node_test.ts','src\\\\mock_video_test.ts'\"",
+			"isBackground": false,
+			"problemMatcher": []
 		}
 	]
 }

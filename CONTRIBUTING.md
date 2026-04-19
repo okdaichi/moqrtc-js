@@ -16,7 +16,7 @@ If you find a bug, please create an issue on GitHub with:
 - Steps to reproduce the issue
 - Expected behavior
 - Actual behavior
-- Your environment (Node.js version, OS, etc.)
+- Your environment (Deno version, OS, etc.)
 - Any relevant code samples or error messages
 
 ### Suggesting Enhancements
@@ -31,15 +31,16 @@ Enhancement suggestions are welcome! Please create an issue with:
 ### Pull Requests
 
 1. **Fork the repository** and create your branch from `main`
-2. **Install dependencies**: `npm install`
+2. **Install Deno**: Follow instructions at [deno.land](https://deno.land/)
 3. **Make your changes**: Ensure your code follows the project style
 4. **Add tests**: If you're adding functionality, add corresponding tests
-5. **Run tests**: Ensure all tests pass with `npm test`
-6. **Run linter**: Fix any linting issues with `npm run lint`
-7. **Format code**: Run `npm run format` to ensure consistent formatting
-8. **Update documentation**: Update README.md or other docs if needed
-9. **Commit your changes**: Use clear, descriptive commit messages
-10. **Push to your fork** and submit a pull request
+5. **Run tests**: Ensure all tests pass with `deno task test`
+6. **Run linter**: Fix any linting issues with `deno task lint`
+7. **Format code**: Run `deno task fmt` to ensure consistent formatting
+8. **Type check**: Run `deno task check` to verify TypeScript correctness
+9. **Update documentation**: Update README.md or other docs if needed
+10. **Commit your changes**: Use clear, descriptive commit messages
+11. **Push to your fork** and submit a pull request
 
 ### Commit Message Guidelines
 
@@ -63,32 +64,34 @@ Fixes #123
 
 ### Prerequisites
 
-- Node.js >= 18.0.0
-- npm or yarn
+- Deno >= 1.40.0 (install from [deno.land](https://deno.land/))
 
-### Building and Testing
+### Development Workflow
 
 ```bash
-# Install dependencies
-npm install
-
-# Build the project
-npm run build
+# Type check all files
+deno task check
 
 # Run tests
-npm test
+deno task test
+
+# Run tests in watch mode
+deno task test:watch
 
 # Run tests with coverage
-npm run coverage
+deno task coverage
+
+# Generate HTML coverage report
+deno task coverage:html
 
 # Lint code
-npm run lint
+deno task lint
 
 # Format code
-npm run format
+deno task fmt
 
-# Clean build artifacts
-npm run clean
+# Check formatting without changing files
+deno task fmt:check
 ```
 
 ## Coding Standards
@@ -103,28 +106,33 @@ npm run clean
 ### Style Guide
 
 - Follow the existing code style
-- Use Prettier for formatting (configured in the project)
-- Use ESLint rules (configured in the project)
+- Use Deno's built-in formatter (`deno fmt`)
+- Follow Deno's linting rules (`deno lint`)
 - Write clear, concise comments for complex logic
+- Use explicit `.ts` extensions in relative imports
 
 ### Testing
 
-- Write unit tests for new functionality
+- Write unit tests for new functionality using `Deno.test()`
+- Use test steps (`t.step()`) for nested test organization
 - Maintain or improve code coverage
 - Test edge cases and error conditions
 - Use descriptive test names
+- Place test files next to source files with `_test.ts` suffix
 
 ## Project Structure
 
 ```
-moqrtc-ts/
-├── src/           # Source files
-├── dist/          # Compiled output (generated)
-├── tests/         # Test files
-├── .github/       # GitHub workflows and templates
-├── package.json   # Project metadata and dependencies
-├── tsconfig.json  # TypeScript configuration
-└── README.md      # Project documentation
+moqrtc-js/
+├── src/                  # Source files
+│   ├── **/*_test.ts     # Test files (co-located with source)
+│   └── index.ts         # Main entry point
+├── example/             # Example application
+├── .github/             # GitHub workflows and templates
+├── .vscode/             # VSCode settings for Deno
+├── deno.json            # Deno configuration
+├── MIGRATION_NOTES.md   # Migration documentation
+└── README.md            # Project documentation
 ```
 
 ## Getting Help

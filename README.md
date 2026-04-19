@@ -15,6 +15,12 @@ This project provides a TypeScript implementation for real-time communication us
 
 ## Installation
 
+### For Deno projects
+```typescript
+import { Room, BroadcastPublisher } from "jsr:@okudai/moqrtc-js";
+```
+
+### For Node.js projects (via npm)
 ```bash
 npm install moqrtc-ts
 ```
@@ -27,30 +33,45 @@ Documentation and usage examples will be provided as the project develops.
 
 ### Prerequisites
 
-- Node.js >= 18.0.0
-- npm or yarn
+- [Deno](https://deno.land/) >= 1.40.0
 
 ### Setup
 
 ```bash
-# Install dependencies
-npm install
-
-# Build the project
-npm run build
+# Clone the repository
+git clone https://github.com/OkutaniDaichi0106/moqrtc-js.git
+cd moqrtc-js
 
 # Run tests
-npm test
+deno task test
 
 # Run tests with coverage
-npm run coverage
+deno task coverage
 
-# Lint code
-npm run lint
+# Check code formatting
+deno task fmt:check
 
 # Format code
-npm run format
+deno task fmt
+
+# Run linter
+deno task lint
+
+# Type check
+deno task check
 ```
+
+### Available Deno Tasks
+
+- `deno task test` - Run all tests
+- `deno task test:watch` - Run tests in watch mode
+- `deno task coverage` - Generate test coverage report
+- `deno task coverage:html` - Generate HTML coverage report
+- `deno task coverage:lcov` - Generate LCOV coverage report
+- `deno task fmt` - Format code
+- `deno task fmt:check` - Check code formatting
+- `deno task lint` - Lint code
+- `deno task check` - Type check all TypeScript files
 
 ## Contributing
 

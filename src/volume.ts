@@ -1,150 +1,130 @@
 /**
- * Default volume module with build-time constant injection support.
+ * Volume module with explicit constructor injection for runtime defaults.
  *
- * A bundler (esbuild / Vite / webpack, etc.) can define `__DEFAULT_VOLUME__`
- * as a numeric literal in the range [0,1]. That value becomes the initial
- * default volume. If it's absent or invalid, we fall back to 0.5.
- *
- * Example (esbuild):
- *   esbuild src/index.ts --define:__DEFAULT_VOLUME__=0.7
+ * `VolumeController` wraps a GainNode and drives smooth fade and mute behavior.
+ * Optional defaults are passed through constructor options instead of build-time globals.
  */
 
-// Previous version used a direct `typeof __DEFAULT_VOLUME__ !== 'undefined'` guard.
-// Switched to reading off globalThis so we can rely on nullish coalescing (??) without risking
-// a ReferenceError for an undeclared symbol.
-// To inject via bundler, define: `globalThis.__DEFAULT_VOLUME__ = 0.7` (or with esbuild define:
-// esbuild ... --define:globalThis.__DEFAULT_VOLUME__=0.7)
-// We keep a declaration merging-friendly interface for type safety.
-interface GlobalWithDefaultVolume { __DEFAULT_VOLUME__?: number }
-
-const FALLBACK_VOLUME = 0.5; // Library fallback default
-
-// Audio fade constants with build-time injection support
-export const MIN_GAIN_FALLBACK = 0.001; // Fallback minimum gain
-export const FADE_TIME_FALLBACK = 80; // Fallback fade time in milliseconds
-
-// Build-time injection declarations (similar to __DEFAULT_VOLUME__)
-interface GlobalWithAudioConstants { __DEFAULT_MIN_GAIN__?: number; __DEFAULT_FADE_TIME__?: number; }
-
-// Get minimum gain with build-time injection
-export function DefaultMinGain(): number {
-  const injected = (globalThis as unknown as GlobalWithAudioConstants).__DEFAULT_MIN_GAIN__;
-  if (injected !== undefined && isValidMinGain(injected)) {
-    return injected;
-  }
-  return MIN_GAIN_FALLBACK;
+export interface VolumeControllerOptions {
+	initialVolume?: number;
+	defaultVolume?: number;
+	minGain?: number;
+	fadeTimeMs?: number;
 }
 
-// Get fade time with build-time injection
-export function DefaultFadeTime(): number {
-  const injected = (globalThis as unknown as GlobalWithAudioConstants).__DEFAULT_FADE_TIME__;
-  if (injected !== undefined && isValidFadeTime(injected)) {
-    return injected;
-  }
-  return FADE_TIME_FALLBACK;
-}
+type VolumeGainNode = {
+	readonly context: AudioContext;
+	readonly gain: AudioParam;
+};
 
-// Validation functions for compile-time checks
-export function isValidMinGain(v: number): boolean {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0 && v < 0.01; // Reasonable range for min gain
-}
+export class VolumeController {
+	static readonly DEFAULT_VOLUME = 0.5;
+	static readonly DEFAULT_MIN_GAIN = 0.001;
+	static readonly DEFAULT_FADE_TIME_MS = 80;
 
-export function isValidFadeTime(v: number): boolean {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0.01 && v < 1.0; // Reasonable range for fade time
-}
+	readonly gainNode: VolumeGainNode;
+	#muted = false;
+	#unmuteVolume: number;
+	#defaultVolume: number;
+	#minGain: number;
+	#fadeTimeMs: number;
 
-export function isValidVolume(v: unknown): v is number {
-    return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
-}
+	constructor(gainNode: VolumeGainNode, options?: VolumeControllerOptions) {
+		this.gainNode = gainNode;
 
-export function DefaultVolume(): number {
-    const injected = (globalThis as unknown as GlobalWithDefaultVolume).__DEFAULT_VOLUME__;
-    if (injected !== undefined) {
-        if (isValidVolume(injected)) {
-            return injected;
-        } else {
-            console.warn('[volume] __DEFAULT_VOLUME__ is out of range, fallback to 0.5:', injected);
-        }
-    }
-    return FALLBACK_VOLUME;
-}
+		const {
+			initialVolume,
+			defaultVolume,
+			minGain,
+			fadeTimeMs,
+		} = options ?? {};
 
+		const normalizedDefaultVolume =
+			defaultVolume != undefined && defaultVolume >= 0 && defaultVolume <= 1
+				? defaultVolume
+				: VolumeController.DEFAULT_VOLUME;
 
-/**
- * Enhanced GainNode with volume control utilities
- */
-export class VolumeController extends GainNode {
-    #muted: boolean = false;
-    #unmuteVolume: number;
-    #rampMs: number;
+		const normalizedMinGain = minGain != undefined && minGain > 0 && minGain < 0.01
+			? minGain
+			: VolumeController.DEFAULT_MIN_GAIN;
 
-    constructor(audioContext: AudioContext, options?: GainOptions & { initialVolume?: number; fadeTimeMs?: number }) {
-        const initialVolume = options?.initialVolume ?? DefaultVolume();
-        const clampedInitial = Math.min(1, Math.max(0, isFinite(initialVolume) ? initialVolume : 1));
+		const normalizedFadeTimeMs =
+			fadeTimeMs != undefined && fadeTimeMs > 0.01 && fadeTimeMs < 1.0
+				? fadeTimeMs
+				: VolumeController.DEFAULT_FADE_TIME_MS;
 
-        super(audioContext, { ...options, gain: clampedInitial });
+		const initialVolumeValue = initialVolume ?? normalizedDefaultVolume;
+		const clampedInitial = Math.min(
+			1,
+			Math.max(0, isFinite(initialVolumeValue) ? initialVolumeValue : 1),
+		);
 
-        this.#rampMs = options?.fadeTimeMs ?? DefaultFadeTime();
-        this.#unmuteVolume = clampedInitial === 0 ? DefaultVolume() : clampedInitial;
-    }
+		const now = this.gainNode.context.currentTime;
+		const gainParam = this.gainNode.gain;
+		gainParam.cancelScheduledValues(now);
+		gainParam.setValueAtTime(clampedInitial, now);
 
-    #clamp(v: number): number {
-        return Math.min(1, Math.max(0, isFinite(v) ? v : 1));
-    }
+		this.#defaultVolume = normalizedDefaultVolume;
+		this.#minGain = normalizedMinGain;
+		this.#fadeTimeMs = normalizedFadeTimeMs;
+		this.#unmuteVolume = clampedInitial === 0 ? normalizedDefaultVolume : clampedInitial;
+	}
 
-    setVolume(v: number) {
-        const clamped = this.#clamp(v);
-        const now = this.context.currentTime;
-        const gainParam = this.gain;
+	#clamp(v: number): number {
+		return Math.min(1, Math.max(0, isFinite(v) ? v : 1));
+	}
 
-        // Cancel scheduled to avoid stacking
-        gainParam.cancelScheduledValues(now);
-        gainParam.setValueAtTime(gainParam.value, now);
+	setVolume(v: number) {
+		const clamped = this.#clamp(v);
+		const now = this.gainNode.context.currentTime;
+		const gainParam = this.gainNode.gain;
 
-        if (clamped < DefaultMinGain()) {
-            gainParam.exponentialRampToValueAtTime(DefaultMinGain(), now + DefaultFadeTime());
-            gainParam.setValueAtTime(0, now + DefaultFadeTime() + 0.01);
-        } else {
-            gainParam.exponentialRampToValueAtTime(clamped, now + DefaultFadeTime());
-        }
+		gainParam.cancelScheduledValues(now);
+		gainParam.setValueAtTime(gainParam.value, now);
 
-        if (clamped > 0) {
-            this.#unmuteVolume = clamped;
-        }
-    }
+		if (clamped < this.#minGain) {
+			gainParam.exponentialRampToValueAtTime(this.#minGain, now + this.#fadeTimeMs);
+			gainParam.setValueAtTime(0, now + this.#fadeTimeMs + 0.01);
+		} else {
+			gainParam.exponentialRampToValueAtTime(clamped, now + this.#fadeTimeMs);
+		}
 
-    mute(m: boolean) {
-        if (m === this.#muted) return;
-        this.#muted = m;
+		if (clamped > 0) {
+			this.#unmuteVolume = clamped;
+		}
+	}
 
-        const now = this.context.currentTime;
-        const gainParam = this.gain;
-        gainParam.cancelScheduledValues(now);
-        gainParam.setValueAtTime(gainParam.value, now);
+	mute(m: boolean) {
+		if (m === this.#muted) return;
+		this.#muted = m;
 
-        if (m) {
-            // Store previous volume if >0
-            const current = gainParam.value;
-            if (current > 0.0001) {
-                this.#unmuteVolume = current;
-            }
-            if (current < DefaultMinGain()) {
-                gainParam.exponentialRampToValueAtTime(DefaultMinGain(), now + DefaultFadeTime());
-                gainParam.setValueAtTime(0, now + DefaultFadeTime() + 0.01);
-            } else {
-                gainParam.exponentialRampToValueAtTime(0, now + DefaultFadeTime());
-            }
-        } else {
-            const restore = this.#unmuteVolume <= 0 ? DefaultVolume() : this.#unmuteVolume;
-            gainParam.exponentialRampToValueAtTime(this.#clamp(restore), now + DefaultFadeTime());
-        }
-    }
+		const now = this.gainNode.context.currentTime;
+		const gainParam = this.gainNode.gain;
+		gainParam.cancelScheduledValues(now);
+		gainParam.setValueAtTime(gainParam.value, now);
 
-    get muted(): boolean {
-        return this.#muted;
-    }
+		if (m) {
+			const current = gainParam.value;
+			if (current > 0.0001) {
+				this.#unmuteVolume = current;
+			}
+			if (current < this.#minGain) {
+				gainParam.exponentialRampToValueAtTime(this.#minGain, now + this.#fadeTimeMs);
+				gainParam.setValueAtTime(0, now + this.#fadeTimeMs + 0.01);
+			} else {
+				gainParam.exponentialRampToValueAtTime(0, now + this.#fadeTimeMs);
+			}
+		} else {
+			const restore = this.#unmuteVolume <= 0 ? this.#defaultVolume : this.#unmuteVolume;
+			gainParam.exponentialRampToValueAtTime(this.#clamp(restore), now + this.#fadeTimeMs);
+		}
+	}
 
-    get volume(): number {
-        return this.gain.value;
-    }
+	get muted(): boolean {
+		return this.#muted;
+	}
+
+	get volume(): number {
+		return this.gainNode.gain.value;
+	}
 }

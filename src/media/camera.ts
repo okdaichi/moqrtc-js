@@ -1,71 +1,166 @@
-import type { DeviceProps } from "./device";
-import { Device } from "./device";
+import { Device, MediaDeviceContext } from "./device.ts";
 
 export interface CameraProps {
-    device?: DeviceProps;
-    enabled?: boolean;
-    constraints?: MediaTrackConstraints;
+	enabled?: boolean;
+	constraints?: MediaTrackConstraints;
+	preferred?: string;
+	onTrackEnded?: (reason: string) => void;
 }
 
+/**
+ * Camera manages video input from camera devices.
+ *
+ * @example
+ * ```typescript
+ * const deviceContext = new MediaDeviceContext();
+ * const camera = new Camera(deviceContext, { enabled: true });
+ * const track = await camera.getVideoTrack();
+ * ```
+ */
 export class Camera {
-    device: Device;
-    enabled: boolean;
-    constraints: MediaTrackConstraints | undefined;
-    #stream: MediaStreamTrack | undefined;
+	readonly #device: Device<"video">;
 
-    constructor(props?: CameraProps) {
-        this.device = new Device("video", props?.device);
-        this.enabled = props?.enabled ?? false;
-        this.constraints = props?.constraints;
-    }
+	constructor(context: MediaDeviceContext, props?: CameraProps) {
+		this.#device = new Device(context, "video", {
+			...props,
+			getDefaultDeviceId: (devices) => {
+				if (devices.length === 0) {
+					return undefined;
+				}
 
-    /**
-     * Return a promise that resolves to the current MediaStreamTrack for the camera.
-     * If the camera is not started it will call start().
-     * On failure this rejects with an Error instead of returning undefined.
-     */
-    async getVideoTrack(): Promise<MediaStreamTrack> {
-        if (!this.enabled) {
-            throw new Error("Camera is not enabled");
-        }
+				// Find default device using heuristics for cameras
+				let defaultDevice = devices.find((d) => d.deviceId === "default");
+				if (!defaultDevice) {
+					defaultDevice = devices.find((d) =>
+						d.label.toLowerCase().includes("front") ||
+						d.label.toLowerCase().includes("external") ||
+						d.label.toLowerCase().includes("usb")
+					);
+				}
+				if (!defaultDevice) {
+					defaultDevice = devices[0];
+				}
+				return defaultDevice?.deviceId;
+			},
+		});
+	}
 
-        if (this.#stream) return this.#stream;
+	// Delegate to Device
+	get context() {
+		return this.#device.context;
+	}
+	get kind() {
+		return this.#device.kind;
+	}
+	get enabled() {
+		return this.#device.enabled;
+	}
+	set enabled(value: boolean) {
+		this.#device.enabled = value;
+	}
+	get constraints() {
+		return this.#device.constraints;
+	}
+	set constraints(value: MediaTrackConstraints | undefined) {
+		this.#device.constraints = value;
+	}
+	get preferred() {
+		return this.#device.preferred;
+	}
+	set preferred(value: string | undefined) {
+		this.#device.preferred = value;
+	}
+	get activeDeviceId() {
+		return this.#device.activeDeviceId;
+	}
+	set activeDeviceId(value: string | undefined) {
+		this.#device.activeDeviceId = value;
+	}
+	get onTrackEnded() {
+		return this.#device.onTrackEnded;
+	}
+	set onTrackEnded(value: ((reason: string) => void) | undefined) {
+		this.#device.onTrackEnded = value;
+	}
 
-        const track = await this.device.getTrack(this.constraints);
-        if (!track) {
-            throw new Error("Failed to obtain camera track");
-        }
+	async switchDevice(deviceId: string): Promise<void> {
+		return this.#device.switchDevice(deviceId);
+	}
 
-        this.#stream = track;
+	async updateConstraints(constraints: MediaTrackConstraints): Promise<void> {
+		return this.#device.updateConstraints(constraints);
+	}
 
-        return this.#stream;
-    }
+	close(): void {
+		this.#device.close();
+	}
 
-    // async videoEncoder(config: VideoEncoderConfig, onDecoderConfig: (config: VideoDecoderConfig) => void): Promise<VideoEncodeStream> {
-    //     const track = await this.getVideoTrack();
-    //     const encoder = new VideoEncodeStream({
-    //         source: new VideoTrackProcessor(track).readable,
-    //         onDecoderConfig: onDecoderConfig,
-    //     });
+	/**
+	 * Get video track.
+	 */
+	async getVideoTrack(): Promise<MediaStreamTrack> {
+		if (!this.#device.enabled) {
+			throw new Error("Camera is not enabled");
+		}
 
-    //     encoder.configure(config);
+		if (this.#device.stream) return this.#device.stream;
 
-    //     return encoder;
-    // }
+		// Ensure permissions are granted
+		try {
+			await this.#device.context.requestPermission(this.#device.kind);
+		} catch {
+			// requestPermission is best-effort; continue to try
+		}
 
-    close(): void {
-        if (this.#stream) {
-            try {
-                this.#stream.stop();
-            } catch (error) {
-                // Ignore errors when stopping track
-            }
-            this.#stream = undefined;
-        }
-        try {
-            this.device.close();
-        } catch (error) {
-            // Ignore errors when closing device
-        }
-    }
+		const deviceIdConstraint = this.#device.activeDeviceId
+			? { deviceId: { exact: this.#device.activeDeviceId } }
+			: {};
+
+		const constraints: MediaStreamConstraints = {
+			video: {
+				...(deviceIdConstraint as any),
+				...(this.#device.constraints ?? {}),
+			},
+		};
+
+		if (!navigator?.mediaDevices?.getUserMedia) {
+			throw new Error("getUserMedia is not available in this environment");
+		}
+
+		let stream: MediaStream | undefined;
+		try {
+			stream = await navigator.mediaDevices.getUserMedia(constraints);
+			const track = stream.getVideoTracks()[0];
+
+			if (!track) {
+				stream.getTracks().forEach((t) => t.stop());
+				throw new Error("Failed to obtain camera track");
+			}
+
+			// Update activeDeviceId from actual settings
+			const settings = track.getSettings();
+			if (settings?.deviceId) {
+				this.#device.activeDeviceId = settings.deviceId;
+			}
+
+			// Set up track ended listener
+			track.addEventListener("ended", () => {
+				this.#device.stream = undefined;
+				this.#device.onTrackEnded?.("Device disconnected or track ended");
+			});
+
+			this.#device.stream = track;
+			return this.#device.stream;
+		} catch (error) {
+			// Ensure any partial stream is stopped
+			stream?.getTracks().forEach((t) => {
+				try {
+					t.stop();
+				} catch {
+					// Ignore errors when stopping track
+				}
+			});
+			throw error instanceof Error ? error : new Error("Failed to obtain camera track");
+		}
+	}
 }
