@@ -56,11 +56,8 @@ export class VideoDecodeNode extends VideoNode {
 			try {
 				reader = stream.getReader();
 				while (this.context.state === "running" && !this.disposed) {
-					const { done, value: chunk } = await reader.read();
-					if (done) {
-						break;
-					}
-
+					// Backpressure: Wait for decoder queue to drain before reading
+					// from upstream so the stream can naturally slow down.
 					while (
 						this.context.state === "running" &&
 						!this.disposed &&
@@ -77,14 +74,15 @@ export class VideoDecodeNode extends VideoNode {
 						const drained = await this.#waitForDecoderDrain(5000);
 						if (!drained) {
 							console.warn(
-								"[VideoDecodeNode] Decoder stalled, dropping chunk after timeout.",
+								"[VideoDecodeNode] Decoder stalled, stopping stream reads after timeout.",
 							);
-							break;
+							return;
 						}
 					}
 
-					if (this.decodeQueueSize > MAX_QUEUE_SIZE) {
-						continue;
+					const { done, value: chunk } = await reader.read();
+					if (done) {
+						break;
 					}
 
 					this.#decoder.decode(chunk);
@@ -103,21 +101,32 @@ export class VideoDecodeNode extends VideoNode {
 		return new Promise<boolean>((resolve) => {
 			let settled = false;
 
-			const onDequeue = () => {
+			const finish = (drained: boolean) => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timeoutId);
-				resolve(true);
+				this.#decoder.removeEventListener("dequeue", onDequeue);
+				resolve(drained);
+			};
+
+			const onDequeue = () => {
+				finish(true);
 			};
 
 			const timeoutId = setTimeout(() => {
-				if (settled) return;
-				settled = true;
-				this.#decoder.removeEventListener("dequeue", onDequeue);
-				resolve(false);
+				finish(false);
 			}, timeoutMs);
 
 			this.#decoder.addEventListener("dequeue", onDequeue, { once: true });
+
+			// Re-check immediately after attaching the listener so we don't miss
+			// a drain transition that happened just before listener registration.
+			if (
+				this.#decoder.state !== "configured" ||
+				this.decodeQueueSize <= MAX_QUEUE_SIZE
+			) {
+				finish(true);
+			}
 		});
 	}
 

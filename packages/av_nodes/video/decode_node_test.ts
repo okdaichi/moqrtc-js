@@ -1,6 +1,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { VideoContext } from "./context.ts";
 import { VideoDecodeNode } from "./decode_node.ts";
+import { FakeEncodedVideoChunk } from "./fake_encodedvideochunk_test.ts";
 import { FakeHTMLCanvasElement } from "./fake_htmlcanvaselement_test.ts";
 import { FakeVideoNode } from "./fake_video_node_test.ts";
 import { FakeVideoDecoder } from "./fake_videodecoder_test.ts";
@@ -273,9 +274,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 		// Mock TrackReader - simplified for Deno test
 		const mockReader = new ReadableStream({
 			start(controller) {
-				controller.enqueue({
-					timestamp: 0,
-				} as EncodedVideoChunk);
+				controller.enqueue(new FakeEncodedVideoChunk());
 				controller.close();
 			},
 		});
@@ -342,7 +341,7 @@ Deno.test("VideoDecodeNode", async (t) => {
 
 			const stream = new ReadableStream<EncodedVideoChunk>({
 				start(controller) {
-					controller.enqueue({ timestamp: 0 } as EncodedVideoChunk);
+					controller.enqueue(new FakeEncodedVideoChunk());
 					controller.close();
 				},
 			});
@@ -364,8 +363,11 @@ Deno.test("VideoDecodeNode", async (t) => {
 		"should drop stalled chunks after dequeue timeout",
 		async () => {
 			const originalSetTimeout = globalThis.setTimeout;
-			globalThis.setTimeout = (callback: TimerHandler, ...args: unknown[]) =>
-				originalSetTimeout(callback, 1, ...args);
+			globalThis.setTimeout = (
+				callback: TimerHandler,
+				_delay?: number,
+				...rest: unknown[]
+			) => originalSetTimeout(callback, 1, ...rest);
 
 			class StalledVideoDecoder extends EventTarget {
 				state: CodecState = "configured";
@@ -413,9 +415,9 @@ Deno.test("VideoDecodeNode", async (t) => {
 			const stream = new ReadableStream<EncodedVideoChunk>({
 				start(controller) {
 					for (let i = 0; i < 5; i++) {
-						controller.enqueue({
-							timestamp: i * 1000,
-						} as EncodedVideoChunk);
+						controller.enqueue(
+							new FakeEncodedVideoChunk("key", i * 1000),
+						);
 					}
 					controller.close();
 				},
