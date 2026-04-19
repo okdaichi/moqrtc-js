@@ -15,6 +15,13 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 - Add AV nodes package and media processing building blocks under `src/internal/av_nodes/` (audio/video encode & decode nodes, worklets, demo, build scripts and Deno tests).
 - Add test helpers and headless fakes to support Deno testing (`test_globals.d.ts`, `stubGlobal`, `deleteGlobal`, fake encoders/frames/framesources).
 - Add browser-detection utilities and tests for `isChrome` and `isFirefox`.
+- Add `FakeAudioDecoder` and `FakeVideoDecoder` test doubles for decoder backpressure testing.
+- Add `AudioDecodeNode` tests covering creation, configuration, stream decoding, and backpressure scenarios.
+- Add backpressure recovery and stalled-decoder timeout tests for `VideoDecodeNode`.
+
+### Fixed
+
+- Fix infinite loop in `VideoDecodeNode` and `AudioDecodeNode` backpressure handling — replace busy `queueMicrotask` spin with event-driven `dequeue` listener and a 5-second timeout fallback ([#5]).
 
 ### Changed
 
@@ -62,3 +69,4 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 
 [Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/main...copilot/migrate-to-deno-runtime
 ["#3"]: https://github.com/okdaichi/moqrtc-js/pull/3
+[#5]: https://github.com/okdaichi/moqrtc-js/pull/5

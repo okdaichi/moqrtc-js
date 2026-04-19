@@ -110,17 +110,32 @@ export class AudioDecodeNode extends GainNode {
 			try {
 				reader = stream.getReader();
 				while (this.context.state === "running" && !this.#disposed) {
-					// Backpressure: Wait if decoder queue is overloaded
-					if (this.decodeQueueSize > MAX_DECODE_QUEUE_SIZE) {
-						await new Promise<void>((resolve) => {
-							queueMicrotask(() => resolve());
-						});
-						continue;
-					}
-
 					const { done, value: chunk } = await reader.read();
 					if (done) {
 						break;
+					}
+
+					// Backpressure: Wait for decoder queue to drain
+					while (
+						this.context.state === "running" &&
+						!this.#disposed &&
+						this.decodeQueueSize > MAX_DECODE_QUEUE_SIZE
+					) {
+						if (this.#decoder.state !== "configured") {
+							return;
+						}
+
+						const drained = await this.#waitForDecoderDrain(5000);
+						if (!drained) {
+							console.warn(
+								"[AudioDecodeNode] Decoder stalled, dropping chunk after timeout.",
+							);
+							break;
+						}
+					}
+
+					if (this.decodeQueueSize > MAX_DECODE_QUEUE_SIZE) {
+						continue;
 					}
 
 					this.#decoder.decode(chunk);
@@ -141,6 +156,28 @@ export class AudioDecodeNode extends GainNode {
 		return {
 			done,
 		};
+	}
+
+	#waitForDecoderDrain(timeoutMs: number): Promise<boolean> {
+		return new Promise<boolean>((resolve) => {
+			let settled = false;
+
+			const onDequeue = () => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timeoutId);
+				resolve(true);
+			};
+
+			const timeoutId = setTimeout(() => {
+				if (settled) return;
+				settled = true;
+				this.#decoder.removeEventListener("dequeue", onDequeue);
+				resolve(false);
+			}, timeoutMs);
+
+			this.#decoder.addEventListener("dequeue", onDequeue, { once: true });
+		});
 	}
 
 	#process(input: AudioData): void {
