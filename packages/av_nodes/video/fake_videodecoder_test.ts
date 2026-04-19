@@ -11,7 +11,7 @@ import { FakeVideoFrame } from "./fake_videoframe_test.ts";
  *
  * Call tracking arrays allow test assertions without spy API.
  */
-export class FakeVideoDecoder {
+export class FakeVideoDecoder extends EventTarget {
 	/** The most recently constructed FakeVideoDecoder instance. */
 	static lastCreated: FakeVideoDecoder | null = null;
 
@@ -46,6 +46,7 @@ export class FakeVideoDecoder {
 	#error: WebCodecsErrorCallback;
 
 	constructor(init: VideoDecoderInit) {
+		super();
 		this.#output = init.output;
 		this.#error = init.error;
 		FakeVideoDecoder.lastCreated = this;
@@ -63,6 +64,7 @@ export class FakeVideoDecoder {
 
 		queueMicrotask(() => {
 			this.decodeQueueSize--;
+			this.dispatchEvent(new Event("dequeue"));
 			const frame = new FakeVideoFrame(
 				(this.configureCalls.at(-1)?.[0] as VideoDecoderConfig | undefined)?.codedWidth ??
 					640,
