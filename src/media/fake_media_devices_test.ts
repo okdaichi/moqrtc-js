@@ -184,7 +184,9 @@ export class FakeMediaDevices implements MediaDevices {
 	}
 
 	addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
-		if (type === "devicechange") this.ondevicechange = listener as (this: MediaDevices, ev: Event) => void;
+		if (type === "devicechange") {
+			this.ondevicechange = listener as (this: MediaDevices, ev: Event) => void;
+		}
 	}
 	removeEventListener(type: string, listener: EventListenerOrEventListenerObject) {
 		if (type === "devicechange" && this.ondevicechange === listener) this.ondevicechange = null;

@@ -11,7 +11,10 @@ Deno.test("Screen", async (t) => {
 		});
 
 		await st.step("creates screen with options", () => {
-			const constraints = { video: { cursor: "always" } as MediaTrackConstraints, audio: true };
+			const constraints = {
+				video: { cursor: "always" } as MediaTrackConstraints,
+				audio: true,
+			};
 			const screen = new Screen({ enabled: true, constraints });
 			assertEquals(screen.enabled, true);
 			assertEquals(screen.constraints, constraints);
