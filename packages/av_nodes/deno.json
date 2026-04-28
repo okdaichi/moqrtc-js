@@ -22,7 +22,7 @@
     "webrtc"
   ],
   "compilerOptions": {
-    "lib": ["ESNext", "DOM", "dom.iterable", "dom.asynciterable"],
+    "lib": ["ESNext", "deno.ns", "DOM", "dom.iterable", "dom.asynciterable"],
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
