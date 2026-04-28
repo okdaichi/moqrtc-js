@@ -7,13 +7,14 @@ import {
 import type {
 	AnnouncementReader,
 	BroadcastPath,
+	Client,
 	Session,
 	TrackHandler,
 	TrackName,
 	TrackReader,
-} from "@okdaichi/moq";
-import { Client, validateBroadcastPath } from "@okdaichi/moq";
-import type { Catalog } from "@okdaichi/moq/msf";
+} from "@qumo/moq";
+import { connect, validateBroadcastPath } from "@qumo/moq";
+import type { Catalog } from "@qumo/moq/msf";
 import { BroadcastSubscriber } from "./broadcast.ts";
 import type { JoinedMember, LeftMember, RemoteBroadcast } from "./member.ts";
 
@@ -51,14 +52,12 @@ export interface RoomConnectInit extends RoomInit {
 	url: string | URL;
 	local: LocalBroadcast;
 	client?: Client;
-	closeClientOnDisconnect?: boolean;
 }
 
 export interface RoomConnectOptions {
 	url: string | URL;
 	local: LocalBroadcast;
 	client?: Client;
-	closeClientOnDisconnect?: boolean;
 }
 
 export interface RoomAttachOptions {
@@ -82,8 +81,6 @@ export class Room extends EventTarget {
 	#cancel?: CancelCauseFunc;
 	#state: RoomState = "idle";
 	#session?: Session;
-	#client?: Client;
-	#closeClientOnDisconnect = false;
 
 	#onmember: MemberHandler;
 
@@ -101,7 +98,6 @@ export class Room extends EventTarget {
 			url: init.url,
 			local: init.local,
 			client: init.client,
-			closeClientOnDisconnect: init.closeClientOnDisconnect,
 		});
 		return room;
 	}
@@ -207,23 +203,19 @@ export class Room extends EventTarget {
 	}
 
 	async connect(options: RoomConnectOptions): Promise<void> {
-		const client = options.client ?? new Client();
-		const ownsClient = options.client === undefined;
-
 		let session: Session;
 		try {
-			session = await client.dial(options.url);
+			if (options.client) {
+				session = await options.client.dial(options.url);
+			} else {
+				session = await connect(options.url);
+			}
 		} catch (err) {
 			this.#emitError(err, "dial");
 			this.#setState("error");
-			if (ownsClient) {
-				await client.close();
-			}
 			throw err;
 		}
 
-		this.#client = client;
-		this.#closeClientOnDisconnect = options.closeClientOnDisconnect ?? ownsClient;
 		await this.attach({ session, local: options.local });
 	}
 
@@ -372,15 +364,7 @@ export class Room extends EventTarget {
 			this.#session = undefined;
 		}
 
-		if (this.#client && this.#closeClientOnDisconnect) {
-			try {
-				await this.#client.close();
-			} catch {
-				// ignore client close errors on disconnect
-			}
-		}
-		this.#client = undefined;
-		this.#closeClientOnDisconnect = false;
+		// No client cleanup needed here; session close is handled above.
 
 		this.#setState("disconnected");
 	}

@@ -1,4 +1,4 @@
-import type { Session } from "@okdaichi/moq";
+import type { Session } from "@qumo/moq";
 import { assert, assertEquals, assertExists } from "@std/assert";
 import type { JoinedMember, LeftMember } from "../member.ts";
 import type { Room } from "../room.ts";

@@ -7,15 +7,15 @@ import type {
 	TrackName,
 	TrackReader,
 	TrackWriter,
-} from "@okdaichi/moq";
-import { SubscribeErrorCode } from "@okdaichi/moq";
+} from "@qumo/moq";
+import { SubscribeErrorCode } from "@qumo/moq";
 import {
 	Broadcast,
 	type Catalog,
 	DefaultCatalogTrackName,
 	parseCatalog,
 	type Track,
-} from "@okdaichi/moq/msf";
+} from "@qumo/moq/msf";
 import { participantName } from "./room.ts";
 
 export class BroadcastPublisher implements TrackHandler {

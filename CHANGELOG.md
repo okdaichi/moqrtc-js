@@ -22,6 +22,8 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 ### Fixed
 
 - Fix infinite loop in `VideoDecodeNode` and `AudioDecodeNode` backpressure handling — replace busy `queueMicrotask` spin with event-driven `dequeue` listener and a 5-second timeout fallback ([#5]).
+- Refine linting rules and improve type handling in media components.
+- Update reference paths in audio worklet files and Deno configuration for consistency.
 
 ### Changed
 
@@ -29,6 +31,8 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 - Refactor `AudioEncodeNode` / `VideoEncodeNode` to support async output handling, Promise-returning destinations, Map-based destination management, and safer disposal semantics.
 - Refactor media APIs (`Camera`, `Microphone`, `Device`) for clearer structure and improved type safety.
 - Refactor Room / elements API and test utilities for clarity and maintainability; tests renamed/moved to follow Deno conventions.
+- Update dependencies to `@qumo/moq@0.15.0` and `@okdaichi/golikejs@0.9.0`.
+- Add formatting step for generated worklet files using `deno fmt`.
 
 ### Removed
 
