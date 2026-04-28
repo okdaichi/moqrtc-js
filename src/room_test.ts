@@ -1,5 +1,5 @@
-import type { Client, Session } from "@okdaichi/moq";
-import { DefaultCatalogTrackName } from "@okdaichi/moq/msf";
+import type { Client, Session } from "@qumo/moq";
+import { DefaultCatalogTrackName } from "@qumo/moq/msf";
 import { assertEquals, assertRejects } from "@std/assert";
 import { broadcastPath, participantName, Room, RoomEvents } from "./room.ts";
 

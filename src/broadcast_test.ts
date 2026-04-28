@@ -1,5 +1,5 @@
-import type { Session, TrackWriter } from "@okdaichi/moq";
-import { SubscribeErrorCode } from "@okdaichi/moq";
+import type { Session, TrackWriter } from "@qumo/moq";
+import { SubscribeErrorCode } from "@qumo/moq";
 import { assertEquals, assertExists } from "@std/assert";
 import { BroadcastPublisher, BroadcastSubscriber } from "./broadcast.ts";
 

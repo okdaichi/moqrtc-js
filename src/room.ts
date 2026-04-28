@@ -1,19 +1,19 @@
 import {
-	background,
-	type CancelCauseFunc,
-	type Context,
-	withCancelCause,
+    background,
+    type CancelCauseFunc,
+    type Context,
+    withCancelCause,
 } from "@okdaichi/golikejs/context";
 import type {
-	AnnouncementReader,
-	BroadcastPath,
-	Session,
-	TrackHandler,
-	TrackName,
-	TrackReader,
-} from "@okdaichi/moq";
-import { Client, validateBroadcastPath } from "@okdaichi/moq";
-import type { Catalog } from "@okdaichi/moq/msf";
+    AnnouncementReader,
+    BroadcastPath,
+    Session,
+    TrackHandler,
+    TrackName,
+    TrackReader,
+} from "@qumo/moq";
+import { Client, validateBroadcastPath } from "@qumo/moq";
+import type { Catalog } from "@qumo/moq/msf";
 import { BroadcastSubscriber } from "./broadcast.ts";
 import type { JoinedMember, LeftMember, RemoteBroadcast } from "./member.ts";
 

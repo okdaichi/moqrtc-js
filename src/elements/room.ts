@@ -1,4 +1,4 @@
-import type { Session } from "@okdaichi/moq";
+import type { Session } from "@qumo/moq";
 import type { JoinedMember, LeftMember } from "../member.ts";
 import { type LocalBroadcast, Room } from "../room.ts";
 

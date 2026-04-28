@@ -1,5 +1,5 @@
-import type { TrackName, TrackReader } from "@okdaichi/moq";
-import type { Catalog } from "@okdaichi/moq/msf";
+import type { TrackName, TrackReader } from "@qumo/moq";
+import type { Catalog } from "@qumo/moq/msf";
 
 export interface RemoteBroadcast {
 	readonly name: string;
