@@ -39,23 +39,19 @@ export class VideoOverlayNode extends VideoNode {
 
 		const clonedFrame = input.clone();
 
-		if (!this.#ctx) {
-			// No context; pass through unchanged
-			for (const output of Array.from(this.outputs)) {
-				try {
-					output.process(clonedFrame);
-				} catch (e) {
-					console.error("[VideoOverlayNode] process error:", e);
+		try {
+			if (!this.#ctx) {
+				// No context; pass through unchanged
+				for (const output of Array.from(this.outputs)) {
+					try {
+						output.process(clonedFrame);
+					} catch (e) {
+						console.error("[VideoOverlayNode] process error:", e);
+					}
 				}
+				return;
 			}
 
-			// Close the input frame (we own it)
-			clonedFrame.close();
-
-			return;
-		}
-
-		try {
 			const width = clonedFrame.displayWidth;
 			const height = clonedFrame.displayHeight;
 
@@ -80,9 +76,6 @@ export class VideoOverlayNode extends VideoNode {
 				duration: clonedFrame.duration ?? undefined,
 			});
 
-			// Close the input frame (we own it)
-			clonedFrame.close();
-
 			// Pass cloned frames to outputs (we own outputFrame)
 			for (const output of Array.from(this.outputs)) {
 				try {
@@ -106,6 +99,14 @@ export class VideoOverlayNode extends VideoNode {
 			outputFrame.close();
 		} catch (e) {
 			console.error("[VideoOverlayNode] overlay composition error:", e);
+		} finally {
+			// We own clonedFrame; close it on every path (success, throw, and
+			// no-ctx passthrough) so a throwing overlay/drawImage can't leak it.
+			try {
+				clonedFrame.close();
+			} catch (_) {
+				/* ignore double-close */
+			}
 		}
 	}
 }
