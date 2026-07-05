@@ -67,6 +67,29 @@ Deno.test("MediaDeviceContext", async (t) => {
 
 		assertEquals(callCount, 1); // should not increment
 	});
+
+	await t.step("close() cleans up listeners and permissions", async () => {
+		using _fakeMap = setupFakeMediaDevices(devices);
+		const context = new MediaDeviceContext();
+		await context.updateDevices();
+		await context.requestPermission("video");
+
+		let callCount = 0;
+		context.subscribe((_devices) => {
+			callCount++;
+		});
+
+		assertEquals(context.hasPermission("video"), true);
+
+		context.close();
+
+		assertEquals(context.hasPermission("video"), false);
+
+		_fakeMap.fake.triggerDeviceChange();
+		await new Promise((r) => setTimeout(r, 250));
+
+		assertEquals(callCount, 0); // listener should have been removed
+	});
 });
 
 Deno.test("abstract Device", async (t) => {
