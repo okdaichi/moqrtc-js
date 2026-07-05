@@ -81,4 +81,4 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 [#14]: https://github.com/okdaichi/moqrtc-js/pull/14
 [#15]: https://github.com/okdaichi/moqrtc-js/pull/15
 [#16]: https://github.com/okdaichi/moqrtc-js/pull/16
-[#18]: https://github.com/okdaichi/moqrtc-js/pull/18
+[#18]: https://github.com/okdaichi/moqrtc-js/issues/18
