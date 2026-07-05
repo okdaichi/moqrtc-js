@@ -25,6 +25,9 @@ const MAX_DECODE_QUEUE_SIZE = 3;
 export class AudioDecodeNode extends GainNode {
 	#decoder: AudioDecoder;
 	#workletReady: Promise<AudioWorkletNode>;
+	// Cached once the worklet resolves, so #process can post directly without
+	// allocating a `.then()` continuation on every decoded frame.
+	#worklet: AudioWorkletNode | null = null;
 	#disposed = false;
 
 	// Callback for decoded output (for metrics)
@@ -58,6 +61,7 @@ export class AudioDecodeNode extends GainNode {
 				// Audio flows: worklet → this GainNode → destination
 				worklet.connect(this as GainNode);
 
+				this.#worklet = worklet;
 				return worklet;
 			},
 		).catch((error) => {
@@ -204,10 +208,26 @@ export class AudioDecodeNode extends GainNode {
 			channels.push(data);
 		}
 
-		// Send AudioData to the worklet
-		// Ownership: Transfer buffer ownership to worklet
-		this.#workletReady.then((worklet) => {
+		// Send AudioData to the worklet.
+		// Ownership: Transfer buffer ownership to worklet.
+		// Fast path: once the worklet has resolved (once, at startup) post
+		// directly. This avoids allocating a `.then()` Promise continuation and
+		// an extra microtask hop on every decoded frame. Until it resolves, fall
+		// back to queuing via the readiness promise.
+		const worklet = this.#worklet;
+		if (worklet) {
 			worklet.port.postMessage(
+				{
+					channels: channels,
+					timestamp: input.timestamp,
+				},
+				channels.map((d) => d.buffer), // Transfer ownership of the buffers
+			);
+			return;
+		}
+
+		this.#workletReady.then((w) => {
+			w.port.postMessage(
 				{
 					channels: channels,
 					timestamp: input.timestamp,
