@@ -246,6 +246,29 @@ Deno.test("RoomElement - constructor", async () => {
 	}
 });
 
+Deno.test("defineRoom - logs warning if already defined", async () => {
+	const { restoreDOM, roomModule } = await createRoomModuleFixture();
+	const originalWarn = console.warn;
+	let warnCalled = false;
+	let warnMessage = "";
+
+	console.warn = (msg: string) => {
+		warnCalled = true;
+		warnMessage = msg;
+	};
+
+	try {
+		// createRoomModuleFixture already defined the default "hang-room"
+		roomModule.defineRoom();
+
+		assert(warnCalled);
+		assertEquals(warnMessage, "Custom element with name hang-room is already defined.");
+	} finally {
+		console.warn = originalWarn;
+		restoreDOM();
+	}
+});
+
 Deno.test("RoomElement - observedAttributes", async () => {
 	const { restoreDOM, roomModule } = await createRoomModuleFixture();
 	try {
