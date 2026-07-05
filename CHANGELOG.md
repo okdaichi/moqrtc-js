@@ -11,6 +11,7 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 
 ### Added
 
+- Add unit test coverage for `MediaDeviceContext.getStats()`.
 - Migrate the repository to the Deno runtime: add `deno.json` and `deno.lock`, convert tests to `Deno.test`, and update CI workflows and VSCode tasks.
 - Add AV nodes package and media processing building blocks under `src/internal/av_nodes/` (audio/video encode & decode nodes, worklets, demo, build scripts and Deno tests).
 - Add test helpers and headless fakes to support Deno testing (`test_globals.d.ts`, `stubGlobal`, `deleteGlobal`, fake encoders/frames/framesources).
