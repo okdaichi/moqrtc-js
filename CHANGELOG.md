@@ -31,6 +31,10 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 - Fix `@okdaichi/av-nodes` publish graph: benchmark harnesses (and, due to a root-only glob, ~20 test/fake files) were being published to jsr. Gate `encode_bench.ts`'s runner behind `import.meta.main` and exclude `**/*_bench.ts` / `**/*_test.ts` from `publish.exclude` ([#17]).
 - Fix clicks/pops on bursty or jittery audio in `AudioDecodeNode` — `AudioOffloadProcessor` now schedules each decoded block at its presentation timestamp (derived playout frame) instead of writing contiguously at arrival. Gaps are silence-filled, late/overlapping blocks are dropped, and bursts are absorbed up to one buffer of look-ahead, so playback is no longer governed by arrival cadence. The lag cushion is anchored to the first block's arrival frame (so a late first decode still gets a full cushion instead of silencing the node forever), partially-late/pre-base timestamps are clamped to the read pointer (avoids a negative-offset crash that would kill the worklet's message handler), and the playback clock advances on every render quantum including edge-state guard paths ([#18]).
 
+### Security
+
+- Fix XSS vulnerability in `RoomElement` caused by rendering unescaped state variables directly into `innerHTML` (now uses safe DOM manipulation APIs).
+
 ### Changed
 
 - Migrate many tests from Node/Vitest to Deno and remove Node-specific mocking/patch infrastructure.
