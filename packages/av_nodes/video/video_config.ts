@@ -43,6 +43,15 @@ export async function videoEncoderConfig(
 	const width = options.width;
 	const height = options.height;
 	const frameRate = options.frameRate;
+	if (
+		!Number.isFinite(width) || width <= 0 ||
+		!Number.isFinite(height) || height <= 0 ||
+		!Number.isFinite(frameRate) || frameRate <= 0
+	) {
+		throw new Error(
+			"[videoEncoderConfig] width, height, and frameRate must be positive finite numbers",
+		);
+	}
 	const tryHardware = options.tryHardware ?? true;
 	const hardwareCodecs = VIDEO_HARDWARE_CODECS;
 	const softwareCodecs = VIDEO_SOFTWARE_CODECS;
@@ -51,7 +60,10 @@ export async function videoEncoderConfig(
 	const pixels = width * height;
 	const framerateFactor = 30.0 + (frameRate - 30) / 2;
 	const calculatedBitrate = Math.round(pixels * 0.07 * framerateFactor);
-	const bitrate = options?.bitrate ?? calculatedBitrate;
+	// Honor an explicit positive bitrate; treat undefined / 0 / negative as
+	// "not set" and fall back to the calculated value. (0 is a common sentinel,
+	// not a target — `??` would have kept it and configured a broken encoder.)
+	const bitrate = options.bitrate && options.bitrate > 0 ? options.bitrate : calculatedBitrate;
 
 	const baseConfig: VideoEncoderConfig = {
 		codec: "none",

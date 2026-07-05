@@ -21,6 +21,7 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 
 ### Fixed
 
+- `videoEncoderConfig` now validates `width` / `height` / `frameRate` (negative or non-finite values previously produced a negative computed bitrate forwarded to the encoder) and treats an explicit `bitrate` of `0` or negative as "not set", falling back to the calculated bitrate instead of configuring the encoder with bitrate 0.
 - Close `VideoFrame`s on throw across the video pipeline (`VideoOverlayNode`, `VideoDestinationNode`, `VideoSourceNode`) so a throwing overlay function, `drawImage`, or `VideoFrame` constructor can no longer leak a GPU-backed frame; and stop the `MediaStreamVideoSourceNode` polyfill from pacing frames twice (it delivered ~half the configured frame rate because both the source loop and the stream `pull()` awaited the next frame).
 - Close decoded audio frames even when processing throws, and cancel in-flight decode/encode stream reads on `dispose()` in `AudioDecodeNode`/`VideoDecodeNode`/`AudioEncodeNode` so tearing down a node mid-stream no longer leaks the reader lock, buffers upstream into a dead pipe, or hangs the internal encode loop.
 - Fix infinite loop in `VideoDecodeNode` and `AudioDecodeNode` backpressure handling — replace busy `queueMicrotask` spin with event-driven `dequeue` listener and a 5-second timeout fallback ([#5]).
