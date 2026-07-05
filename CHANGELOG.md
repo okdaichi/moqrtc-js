@@ -23,6 +23,10 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`) with resource-lifecy
 
 This branch contains a large migration to the Deno runtime and a refactor of the AV/media and Room/elements APIs. For the full diff see the [compare view][Unreleased]. Related pull request: [#3].
 
+### Changed
+
+- Rename the root package scope from `@okudai/moqrtc-js` to `@okdaichi/moqrtc-js` to match the `@okdaichi` scope already used by `@okdaichi/av-nodes` and `@okdaichi/golikejs`; update the root README import and fix the stale `@okudai/moq` "Related" link to the actual dependency `@qumo/moq`.
+
 ### Added
 
 - Migrate the repository to the Deno runtime: add `deno.json` and `deno.lock`, convert tests to `Deno.test`, and update CI workflows and VSCode tasks.
@@ -35,7 +39,7 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 
 ### Fixed
 
-- `VideoAnalyserNode`: report `frameIndex` as the cumulative *input* frame count (it previously counted only analyzed frames, so with `analysisInterval > 1` it understated the true frame number); validate `analysisSize` / `historySize` / `analysisInterval` (0 or non-integer values previously produced `NaN` metrics or silently disabled analysis; `analysisSize` is also capped at 4096 per side to prevent a multi-hundred-MB allocation from an oversized value).
+- `VideoAnalyserNode`: report `frameIndex` as the cumulative _input_ frame count (it previously counted only analyzed frames, so with `analysisInterval > 1` it understated the true frame number); validate `analysisSize` / `historySize` / `analysisInterval` (0 or non-integer values previously produced `NaN` metrics or silently disabled analysis; `analysisSize` is also capped at 4096 per side to prevent a multi-hundred-MB allocation from an oversized value).
 - `videoEncoderConfig` now validates `width` / `height` / `frameRate` (negative or non-finite values previously produced a negative computed bitrate forwarded to the encoder) and treats an explicit `bitrate` of `0` or negative as "not set", falling back to the calculated bitrate instead of configuring the encoder with bitrate 0.
 - Close `VideoFrame`s on throw across the video pipeline (`VideoOverlayNode`, `VideoDestinationNode`, `VideoSourceNode`) so a throwing overlay function, `drawImage`, or `VideoFrame` constructor can no longer leak a GPU-backed frame; and stop the `MediaStreamVideoSourceNode` polyfill from pacing frames twice (it delivered ~half the configured frame rate because both the source loop and the stream `pull()` awaited the next frame).
 - Close decoded audio frames even when processing throws, and cancel in-flight decode/encode stream reads on `dispose()` in `AudioDecodeNode`/`VideoDecodeNode`/`AudioEncodeNode` so tearing down a node mid-stream no longer leaks the reader lock, buffers upstream into a dead pipe, or hangs the internal encode loop.

@@ -133,5 +133,5 @@ MIT © okdaichi
 
 ## Related
 
-- [@okudai/moq](https://jsr.io/@okudai/moq) - MoQ Transport implementation
+- [@qumo/moq](https://jsr.io/@qumo/moq) - MoQ Transport implementation
 - [moqrtc-js](https://github.com/okdaichi/moqrtc-js) - Complete MoQ-RTC implementation
