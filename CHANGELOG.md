@@ -22,6 +22,7 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 ### Fixed
 
 - Fix infinite loop in `VideoDecodeNode` and `AudioDecodeNode` backpressure handling — replace busy `queueMicrotask` spin with event-driven `dequeue` listener and a 5-second timeout fallback ([#5]).
+- Fix infinite loop in `AudioEncodeNode` encoder backpressure — wait for the encoder `dequeue` event (with a 5-second timeout) instead of busy-spinning via `queueMicrotask`, and stop reading the stream when the drain times out ([#12]).
 
 ### Changed
 
@@ -72,3 +73,4 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 [Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/main...copilot/migrate-to-deno-runtime
 ["#3"]: https://github.com/okdaichi/moqrtc-js/pull/3
 [#5]: https://github.com/okdaichi/moqrtc-js/pull/5
+[#12]: https://github.com/okdaichi/moqrtc-js/pull/12

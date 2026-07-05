@@ -170,12 +170,30 @@ export class AudioEncodeNode extends GainNode {
 			return;
 		}
 
-		// Backpressure: Drop frame if queue is overloaded
+		// Backpressure: When queue is overloaded, drop this frame but wait for the
+		// encoder to actually drain before reading the next one. Rescheduling via
+		// queueMicrotask without waiting busy-spins forever while the worklet
+		// keeps producing frames, starving the encoder of any chance to catch up.
 		if (this.encodeQueueSize > MAX_ENCODE_QUEUE_SIZE) {
 			console.warn(
-				`[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`,
+				`[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}, waiting for drain...`,
 			);
 			value.close();
+
+			if (this.#encoder.state === "closed") {
+				stream.releaseLock();
+				return;
+			}
+
+			const drained = await this.#waitForEncoderDrain(5000);
+			if (!drained) {
+				console.warn(
+					"[AudioEncodeNode] Encoder stalled, stopping stream reads after timeout.",
+				);
+				stream.releaseLock();
+				return;
+			}
+
 			queueMicrotask(() => this.#next(stream));
 			return;
 		}
@@ -197,6 +215,39 @@ export class AudioEncodeNode extends GainNode {
 		clonedData.close();
 
 		queueMicrotask(() => this.#next(stream));
+	}
+
+	#waitForEncoderDrain(timeoutMs: number): Promise<boolean> {
+		return new Promise<boolean>((resolve) => {
+			let settled = false;
+
+			const finish = (drained: boolean) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timeoutId);
+				this.#encoder.removeEventListener("dequeue", onDequeue);
+				resolve(drained);
+			};
+
+			const onDequeue = () => {
+				finish(true);
+			};
+
+			const timeoutId = setTimeout(() => {
+				finish(false);
+			}, timeoutMs);
+
+			this.#encoder.addEventListener("dequeue", onDequeue, { once: true });
+
+			// Re-check immediately after attaching the listener so we don't miss
+			// a drain transition that happened just before listener registration.
+			if (
+				this.#encoder.state !== "configured" ||
+				this.encodeQueueSize <= MAX_ENCODE_QUEUE_SIZE
+			) {
+				finish(true);
+			}
+		});
 	}
 
 	// Codec state monitoring
