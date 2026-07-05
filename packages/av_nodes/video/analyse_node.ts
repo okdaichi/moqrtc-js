@@ -83,7 +83,6 @@ export class VideoAnalyserNode extends VideoNode {
 
 	// Current analysis state
 	#currentAnalysis: VideoFrameAnalysis | null = null;
-	#frameIndex = 0;
 
 	// History buffer (ring buffer)
 	#historyBuffer: VideoFrameAnalysis[] = [];
@@ -109,6 +108,7 @@ export class VideoAnalyserNode extends VideoNode {
 	#pendingHeight = 0;
 	#pendingTimestamp = 0;
 	#pendingPresentationTime = 0;
+	#pendingFrameIndex = 0;
 	#idleCallbackId?: number;
 
 	constructor(context: VideoContext, options?: VideoAnalyserNodeInit) {
@@ -116,11 +116,45 @@ export class VideoAnalyserNode extends VideoNode {
 		this.context = context;
 		this.context._register(this);
 
-		this.#analysisSize = options?.analysisSize ??
+		const analysisSize = options?.analysisSize ??
 			{ width: 160, height: 120 };
+		// Bound analysisSize: each frame allocates width*height*4 (RGBA pixel
+		// buffer) + width*height (grayscale) + possibly width*height*4 (previous
+		// frame) bytes, plus an OffscreenCanvas of that size. Cap each dimension
+		// so a caller can't trigger a multi-hundred-MB allocation with an
+		// oversized analysisSize (4K per side is far beyond any analysis need).
+		const MAX_ANALYSIS_DIMENSION = 4096;
+		if (
+			!Number.isInteger(analysisSize.width) ||
+			!Number.isInteger(analysisSize.height) ||
+			analysisSize.width <= 0 ||
+			analysisSize.height <= 0 ||
+			analysisSize.width > MAX_ANALYSIS_DIMENSION ||
+			analysisSize.height > MAX_ANALYSIS_DIMENSION
+		) {
+			throw new Error(
+				`[VideoAnalyserNode] analysisSize width/height must be positive integers up to ${MAX_ANALYSIS_DIMENSION}`,
+			);
+		}
+		this.#analysisSize = analysisSize;
+
 		this.#smoothingTimeConstant = options?.smoothingTimeConstant ?? 0.8;
-		this.#historySize = options?.historySize ?? 256;
-		this.#analysisInterval = options?.analysisInterval ?? 1;
+
+		const historySize = options?.historySize ?? 256;
+		if (!Number.isInteger(historySize) || historySize <= 0) {
+			throw new Error(
+				"[VideoAnalyserNode] historySize must be a positive integer",
+			);
+		}
+		this.#historySize = historySize;
+
+		const analysisInterval = options?.analysisInterval ?? 1;
+		if (!Number.isInteger(analysisInterval) || analysisInterval <= 0) {
+			throw new Error(
+				"[VideoAnalyserNode] analysisInterval must be a positive integer",
+			);
+		}
+		this.#analysisInterval = analysisInterval;
 		this.#enabledFeatures = {
 			intraFrame: options?.features?.intraFrame ?? true,
 			interFrame: options?.features?.interFrame ?? true,
@@ -294,6 +328,7 @@ export class VideoAnalyserNode extends VideoNode {
 		this.#pendingHeight = sampleHeight;
 		this.#pendingTimestamp = performance.now();
 		this.#pendingPresentationTime = frame.timestamp ?? 0;
+		this.#pendingFrameIndex = this.#frameCount;
 
 		// Cancel any pending analysis and schedule new one
 		if (this.#idleCallbackId !== undefined) {
@@ -316,6 +351,7 @@ export class VideoAnalyserNode extends VideoNode {
 		const height = this.#pendingHeight;
 		const timestamp = this.#pendingTimestamp;
 		const presentationTime = this.#pendingPresentationTime;
+		const frameIndex = this.#pendingFrameIndex;
 		this.#pendingPixelData = null;
 
 		// Convert to grayscale once (reuse for multiple calculations)
@@ -364,7 +400,7 @@ export class VideoAnalyserNode extends VideoNode {
 		// Create analysis result
 		const analysis: VideoFrameAnalysis = {
 			timestamp,
-			frameIndex: this.#frameIndex++,
+			frameIndex,
 			presentationTime,
 			...intraFrame,
 			...interFrame,
