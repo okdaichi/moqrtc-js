@@ -224,6 +224,59 @@ Deno.test("VideoConfig", async (t) => {
 			assertEquals(config.framerate, 1);
 			assert(config.bitrate! > 0);
 		});
+
+		await t2.step(
+			"rejects non-positive or non-finite dimensions/frameRate",
+			async () => {
+				const invalidInputs: VideoEncoderOptions[] = [
+					{ width: -1920, height: 1080, frameRate: 30 },
+					{ width: 1920, height: -1080, frameRate: 30 },
+					{ width: 1920, height: 1080, frameRate: -30 },
+					{ width: 0, height: 1080, frameRate: 30 },
+					{ width: 1920, height: 0, frameRate: 30 },
+					{ width: 1920, height: 1080, frameRate: 0 },
+					{ width: NaN, height: 1080, frameRate: 30 },
+					{ width: 1920, height: Infinity, frameRate: 30 },
+					{ width: 1920, height: 1080, frameRate: NaN },
+				];
+
+				for (const options of invalidInputs) {
+					await assertRejects(
+						async () => await videoEncoderConfig(options),
+						Error,
+						"must be positive finite numbers",
+					);
+				}
+			},
+		);
+
+		await t2.step(
+			"treats explicit bitrate of 0 / negative as 'not set' and falls back",
+			async () => {
+				const baseOptions = {
+					width: 1280,
+					height: 720,
+					frameRate: 30,
+				} as const;
+
+				// Compute the calculated bitrate by calling without `bitrate`.
+				const fallback = await videoEncoderConfig({ ...baseOptions });
+
+				for (const bitrate of [0, -1000]) {
+					const config = await videoEncoderConfig({
+						...baseOptions,
+						bitrate,
+					});
+					// Should fall back to the calculated bitrate (modulo
+					// codec-specific adjustments), never honoring 0 / negative.
+					assert(
+						config.bitrate! > 0,
+						`expected fallback bitrate > 0 for bitrate=${bitrate}`,
+					);
+					assertEquals(config.bitrate, fallback.bitrate);
+				}
+			},
+		);
 	});
 
 	await t.step("upgradeEncoderConfig", async (t2) => {

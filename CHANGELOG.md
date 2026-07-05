@@ -21,6 +21,7 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 
 ### Fixed
 
+- `videoEncoderConfig` now validates `width` / `height` / `frameRate` (negative or non-finite values previously produced a negative computed bitrate forwarded to the encoder) and treats an explicit `bitrate` of `0` or negative as "not set", falling back to the calculated bitrate instead of configuring the encoder with bitrate 0.
 - Fix infinite loop in `VideoDecodeNode` and `AudioDecodeNode` backpressure handling — replace busy `queueMicrotask` spin with event-driven `dequeue` listener and a 5-second timeout fallback ([#5]).
 - Fix infinite loop in `AudioEncodeNode` encoder backpressure — wait for the encoder `dequeue` event (with a 5-second timeout) instead of busy-spinning via `queueMicrotask`, and stop reading the stream when the drain times out ([#12]).
 - Fix failing `VideoAnalyserNode` test block — force-install the `OffscreenCanvas`/`requestIdleCallback` test doubles regardless of native presence, since Deno's native `OffscreenCanvas.getContext("2d")` returns null headlessly ([#16]).
