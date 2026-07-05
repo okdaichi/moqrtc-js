@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This branch contains a large migration to the Deno runtime and a refactor of the AV/media and Room/elements APIs. For the full diff see the [compare view][Unreleased]. Related pull request: [#3].
 
+### Changed
+- Remove commented out dead code `localName` in `src/elements/room.ts` to improve code health.
+
 ### Added
 
 - Migrate the repository to the Deno runtime: add `deno.json` and `deno.lock`, convert tests to `Deno.test`, and update CI workflows and VSCode tasks.
