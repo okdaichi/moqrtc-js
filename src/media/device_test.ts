@@ -43,6 +43,36 @@ Deno.test("MediaDeviceContext", async (t) => {
 		assertEquals(device.deviceId, "cam-1");
 	});
 
+	await t.step("getStats returns correct aggregated state", async () => {
+		using _fakeMap = setupFakeMediaDevices(devices);
+		const context = new MediaDeviceContext();
+		await context.updateDevices();
+
+		let stats = context.getStats();
+		assertEquals(stats, {
+			audioDevices: 1,
+			videoDevices: 1,
+			hasAudioPermission: false,
+			hasVideoPermission: false,
+			activeListeners: 0,
+		});
+
+		await context.requestPermission("video");
+		const unsubscribe = context.subscribe(() => {});
+		await context.updateDevices();
+
+		stats = context.getStats();
+		assertEquals(stats, {
+			audioDevices: 1,
+			videoDevices: 1,
+			hasAudioPermission: false,
+			hasVideoPermission: true,
+			activeListeners: 1,
+		});
+
+		unsubscribe();
+	});
+
 	await t.step("subscribe/unsubscribe and trigger devicechange", async () => {
 		using _fakeMap = setupFakeMediaDevices(devices);
 		const context = new MediaDeviceContext();
