@@ -87,6 +87,66 @@ Deno.test("BroadcastSubscriber.catalog parses MSF catalog payload", async () => 
 	assertEquals(closeCodes, [SubscribeErrorCode.InternalError]);
 });
 
+Deno.test("BroadcastSubscriber.catalog handles readFrame error", async () => {
+	const closeCodes: number[] = [];
+	const expectedErr = new Error("readFrame error");
+
+	const session = {
+		subscribe: async () => [
+			{
+				acceptGroup: async () => [
+					{
+						readFrame: async (_sink: (bytes: Uint8Array) => void) => {
+							return expectedErr;
+						},
+					},
+					undefined,
+				],
+				closeWithError: async (code: number) => {
+					closeCodes.push(code);
+				},
+			},
+			undefined,
+		],
+	} as unknown as Session;
+
+	const subscriber = new BroadcastSubscriber("/room/alice.hang", "room", session);
+	const err = await subscriber.catalog();
+
+	assertEquals(err, expectedErr);
+	assertEquals(closeCodes, [SubscribeErrorCode.InternalError]);
+});
+
+Deno.test("BroadcastSubscriber.catalog handles missing payload", async () => {
+	const closeCodes: number[] = [];
+
+	const session = {
+		subscribe: async () => [
+			{
+				acceptGroup: async () => [
+					{
+						readFrame: async (_sink: (bytes: Uint8Array) => void) => {
+							return undefined; // no payload via sink
+						},
+					},
+					undefined,
+				],
+				closeWithError: async (code: number) => {
+					closeCodes.push(code);
+				},
+			},
+			undefined,
+		],
+	} as unknown as Session;
+
+	const subscriber = new BroadcastSubscriber("/room/alice.hang", "room", session);
+	const err = await subscriber.catalog();
+
+	assertExists(err);
+	assertEquals((err as Error).message, "catalog payload missing");
+	assertEquals(closeCodes, [SubscribeErrorCode.InternalError]);
+});
+
 Deno.test("BroadcastSubscriber.subscribeTrack returns TrackReader directly", async () => {
 	const calls: string[] = [];
 	const session = {
