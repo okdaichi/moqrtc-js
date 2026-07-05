@@ -35,6 +35,10 @@ export class AudioEncodeNode extends GainNode {
 	#workletReady: Promise<AudioWorkletNode>;
 	#disposed = false;
 	#dests: Map<AudioEncodeDestination, CancelFunc> = new Map();
+	// Retained to tear down on dispose: closing the controller unblocks #next's
+	// pending read(); closing the port detaches the onmessage that feeds it.
+	#readableController?: ReadableStreamDefaultController<AudioData>;
+	#worklet: AudioWorkletNode | null = null;
 
 	constructor(context: AudioContextLike) {
 		// Initialize as a passthrough GainNode
@@ -80,6 +84,7 @@ export class AudioEncodeNode extends GainNode {
 
 				const readable = new ReadableStream<AudioData>({
 					start: (controller) => {
+						this.#readableController = controller;
 						worklet.port.onmessage = (
 							{ data }: { data: AudioDataInit },
 						) => {
@@ -103,6 +108,7 @@ export class AudioEncodeNode extends GainNode {
 				// This captures all audio flowing into this node
 				super.connect(worklet);
 
+				this.#worklet = worklet;
 				this.#next(readable.getReader());
 				return worklet;
 			},
@@ -309,6 +315,21 @@ export class AudioEncodeNode extends GainNode {
 		// Disconnect this GainNode
 		try {
 			super.disconnect();
+		} catch (_) {
+			/* ignore */
+		}
+
+		// Close the internal worklet→encoder stream so #next's pending read()
+		// unblocks (it only re-checks #disposed after read returns), and detach
+		// the onmessage handler so late worklet messages don't enqueue into a
+		// dead stream.
+		try {
+			this.#readableController?.close();
+		} catch (_) {
+			/* ignore */
+		}
+		try {
+			this.#worklet?.port.close();
 		} catch (_) {
 			/* ignore */
 		}

@@ -64,17 +64,23 @@ export class VideoSourceNode extends VideoNode {
 					const { done, value: frame } = await this.#reader.read();
 					if (done) break;
 
-					// Create new frame with context's timestamp (single source of truth)
-					const retimedFrame = new VideoFrame(frame, {
-						timestamp, // Use context's μs timestamp
-					});
-					frame.close(); // Close original frame
+					try {
+						// Create new frame with context's timestamp (single source of truth)
+						const retimedFrame = new VideoFrame(frame, {
+							timestamp, // Use context's μs timestamp
+						});
 
-					// Pass retimedFrame to outputs (they will clone if needed)
-					this.process(retimedFrame);
+						// Pass retimedFrame to outputs (they will clone if needed)
+						this.process(retimedFrame);
 
-					// Ownership: We own the retimedFrame, so we close it
-					retimedFrame.close();
+						// Ownership: We own the retimedFrame, so we close it
+						retimedFrame.close();
+					} finally {
+						// Close the original frame on every path — if the VideoFrame
+						// constructor throws (unsupported format / closed source
+						// frame) it would otherwise leak.
+						frame.close();
+					}
 				}
 			} catch (e) {
 				// Ignore expected errors during shutdown
@@ -154,12 +160,13 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 					]);
 				},
 				async pull(controller) {
-					// Use context's frame pacing - single source of truth for timing
-					const timestamp = await context._waitNextFrame();
-
+					// Frame pacing is owned by VideoSourceNode.start(), which awaits
+					// context._waitNextFrame() before each read(). Pacing again here
+					// doubles the interval (a 30fps context delivered ~15fps), so
+					// just enqueue at the current context timestamp.
 					controller.enqueue(
 						new VideoFrame(video, {
-							timestamp, // μs from context
+							timestamp: context.currentTimestamp, // μs from context
 						}),
 					);
 				},
