@@ -83,7 +83,6 @@ export class VideoAnalyserNode extends VideoNode {
 
 	// Current analysis state
 	#currentAnalysis: VideoFrameAnalysis | null = null;
-	#frameIndex = 0;
 
 	// History buffer (ring buffer)
 	#historyBuffer: VideoFrameAnalysis[] = [];
@@ -93,7 +92,8 @@ export class VideoAnalyserNode extends VideoNode {
 	#pixelBuffer?: Uint8Array;
 	#grayscaleBuffer?: Uint8Array;
 	#previousFrameBuffer?: Uint8Array;
-	#previousMotionEnergy = 0;
+	// Histogram scratch buffer reused across #calculateDensity calls.
+	#histBuffer: Uint32Array = new Uint32Array(256);
 
 	// Performance optimization
 	#canvas?: OffscreenCanvas;
@@ -109,6 +109,7 @@ export class VideoAnalyserNode extends VideoNode {
 	#pendingHeight = 0;
 	#pendingTimestamp = 0;
 	#pendingPresentationTime = 0;
+	#pendingFrameIndex = 0;
 	#idleCallbackId?: number;
 
 	constructor(context: VideoContext, options?: VideoAnalyserNodeInit) {
@@ -116,11 +117,37 @@ export class VideoAnalyserNode extends VideoNode {
 		this.context = context;
 		this.context._register(this);
 
-		this.#analysisSize = options?.analysisSize ??
+		const analysisSize = options?.analysisSize ??
 			{ width: 160, height: 120 };
+		if (
+			!Number.isInteger(analysisSize.width) ||
+			!Number.isInteger(analysisSize.height) ||
+			analysisSize.width <= 0 ||
+			analysisSize.height <= 0
+		) {
+			throw new Error(
+				"[VideoAnalyserNode] analysisSize width/height must be positive integers",
+			);
+		}
+		this.#analysisSize = analysisSize;
+
 		this.#smoothingTimeConstant = options?.smoothingTimeConstant ?? 0.8;
-		this.#historySize = options?.historySize ?? 256;
-		this.#analysisInterval = options?.analysisInterval ?? 1;
+
+		const historySize = options?.historySize ?? 256;
+		if (!Number.isInteger(historySize) || historySize <= 0) {
+			throw new Error(
+				"[VideoAnalyserNode] historySize must be a positive integer",
+			);
+		}
+		this.#historySize = historySize;
+
+		const analysisInterval = options?.analysisInterval ?? 1;
+		if (!Number.isInteger(analysisInterval) || analysisInterval <= 0) {
+			throw new Error(
+				"[VideoAnalyserNode] analysisInterval must be a positive integer",
+			);
+		}
+		this.#analysisInterval = analysisInterval;
 		this.#enabledFeatures = {
 			intraFrame: options?.features?.intraFrame ?? true,
 			interFrame: options?.features?.interFrame ?? true,
@@ -294,6 +321,7 @@ export class VideoAnalyserNode extends VideoNode {
 		this.#pendingHeight = sampleHeight;
 		this.#pendingTimestamp = performance.now();
 		this.#pendingPresentationTime = frame.timestamp ?? 0;
+		this.#pendingFrameIndex = this.#frameCount;
 
 		// Cancel any pending analysis and schedule new one
 		if (this.#idleCallbackId !== undefined) {
@@ -316,6 +344,7 @@ export class VideoAnalyserNode extends VideoNode {
 		const height = this.#pendingHeight;
 		const timestamp = this.#pendingTimestamp;
 		const presentationTime = this.#pendingPresentationTime;
+		const frameIndex = this.#pendingFrameIndex;
 		this.#pendingPixelData = null;
 
 		// Convert to grayscale once (reuse for multiple calculations)
@@ -364,7 +393,7 @@ export class VideoAnalyserNode extends VideoNode {
 		// Create analysis result
 		const analysis: VideoFrameAnalysis = {
 			timestamp,
-			frameIndex: this.#frameIndex++,
+			frameIndex,
 			presentationTime,
 			...intraFrame,
 			...interFrame,
@@ -510,16 +539,14 @@ export class VideoAnalyserNode extends VideoNode {
 		const frameDelta = sumAbsoluteDiff / (pixelCount * 3 * 255);
 		const motionEnergy = Math.sqrt(sumSquaredDiff / (pixelCount * 3)) / 255;
 
-		// Activity level (smoothed motion energy with emphasis on changes)
-		const alpha = 0.3; // Smoothing factor
-		const activityLevel = alpha * motionEnergy +
-			(1 - alpha) * this.#previousMotionEnergy;
-		this.#previousMotionEnergy = activityLevel;
-
+		// activityLevel is smoothed by the caller (#runDeferredAnalysis) via the
+		// configurable smoothingTimeConstant. Do NOT smooth again here — double
+		// smoothing against different state (this inner EWMA vs the outer EWMA's
+		// previous output) makes the metric drift and match no clean EWMA.
 		return {
 			frameDelta: Math.max(0, Math.min(1, frameDelta)),
 			motionEnergy: Math.max(0, Math.min(1, motionEnergy)),
-			activityLevel: Math.max(0, Math.min(1, activityLevel)),
+			activityLevel: Math.max(0, Math.min(1, motionEnergy)),
 		};
 	}
 
@@ -564,7 +591,8 @@ export class VideoAnalyserNode extends VideoNode {
 		const highFrequencyRatio = Math.min(1, edgeDensity * 2);
 
 		// Spatial complexity (entropy)
-		const hist = new Uint32Array(256);
+		const hist = this.#histBuffer;
+		hist.fill(0);
 		for (let i = 0; i < grayscale.length; i++) {
 			const idx = grayscale[i]!;
 			hist[idx] = (hist[idx] ?? 0) + 1;
