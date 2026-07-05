@@ -43,6 +43,32 @@ Deno.test("MediaDeviceContext", async (t) => {
 		assertEquals(device.deviceId, "cam-1");
 	});
 
+	await t.step("handles requestPermission errors gracefully", async () => {
+		using _fakeMap = setupFakeMediaDevices(devices);
+		const context = new MediaDeviceContext();
+
+		// Mock getUserMedia to reject
+		const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
+		navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error("Permission denied"));
+
+		const originalWarn = console.warn;
+		let warnCalled = false;
+		console.warn = (...args) => {
+			if (typeof args[0] === "string" && args[0].includes("Failed to request video permission")) {
+				warnCalled = true;
+			}
+		};
+
+		try {
+			const result = await context.requestPermission("video");
+			assertEquals(result, false);
+			assertEquals(warnCalled, true);
+		} finally {
+			navigator.mediaDevices.getUserMedia = originalGetUserMedia;
+			console.warn = originalWarn;
+		}
+	});
+
 	await t.step("subscribe/unsubscribe and trigger devicechange", async () => {
 		using _fakeMap = setupFakeMediaDevices(devices);
 		const context = new MediaDeviceContext();
