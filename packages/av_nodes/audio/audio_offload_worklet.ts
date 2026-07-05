@@ -27,6 +27,12 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		// Media-clock origin: the timestamp (µs) of the first block, captured once.
 		#baseTsUs: number | null = null;
 
+		// Playback frame at the moment the first block arrived. The lag cushion is
+		// measured from HERE (not from frame 0), so a first block that arrives
+		// after playback has already been idling still gets a full cushion —
+		// otherwise it would map into the playback past and be dropped forever.
+		#playoutOriginFrame: number = 0;
+
 		// Absolute frame up to which the ring has been written (gaps silence-filled).
 		// `null` until the first block establishes #baseTsUs.
 		#nextWriteFrame: number | null = null;
@@ -77,11 +83,13 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			};
 		}
 
-		// Playout frame for a media timestamp (µs), relative to the captured origin.
+		// Playout frame for a media timestamp (µs): the first block's frame, plus
+		// the lag cushion measured from first-arrival (#playoutOriginFrame), plus
+		// the media-time delta. #baseTsUs / #playoutOriginFrame are set on the
+		// first block before this is ever called.
 		#playoutFrameForTs(tsUs: number): number {
-			// #baseTsUs is set before this is ever called.
 			const base = this.#baseTsUs ?? 0;
-			return this.#lagSamples +
+			return this.#playoutOriginFrame + this.#lagSamples +
 				Math.round((tsUs - base) * this.#sampleRate / 1_000_000);
 		}
 
@@ -115,17 +123,20 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			const numberOfFrames = channels[0].length;
 
-			// First block establishes the media-clock origin. Start the write head
-			// at 0 so the gap-fill below silence-fills the pre-roll region [0, start)
-			// — keeping the invariant that everything in [0, #nextWriteFrame) is
-			// validly populated (never relies on the ring happening to start zeroed).
+			// First block establishes the media-clock origin and anchors the lag
+			// cushion to the playback frame at arrival. Start the write head at the
+			// current read pointer so the gap-fill below populates the pre-roll
+			// region [#playoutFrame, start) — everything in [#playoutFrame,
+			// #nextWriteFrame) stays validly populated (without relying on the ring
+			// happening to start zeroed, and without touching already-past slots).
 			if (this.#baseTsUs === null) {
 				this.#baseTsUs = tsUs;
-				this.#nextWriteFrame = 0;
+				this.#playoutOriginFrame = this.#playoutFrame;
+				this.#nextWriteFrame = this.#playoutFrame;
 			}
 
 			let start = this.#playoutFrameForTs(tsUs);
-			let end = start + numberOfFrames;
+			const end = start + numberOfFrames;
 
 			// Stale (late) block: its whole range is already in the playback past.
 			// Drop it rather than clobber current playback.
@@ -133,14 +144,27 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 				return;
 			}
 
+			// Partially-late block (start < #playoutFrame < end): discard the
+			// already-played prefix. This keeps `start >= #playoutFrame`, so the
+			// ring write never targets past slots (which would alias future reads on
+			// wrap) and `start % #bufferLength` is never negative — a pre-base or
+			// out-of-order timestamp can't reach `dst.set(..., negativeOffset)` and
+			// kill the onmessage handler.
+			let srcOffset0 = 0;
+			if (start < this.#playoutFrame) {
+				srcOffset0 = this.#playoutFrame - start;
+				start = this.#playoutFrame;
+			}
+
 			// Burst cap: never write more than one buffer ahead of the read pointer,
 			// or the ring would wrap over not-yet-played data. Drop the overflow tail.
 			const maxFrame = this.#playoutFrame + this.#bufferLength;
+			let writeEnd = end;
 			if (start >= maxFrame) {
 				return;
 			}
-			if (end > maxFrame) {
-				end = maxFrame;
+			if (writeEnd > maxFrame) {
+				writeEnd = maxFrame;
 			}
 
 			// If the block is scheduled ahead of what we've written, the gap in
@@ -152,7 +176,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			}
 
 			const len = this.#bufferLength;
-			const writeLen = end - start;
+			const writeLen = writeEnd - start;
 
 			for (let channel = 0; channel < this.#channelsBuffer.length; channel++) {
 				const src = channels[channel];
@@ -178,33 +202,46 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 					const remaining = writeLen - srcOffset;
 					const spaceToEnd = len - writePos;
 					const toCopy = Math.min(remaining, spaceToEnd);
-					dst.set(src.subarray(srcOffset, srcOffset + toCopy), writePos);
+					dst.set(
+						src.subarray(srcOffset0 + srcOffset, srcOffset0 + srcOffset + toCopy),
+						writePos,
+					);
 					srcOffset += toCopy;
 					writePos = (writePos + toCopy) % len;
 				}
 			}
 
-			if (this.#nextWriteFrame === null || end > this.#nextWriteFrame) {
-				this.#nextWriteFrame = end;
+			if (this.#nextWriteFrame === null || writeEnd > this.#nextWriteFrame) {
+				this.#nextWriteFrame = writeEnd;
 			}
 		}
 
 		process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+			// process() is invoked once per render quantum, so the playback clock
+			// advances by one quantum on every call — including the guard paths
+			// below. Skipping the advance on an empty-outputs / not-initialized
+			// quantum would stall #playoutFrame while real time (and the timestamps
+			// scheduled against it) keeps moving, dropping every later block.
+			const outputLength = outputs?.[0]?.[0]?.length ?? 128;
+
 			// No output to write to
 			if (
 				outputs === undefined ||
 				outputs.length === 0 ||
 				outputs[0] === undefined ||
 				outputs[0]?.length === 0
-			) return true;
+			) {
+				this.#playoutFrame += outputLength;
+				return true;
+			}
 
 			// Not initialized yet
 			if (this.#channelsBuffer.length === 0 || this.#channelsBuffer[0] === undefined) {
+				this.#playoutFrame += outputLength;
 				return true;
 			}
 
 			const len = this.#bufferLength;
-			const outputLength = outputs[0][0]?.length ?? 128;
 
 			// How much real (written) data is available in this quantum. Slots beyond
 			// #nextWriteFrame haven't been written yet → silence (startup pre-roll or

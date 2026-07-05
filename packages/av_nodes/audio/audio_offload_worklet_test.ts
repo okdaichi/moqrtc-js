@@ -40,6 +40,7 @@ function createProcessor(): AudioOffloadProcessorInstance {
 			#channelsBuffer: Float32Array[] = [];
 			#playoutFrame = 0;
 			#baseTsUs: number | null = null;
+			#playoutOriginFrame = 0;
 			#nextWriteFrame: number | null = null;
 			#lagSamples = 0;
 			#bufferLength = 0;
@@ -75,7 +76,7 @@ function createProcessor(): AudioOffloadProcessorInstance {
 
 			#playoutFrameForTs(tsUs: number): number {
 				const base = this.#baseTsUs ?? 0;
-				return this.#lagSamples +
+				return this.#playoutOriginFrame + this.#lagSamples +
 					Math.round((tsUs - base) * this.#sampleRate / 1_000_000);
 			}
 
@@ -106,17 +107,25 @@ function createProcessor(): AudioOffloadProcessorInstance {
 
 				if (this.#baseTsUs === null) {
 					this.#baseTsUs = tsUs;
-					this.#nextWriteFrame = 0;
+					this.#playoutOriginFrame = this.#playoutFrame;
+					this.#nextWriteFrame = this.#playoutFrame;
 				}
 
-				const start = this.#playoutFrameForTs(tsUs);
-				let end = start + numberOfFrames;
+				let start = this.#playoutFrameForTs(tsUs);
+				const end = start + numberOfFrames;
 
 				if (end <= this.#playoutFrame) return;
 
+				let srcOffset0 = 0;
+				if (start < this.#playoutFrame) {
+					srcOffset0 = this.#playoutFrame - start;
+					start = this.#playoutFrame;
+				}
+
 				const maxFrame = this.#playoutFrame + this.#bufferLength;
+				let writeEnd = end;
 				if (start >= maxFrame) return;
-				if (end > maxFrame) end = maxFrame;
+				if (writeEnd > maxFrame) writeEnd = maxFrame;
 
 				const writeHead = this.#nextWriteFrame ?? start;
 				if (start > writeHead) {
@@ -124,7 +133,7 @@ function createProcessor(): AudioOffloadProcessorInstance {
 				}
 
 				const len = this.#bufferLength;
-				const writeLen = end - start;
+				const writeLen = writeEnd - start;
 
 				for (
 					let channel = 0;
@@ -151,29 +160,38 @@ function createProcessor(): AudioOffloadProcessorInstance {
 						const remaining = writeLen - srcOffset;
 						const spaceToEnd = len - writePos;
 						const toCopy = Math.min(remaining, spaceToEnd);
-						dst.set(src.subarray(srcOffset, srcOffset + toCopy), writePos);
+						dst.set(
+							src.subarray(srcOffset0 + srcOffset, srcOffset0 + srcOffset + toCopy),
+							writePos,
+						);
 						srcOffset += toCopy;
 						writePos = (writePos + toCopy) % len;
 					}
 				}
 
-				if (this.#nextWriteFrame === null || end > this.#nextWriteFrame) {
-					this.#nextWriteFrame = end;
+				if (this.#nextWriteFrame === null || writeEnd > this.#nextWriteFrame) {
+					this.#nextWriteFrame = writeEnd;
 				}
 			}
 
 			process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+				const outputLength = outputs?.[0]?.[0]?.length ?? 128;
 				if (
 					outputs === undefined || outputs.length === 0 ||
 					outputs[0] === undefined || outputs[0]?.length === 0
-				) return true;
+				) {
+					this.#playoutFrame += outputLength;
+					return true;
+				}
 				if (
 					this.#channelsBuffer.length === 0 ||
 					this.#channelsBuffer[0] === undefined
-				) return true;
+				) {
+					this.#playoutFrame += outputLength;
+					return true;
+				}
 
 				const len = this.#bufferLength;
-				const outputLength = outputs[0][0]?.length ?? 128;
 				const written = this.#nextWriteFrame ?? this.#playoutFrame;
 				const realEnd = Math.min(this.#playoutFrame + outputLength, written);
 				const realFrames = Math.max(0, realEnd - this.#playoutFrame);
@@ -367,15 +385,17 @@ Deno.test("audio_offload_worklet", async (t) => {
 		assertEquals(typeof processor.append, "function");
 	});
 
-	await t.step("processes with no outputs without advancing the clock", () => {
+	await t.step("process() with no outputs still advances the playback clock", () => {
 		const processor = createProcessor();
+		// A no-output quantum must still advance the clock, else a block arriving
+		// next would be anchored to a stale frame and schedule into the past.
 		assertEquals(processor.process([], []), true);
-		// A subsequent block scheduled at the lag must still play in full (i.e. the
-		// no-op process did not shift the playout clock).
 		processor.append(
 			[new Float32Array(QUANTUM).fill(1), new Float32Array(QUANTUM).fill(1)],
 			0,
 		);
+		// originFrame captured the advanced frame (QUANTUM), so the block is due at
+		// QUANTUM + LAG_SAMPLES. Drain the pre-roll then the block quantum.
 		const out = drain(processor, LAG_SAMPLES / QUANTUM + 1);
 		assertEquals(
 			out.subarray(LAG_SAMPLES, LAG_SAMPLES + QUANTUM),
@@ -492,15 +512,15 @@ Deno.test("audio_offload_worklet", async (t) => {
 		// No data at all for 10 quanta → pure silence.
 		assertEquals(drain(processor, 10), new Float32Array(10 * QUANTUM));
 
-		// A block arrives now; baseTsUs is established from it, so it is scheduled
-		// LAG_SAMPLES ahead of the (already-played) origin, i.e. at absolute frame
-		// LAG_SAMPLES. Drain the remaining silence until it is due.
+		// A block arrives now; the cushion is anchored to the current frame, so it
+		// is scheduled LAG_SAMPLES ahead of where playback already is.
 		processor.append(
 			[new Float32Array(QUANTUM).fill(5), new Float32Array(QUANTUM).fill(6)],
 			0,
 		);
 		const played = 10 * QUANTUM;
-		const silenceBeforeBlock = (LAG_SAMPLES - played) / QUANTUM;
+		const due = played + LAG_SAMPLES;
+		const silenceBeforeBlock = (due - played) / QUANTUM;
 		assertEquals(
 			drain(processor, silenceBeforeBlock),
 			new Float32Array(silenceBeforeBlock * QUANTUM),
@@ -523,5 +543,87 @@ Deno.test("audio_offload_worklet", async (t) => {
 			out.subarray(LAG_SAMPLES, LAG_SAMPLES + QUANTUM),
 			new Float32Array(QUANTUM).fill(1),
 		);
+	});
+
+	await t.step("keeps a full cushion when the first block arrives late", () => {
+		// Repros the origin-anchoring bug: if process() idles for a while before
+		// the first decode, the first block must STILL play a full lag later, not
+		// be dropped as stale (which would silence the node forever).
+		const processor = createProcessor();
+		const idleQuanta = 20;
+		assertEquals(drain(processor, idleQuanta), new Float32Array(idleQuanta * QUANTUM));
+
+		processor.append(
+			[new Float32Array(QUANTUM).fill(7), new Float32Array(QUANTUM).fill(7)],
+			0,
+		);
+		// Cushion measured from arrival (idleQuanta*QUANTUM), so the block is due
+		// a full LAG_SAMPLES after the idle period, not at absolute LAG_SAMPLES.
+		const due = idleQuanta * QUANTUM + LAG_SAMPLES;
+		const played = idleQuanta * QUANTUM;
+		const silenceBeforeBlock = (due - played) / QUANTUM; // == LAG_SAMPLES / QUANTUM
+		assertEquals(
+			drain(processor, silenceBeforeBlock),
+			new Float32Array(silenceBeforeBlock * QUANTUM),
+		);
+		const out = drain(processor, 1);
+		assertEquals(out, new Float32Array(QUANTUM).fill(7));
+	});
+
+	await t.step("does not crash on a pre-base (non-monotonic) timestamp", () => {
+		// A block whose timestamp maps before the playback origin must be clamped,
+		// not index the ring with a negative offset (RangeError → dead onmessage).
+		const processor = createProcessor();
+		// Establish the origin with a normal block at the current frame.
+		processor.append(
+			[new Float32Array(QUANTUM).fill(1), new Float32Array(QUANTUM).fill(1)],
+			0,
+		);
+		// -100 ms with a >1-quantum body → start < #playoutFrame < end: partially
+		// late. Without the clamp this reaches `dst.set(..., negativeOffset)`.
+		const late = new Float32Array(1200).fill(9);
+		let threw = false;
+		try {
+			processor.append([late, late], -100_000);
+		} catch (_) {
+			threw = true;
+		}
+		assertEquals(threw, false);
+		// The not-yet-played tail of the late block still plays correctly.
+		const first = drain(processor, 1);
+		assertEquals(first, new Float32Array(QUANTUM).fill(9));
+	});
+
+	await t.step("drops a block scheduled beyond one buffer ahead", () => {
+		// Burst-cap full-drop: a block whose timestamp jumps more than one buffer
+		// ahead of the read pointer is dropped entirely (must not wrap the ring).
+		const processor = createProcessor();
+		processor.append(
+			[new Float32Array(QUANTUM).fill(1), new Float32Array(QUANTUM).fill(1)],
+			0,
+		);
+		// 2*BLOCK_US beyond the first block maps to LAG + 2*QUANTUM; push the
+		// timestamp past one buffer ahead (LAG + bufferLength) so start >= maxFrame.
+		const farTs = Math.round((LAG_SAMPLES + 2 * LAG_SAMPLES) * 1_000_000 / SAMPLE_RATE);
+		processor.append(
+			[new Float32Array(QUANTUM).fill(42), new Float32Array(QUANTUM).fill(42)],
+			farTs,
+		);
+		// A subsequent in-window block must still play (state not corrupted by the drop).
+		processor.append(
+			[new Float32Array(QUANTUM).fill(3), new Float32Array(QUANTUM).fill(3)],
+			BLOCK_US,
+		);
+		const out = drain(processor, LAG_SAMPLES / QUANTUM + 3);
+		assertEquals(
+			out.subarray(LAG_SAMPLES, LAG_SAMPLES + QUANTUM),
+			new Float32Array(QUANTUM).fill(1),
+		);
+		assertEquals(
+			out.subarray(LAG_SAMPLES + QUANTUM, LAG_SAMPLES + 2 * QUANTUM),
+			new Float32Array(QUANTUM).fill(3),
+		);
+		// The far-future block (value 42) never appears in the rendered output.
+		assert(!out.includes(42));
 	});
 });
