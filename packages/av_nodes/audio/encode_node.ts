@@ -198,12 +198,13 @@ export class AudioEncodeNode extends GainNode {
 			return;
 		}
 
-		// Ownership: Stream owns value, so we clone for our use
-		const clonedData = value.clone();
-		value.close(); // Close original since we cloned it
-
+		// Ownership: this node owns `value` — the ReadableStream is created in
+		// the constructor and the AudioData is constructed here from worklet
+		// messages. WebCodecs encode() captures what it needs synchronously, so
+		// we can encode directly and close immediately after — no clone needed
+		// (unlike process(), where the caller owns the frame).
 		try {
-			this.#encoder.encode(clonedData);
+			this.#encoder.encode(value);
 		} catch (e) {
 			// Only log if not a closed codec error during shutdown
 			if (!this.#disposed) {
@@ -211,8 +212,7 @@ export class AudioEncodeNode extends GainNode {
 			}
 		}
 
-		// Ownership: We own the clone, so we close it
-		clonedData.close();
+		value.close();
 
 		queueMicrotask(() => this.#next(stream));
 	}
