@@ -105,3 +105,35 @@ Deno.test("BroadcastSubscriber.subscribeTrack returns TrackReader directly", asy
 	assertEquals(reader.trackName, "camera");
 	assertEquals(calls, []);
 });
+
+Deno.test("BroadcastSubscriber.close cancels the internal context", async () => {
+	let contextDonePromise: Promise<void> | undefined;
+
+	const session = {
+		subscribe: async () => [
+			{
+				acceptGroup: async (done: Promise<void>) => {
+					contextDonePromise = done;
+					await done;
+					return [undefined, new Error("catalog group canceled")];
+				},
+				closeWithError: async (_code: number) => {},
+			},
+			undefined,
+		],
+	} as unknown as Session;
+
+	const subscriber = new BroadcastSubscriber("/room/alice.hang", "room", session);
+	const catalogPromise = subscriber.catalog();
+
+	// Wait for the subscribe/acceptGroup to be called
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	assertExists(contextDonePromise);
+
+	await subscriber.close(new Error("Test close"));
+
+	const result = await catalogPromise;
+	assertEquals(result instanceof Error, true);
+	assertEquals((result as Error).message, "catalog group canceled");
+});
