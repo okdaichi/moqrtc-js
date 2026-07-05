@@ -132,24 +132,44 @@ async function runEncode(n: number): Promise<number> {
 	return elapsedMs;
 }
 
-const runs: number[] = [];
-// Force GC before each run if available (--v8-flags=--expose-gc) so the
-// comparison reflects steady-state allocation cost rather than GC scheduling
-// luck. Without this, run-to-run variance dwarfs the per-frame signal.
-const gc = (globalThis as unknown as { gc?: () => void }).gc?.bind(globalThis);
-for (let i = 0; i < 20; i++) {
-	gc?.();
-	runs.push(await runEncode(N));
+// `deno bench` entrypoint: a single run for regression detection.
+Deno.bench({
+	name: "audio encode #next throughput (20000 frames)",
+	group: "audio-encode",
+	baseline: true,
+	async fn() {
+		await runEncode(N);
+	},
+});
+
+// Standalone runner for a GC-controlled multi-run median. Run with:
+//   deno run --v8-flags=--expose-gc --allow-all packages/av_nodes/audio/encode_bench.ts
+// Gated by import.meta.main so that `deno bench` (or any import) does not also
+// execute this 20x20k-frame loop on module load.
+if (import.meta.main) {
+	const runs: number[] = [];
+	// Force GC before each run if available (--v8-flags=--expose-gc) so the
+	// comparison reflects steady-state allocation cost rather than GC scheduling
+	// luck. Without this, run-to-run variance dwarfs the per-frame signal.
+	const gc = (globalThis as unknown as { gc?: () => void }).gc?.bind(
+		globalThis,
+	);
+	for (let i = 0; i < 20; i++) {
+		gc?.();
+		runs.push(await runEncode(N));
+	}
+	runs.sort((a, b) => a - b);
+	// discard warmup tails, report median + trimmed mean of the middle 12
+	const mid = runs.slice(4, 16);
+	const median = mid[Math.floor(mid.length / 2)] ?? 0;
+	const mean = mid.reduce((s, r) => s + r, 0) / mid.length;
+	console.log(
+		`audio encode #next: N=${N} frames, 20 runs (middle 12 used)`,
+	);
+	console.log(
+		`elapsed ms: median ${median.toFixed(2)} mean ${mean.toFixed(2)} | fps median ${
+			(N / (median / 1000)).toFixed(0)
+		}`,
+	);
+	console.log(`all runs (ms): ${runs.map((r) => r.toFixed(0)).join(", ")}`);
 }
-runs.sort((a, b) => a - b);
-// discard warmup tails, report median + trimmed mean of the middle 12
-const mid = runs.slice(4, 16);
-const median = mid[Math.floor(mid.length / 2)] ?? 0;
-const mean = mid.reduce((s, r) => s + r, 0) / mid.length;
-console.log(
-	`audio encode #next: N=${N} frames, 20 runs (middle 12 used)`,
-);
-console.log(
-	`elapsed ms: median ${median.toFixed(2)} mean ${mean.toFixed(2)} | fps median ${(N / (median / 1000)).toFixed(0)}`,
-);
-console.log(`all runs (ms): ${runs.map((r) => r.toFixed(0)).join(", ")}`);
