@@ -41,6 +41,7 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 - `AudioDecodeNode`: cache the resolved worklet and post decoded frames directly instead of going through a per-frame `.then()` continuation (also guards the fast-path `postMessage` against throws so a failure can't escape into the decoder output callback) ([#14]).
 - `AudioEncodeNode`: the worklet-driven encode path (`#next`) now encodes stream-sourced frames directly instead of cloning first (the node owns those frames), cutting per-frame allocation/GC pressure; added `#next`-path test coverage and made `FakeAudioEncoder` model the `dequeue` event ([#15]).
 - Add formatting step for generated worklet files using `deno fmt`.
+- `VideoObserveNode`: Avoid redundant Array allocation in `process()` tight loop by directly iterating over the Sets.
 
 ### Removed
 

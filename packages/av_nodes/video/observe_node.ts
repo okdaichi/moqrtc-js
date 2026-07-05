@@ -55,7 +55,7 @@ export class VideoObserveNode extends VideoNode {
 		}
 
 		const clonedFrame = input.clone();
-		for (const output of Array.from(this.outputs)) {
+		for (const output of this.outputs) {
 			try {
 				void output.process(clonedFrame);
 			} catch (e) {
