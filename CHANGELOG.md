@@ -31,6 +31,7 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 - Refactor media APIs (`Camera`, `Microphone`, `Device`) for clearer structure and improved type safety.
 - Refactor Room / elements API and test utilities for clarity and maintainability; tests renamed/moved to follow Deno conventions.
 - Update dependencies to `@qumo/moq@0.15.0` and `@okdaichi/golikejs@0.9.0`.
+- `AudioDecodeNode`: cache the resolved worklet and post decoded frames directly instead of going through a per-frame `.then()` continuation (also guards the fast-path `postMessage` against throws so a failure can't escape into the decoder output callback) ([#14]).
 - Add formatting step for generated worklet files using `deno fmt`.
 
 ### Removed
@@ -74,3 +75,4 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 ["#3"]: https://github.com/okdaichi/moqrtc-js/pull/3
 [#5]: https://github.com/okdaichi/moqrtc-js/pull/5
 [#12]: https://github.com/okdaichi/moqrtc-js/pull/12
+[#14]: https://github.com/okdaichi/moqrtc-js/pull/14
