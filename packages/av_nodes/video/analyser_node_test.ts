@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertExists } from "@std/assert";
+import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
 import type { VideoFrameAnalysis } from "./analyse_node.ts";
 import { VideoAnalyserNode } from "./analyse_node.ts";
 import { VideoContext } from "./context.ts";
@@ -60,6 +60,34 @@ Deno.test("VideoAnalyserNode", async (t) => {
 		assertEquals(analyserNode.analysisSize.height, 240);
 		assertEquals(analyserNode.smoothingTimeConstant, 0.5);
 		assertEquals(analyserNode.historySize, 128);
+	});
+
+	await t.step("should reject invalid analysisSize", () => {
+		context = new VideoContext({ canvas });
+		// Non-positive / non-integer dimensions.
+		for (
+			const analysisSize of [
+				{ width: 0, height: 120 },
+				{ width: 160, height: 0 },
+				{ width: -1, height: 120 },
+				{ width: 1.5, height: 120 },
+			]
+		) {
+			assertThrows(
+				() => new VideoAnalyserNode(context, { analysisSize }),
+				Error,
+				"positive integers",
+			);
+		}
+		// Oversized dimensions would allocate hundreds of MB — must be rejected.
+		assertThrows(
+			() =>
+				new VideoAnalyserNode(context, {
+					analysisSize: { width: 100000, height: 100000 },
+				}),
+			Error,
+			"up to",
+		);
 	});
 
 	await t.step("should update smoothingTimeConstant", () => {

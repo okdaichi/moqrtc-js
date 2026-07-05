@@ -119,14 +119,22 @@ export class VideoAnalyserNode extends VideoNode {
 
 		const analysisSize = options?.analysisSize ??
 			{ width: 160, height: 120 };
+		// Bound analysisSize: each frame allocates width*height*4 (RGBA pixel
+		// buffer) + width*height (grayscale) + possibly width*height*4 (previous
+		// frame) bytes, plus an OffscreenCanvas of that size. Cap each dimension
+		// so a caller can't trigger a multi-hundred-MB allocation with an
+		// oversized analysisSize (4K per side is far beyond any analysis need).
+		const MAX_ANALYSIS_DIMENSION = 4096;
 		if (
 			!Number.isInteger(analysisSize.width) ||
 			!Number.isInteger(analysisSize.height) ||
 			analysisSize.width <= 0 ||
-			analysisSize.height <= 0
+			analysisSize.height <= 0 ||
+			analysisSize.width > MAX_ANALYSIS_DIMENSION ||
+			analysisSize.height > MAX_ANALYSIS_DIMENSION
 		) {
 			throw new Error(
-				"[VideoAnalyserNode] analysisSize width/height must be positive integers",
+				`[VideoAnalyserNode] analysisSize width/height must be positive integers up to ${MAX_ANALYSIS_DIMENSION}`,
 			);
 		}
 		this.#analysisSize = analysisSize;
