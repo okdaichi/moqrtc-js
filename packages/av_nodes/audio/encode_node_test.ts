@@ -580,3 +580,181 @@ Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 		encodeNode.dispose();
 	});
 });
+
+// Worklet-driven #next path tests.
+//
+// The process() method is covered above, but the production encode path runs
+// through #next: the worklet posts AudioDataInit -> the node's ReadableStream
+// -> #next reads, (no longer clones), encodes, closes. These tests drive that
+// path by capturing the worklet instance and posting to its port directly.
+Deno.test("AudioEncodeNode - worklet #next path", async (t) => {
+	let restoreAudioEncoder: () => void;
+	let restoreAudioWorkletNode: () => void;
+	let restoreAudioData: () => void;
+	let context: FakeAudioContext;
+	let encodeNode: AudioEncodeNodeType;
+	let capturedWorklet: FakeAudioWorkletNode | null;
+	let cloneCallCount: number;
+
+	// AudioWorkletNode subclass that records its instance so the test can drive
+	// port.onmessage (the same path the real worklet uses to feed #next).
+	class RecordingWorklet extends FakeAudioWorkletNode {
+		constructor(
+			ctx?: BaseAudioContext,
+			name?: string,
+			opts?: AudioWorkletNodeOptions,
+		) {
+			super(ctx, name, opts);
+			capturedWorklet = this;
+		}
+	}
+
+	// AudioData that accepts AudioDataInit (as the worklet path constructs it)
+	// and counts clone() calls so we can assert #next does not clone before
+	// encoding (the node owns these frames).
+	class TestAudioData extends FakeAudioData {
+		constructor(init: AudioDataInit) {
+			super(
+				init.numberOfFrames ?? 1024,
+				init.numberOfChannels ?? 2,
+				init.sampleRate ?? 48000,
+				init.timestamp ?? 0,
+			);
+		}
+		override clone(): AudioData {
+			cloneCallCount++;
+			return super.clone();
+		}
+	}
+
+	function overrideAudioData(value: unknown): () => void {
+		const g = globalThis as unknown as Record<string, unknown>;
+		const had = Object.prototype.hasOwnProperty.call(g, "AudioData");
+		const orig = g.AudioData;
+		g.AudioData = value;
+		return () => {
+			if (had) g.AudioData = orig;
+			else delete g.AudioData;
+		};
+	}
+
+	function makeInit(timestamp: number): AudioDataInit {
+		return {
+			data: new Float32Array(1024 * 2),
+			format: "f32-planar" as AudioSampleFormat,
+			numberOfFrames: 1024,
+			numberOfChannels: 2,
+			sampleRate: 48000,
+			timestamp,
+		};
+	}
+
+	function postFrame(ts: number): void {
+		(capturedWorklet!.port.onmessage as unknown as (
+			ev: { data: AudioDataInit },
+		) => void)({ data: makeInit(ts) });
+	}
+
+	async function waitForEncodes(
+		encoder: FakeAudioEncoder,
+		n: number,
+		timeoutMs = 1000,
+	): Promise<void> {
+		const deadline = performance.now() + timeoutMs;
+		while (encoder.encodeCalls.length < n && performance.now() < deadline) {
+			await new Promise<void>((r) => setTimeout(r, 0));
+		}
+	}
+
+	await t.step("setup", async () => {
+		capturedWorklet = null;
+		cloneCallCount = 0;
+		restoreAudioEncoder = overrideAudioEncoder(FakeAudioEncoder);
+		restoreAudioWorkletNode = overrideAudioWorkletNode(RecordingWorklet);
+		restoreAudioData = overrideAudioData(TestAudioData);
+
+		context = new FakeAudioContext();
+		encodeNode = new AudioEncodeNode(context);
+		encodeNode.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 2 });
+
+		// Wait for the worklet (addModule.then) to be constructed and #next started.
+		await new Promise<void>((r) => setTimeout(r, 0));
+		await new Promise<void>((r) => setTimeout(r, 0));
+	});
+
+	await t.step("#next encodes frames received via the worklet port", async () => {
+		const encoder = FakeAudioEncoder.lastCreated!;
+		encoder.encodeCalls = [];
+		const N = 5;
+		for (let i = 0; i < N; i++) postFrame(i * 1000);
+		await waitForEncodes(encoder, N);
+
+		assertEquals(encoder.encodeCalls.length, N);
+		// Timestamps preserved through the worklet -> #next -> encode path.
+		for (let i = 0; i < N; i++) {
+			assertEquals(encoder.encodeCalls[i]!.timestamp, i * 1000);
+		}
+	});
+
+	await t.step(
+		"#next does not clone before encoding (encodes the original frame)",
+		async () => {
+			const encoder = FakeAudioEncoder.lastCreated!;
+			encoder.encodeCalls = [];
+			cloneCallCount = 0;
+
+			postFrame(4242);
+			await waitForEncodes(encoder, 1);
+
+			assertEquals(encoder.encodeCalls.length, 1);
+			// The node owns worklet-sourced frames, so #next must encode the
+			// original directly — no clone needed.
+			assertEquals(cloneCallCount, 0);
+			assert(
+				encoder.encodeCalls[0] instanceof TestAudioData,
+				"encoded frame should be the original frame, not a clone",
+			);
+		},
+	);
+
+	await t.step("#next drops frames when the encoder queue is overloaded", async () => {
+		const encoder = FakeAudioEncoder.lastCreated!;
+		encoder.encodeCalls = [];
+		encoder.encodeQueueSize = 10; // > MAX_ENCODE_QUEUE_SIZE (2)
+
+		postFrame(9999);
+		// Let #next read the frame and take the drop branch (closes frame, no encode).
+		await new Promise<void>((r) => setTimeout(r, 0));
+		await new Promise<void>((r) => setTimeout(r, 0));
+
+		assertEquals(encoder.encodeCalls.length, 0); // dropped, not encoded
+
+		// #next is now suspended in its drain wait; unblock it via the dequeue
+		// event so the test does not stall on the 5s drain timeout.
+		encoder.dispatchEvent(new Event("dequeue"));
+	});
+
+	await t.step("#next stops encoding after dispose", async () => {
+		const encoder = FakeAudioEncoder.lastCreated!;
+		encoder.encodeCalls = [];
+		encoder.encodeQueueSize = 0; // reset after the overloaded-queue step
+		for (let i = 0; i < 3; i++) postFrame(i * 100);
+		await waitForEncodes(encoder, 3);
+		const before = encoder.encodeCalls.length;
+
+		await encodeNode.dispose();
+
+		// Frames posted after dispose must not be encoded.
+		for (let i = 0; i < 3; i++) postFrame(i * 100 + 5000);
+		await new Promise<void>((r) => setTimeout(r, 10));
+		assertEquals(encoder.encodeCalls.length, before);
+	});
+
+	await t.step("cleanup", () => {
+		restoreAudioData();
+		restoreAudioWorkletNode();
+		restoreAudioEncoder();
+		restoreGlobalGainNode();
+		encodeNode.dispose();
+	});
+});
