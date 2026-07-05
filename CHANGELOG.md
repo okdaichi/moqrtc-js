@@ -32,6 +32,7 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 - Add `FakeAudioDecoder` and `FakeVideoDecoder` test doubles for decoder backpressure testing.
 - Add `AudioDecodeNode` tests covering creation, configuration, stream decoding, and backpressure scenarios.
 - Add backpressure recovery and stalled-decoder timeout tests for `VideoDecodeNode`.
+- Add test coverage for missing error path when remote broadcast creation fails in `Room.#handleAnnouncements` (was `#handleJoined`).
 
 ### Fixed
 
