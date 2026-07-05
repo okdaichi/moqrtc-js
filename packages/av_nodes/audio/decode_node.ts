@@ -216,13 +216,21 @@ export class AudioDecodeNode extends GainNode {
 		// back to queuing via the readiness promise.
 		const worklet = this.#worklet;
 		if (worklet) {
-			worklet.port.postMessage(
-				{
-					channels: channels,
-					timestamp: input.timestamp,
-				},
-				channels.map((d) => d.buffer), // Transfer ownership of the buffers
-			);
+			// try/catch mirrors the fallback's .catch(() => {}): a throw here
+			// (e.g. DataCloneError on a non-transferable buffer, or the port
+			// closing during dispose) must not escape into the decoder's output
+			// callback, where it would skip the caller's frame.close().
+			try {
+				worklet.port.postMessage(
+					{
+						channels: channels,
+						timestamp: input.timestamp,
+					},
+					channels.map((d) => d.buffer), // Transfer ownership of the buffers
+				);
+			} catch (_) {
+				/* ignore */
+			}
 			return;
 		}
 
