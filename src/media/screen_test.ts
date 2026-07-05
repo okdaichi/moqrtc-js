@@ -66,6 +66,16 @@ Deno.test("Screen", async (t) => {
 			const audioTrack = await screen.getAudioTrack();
 			assertEquals(audioTrack, undefined);
 		});
+
+		await st.step("throws when not enabled", async () => {
+			using _fakeMap = setupFakeMediaDevices([]);
+			const screen = new Screen({ enabled: false });
+			await assertRejects(
+				() => screen.getAudioTrack(),
+				Error,
+				"Screen capture is not enabled",
+			);
+		});
 	});
 
 	await t.step("close", async (st) => {
