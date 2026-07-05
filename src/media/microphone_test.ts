@@ -174,5 +174,20 @@ Deno.test("Microphone", async (t) => {
 			assertEquals(updatedTrack === track, true);
 			assertEquals(track.readyState, "live");
 		});
+
+		await st.step("switchDevice updates preferred device ID and stops old track", async () => {
+			using _fakeMap = setupFakeMediaDevices(devices);
+			const context = new MediaDeviceContext();
+			const mic = new Microphone(context, { enabled: true });
+
+			const track = await mic.getAudioTrack();
+			assertEquals(track.readyState, "live");
+
+			await mic.switchDevice("mic-2");
+
+			assertEquals(mic.preferred, "mic-2");
+			assertEquals(mic.activeDeviceId, "mic-2");
+			assertEquals(track.readyState, "ended");
+		});
 	});
 });
