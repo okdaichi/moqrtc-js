@@ -6,6 +6,9 @@ const MAX_QUEUE_SIZE = 3;
 export class VideoDecodeNode extends VideoNode {
 	readonly context: VideoContext;
 	#decoder: VideoDecoder;
+	// Active decodeFrom reader, retained so dispose() can cancel an in-flight
+	// read() instead of leaving it pending.
+	#activeReader?: ReadableStreamDefaultReader<EncodedVideoChunk>;
 
 	constructor(context: VideoContext) {
 		super({ numberOfInputs: 1, numberOfOutputs: 1 });
@@ -55,6 +58,7 @@ export class VideoDecodeNode extends VideoNode {
 				| undefined;
 			try {
 				reader = stream.getReader();
+				this.#activeReader = reader;
 				while (this.context.state === "running" && !this.disposed) {
 					// Backpressure: Wait for decoder queue to drain before reading
 					// from upstream so the stream can naturally slow down.
@@ -90,6 +94,7 @@ export class VideoDecodeNode extends VideoNode {
 			} catch (e) {
 				console.error("[VideoDecodeNode] decodeFrom error:", e);
 			} finally {
+				this.#activeReader = undefined;
 				reader?.releaseLock();
 			}
 		})();
@@ -165,6 +170,12 @@ export class VideoDecodeNode extends VideoNode {
 
 	override async dispose(): Promise<void> {
 		if (this.disposed) return;
+		// Cancel any in-flight decodeFrom read() first so its loop unblocks.
+		try {
+			await this.#activeReader?.cancel();
+		} catch (_) {
+			/* ignore */
+		}
 		try {
 			await this.flush();
 		} catch (_) {

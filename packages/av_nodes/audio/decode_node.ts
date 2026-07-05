@@ -35,6 +35,10 @@ export class AudioDecodeNode extends GainNode {
 	// allocating a `.then()` continuation on every decoded frame.
 	#worklet: AudioWorkletNode | null = null;
 	#disposed = false;
+	// Active decodeFrom reader, retained so dispose() can cancel an in-flight
+	// read() instead of leaving it pending (and upstream buffering into a pipe
+	// nobody drains).
+	#activeReader?: ReadableStreamDefaultReader<EncodedAudioChunk>;
 
 	// Callback for decoded output (for metrics)
 	onoutput: (() => void) | null = null;
@@ -80,11 +84,16 @@ export class AudioDecodeNode extends GainNode {
 
 		this.#decoder = new AudioDecoder({
 			output: (frame) => {
-				// Pass audio frame to processing
-				this.#process(frame);
-
-				// Close the decoded frame after processing
-				frame.close();
+				// try/finally guarantees the frame is closed even if #process
+				// throws (e.g. copyTo format mismatch) — otherwise every decoded
+				// AudioData would leak and the throw would escape the callback.
+				try {
+					this.#process(frame);
+				} catch (e) {
+					console.error("[AudioDecodeNode] process error:", e);
+				} finally {
+					frame.close();
+				}
 			},
 			error: (e) => {
 				console.error("[AudioDecodeNode] decoder error:", e);
@@ -119,6 +128,7 @@ export class AudioDecodeNode extends GainNode {
 				| undefined;
 			try {
 				reader = stream.getReader();
+				this.#activeReader = reader;
 				while (this.context.state === "running" && !this.#disposed) {
 					// Backpressure: Wait for decoder queue to drain before reading
 					// from upstream so the stream can naturally slow down.
@@ -156,6 +166,7 @@ export class AudioDecodeNode extends GainNode {
 					console.error("[AudioDecodeNode] decodeFrom error:", e);
 				}
 			} finally {
+				this.#activeReader = undefined;
 				reader?.releaseLock();
 			}
 		})();
@@ -285,6 +296,14 @@ export class AudioDecodeNode extends GainNode {
 		// Close decoder directly (skip flush to avoid AbortError)
 		try {
 			this.#decoder.close();
+		} catch (_) {
+			/* ignore */
+		}
+
+		// Cancel any in-flight decodeFrom read() so its loop unblocks instead
+		// of staying pending on a stream we no longer drain.
+		try {
+			void this.#activeReader?.cancel();
 		} catch (_) {
 			/* ignore */
 		}
