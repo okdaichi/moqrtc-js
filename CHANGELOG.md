@@ -21,6 +21,7 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 
 ### Fixed
 
+- Close `VideoFrame`s on throw across the video pipeline (`VideoOverlayNode`, `VideoDestinationNode`, `VideoSourceNode`) so a throwing overlay function, `drawImage`, or `VideoFrame` constructor can no longer leak a GPU-backed frame; and stop the `MediaStreamVideoSourceNode` polyfill from pacing frames twice (it delivered ~half the configured frame rate because both the source loop and the stream `pull()` awaited the next frame).
 - Fix infinite loop in `VideoDecodeNode` and `AudioDecodeNode` backpressure handling — replace busy `queueMicrotask` spin with event-driven `dequeue` listener and a 5-second timeout fallback ([#5]).
 - Fix infinite loop in `AudioEncodeNode` encoder backpressure — wait for the encoder `dequeue` event (with a 5-second timeout) instead of busy-spinning via `queueMicrotask`, and stop reading the stream when the drain times out ([#12]).
 - Fix failing `VideoAnalyserNode` test block — force-install the `OffscreenCanvas`/`requestIdleCallback` test doubles regardless of native presence, since Deno's native `OffscreenCanvas.getContext("2d")` returns null headlessly ([#16]).

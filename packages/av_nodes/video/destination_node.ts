@@ -157,15 +157,18 @@ export class VideoDestinationNode extends VideoNode {
 			return;
 		}
 
-		// Clear the canvas and draw frame
-		ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-		ctx.drawImage(frame, x, y, width, height);
-
-		// Close the frame after rendering
+		// Clear the canvas and draw frame. try/finally guarantees the frame is
+		// closed even if drawImage throws (e.g. zero-size geometry) — otherwise
+		// the frame leaks and the rejection propagates unhandled.
 		try {
-			frame.close();
-		} catch (e) {
-			console.error("[VideoDestinationNode] frame close error:", e);
+			ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+			ctx.drawImage(frame, x, y, width, height);
+		} finally {
+			try {
+				frame.close();
+			} catch (e) {
+				console.error("[VideoDestinationNode] frame close error:", e);
+			}
 		}
 	}
 
