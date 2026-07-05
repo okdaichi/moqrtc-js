@@ -21,6 +21,7 @@ This branch contains a large migration to the Deno runtime and a refactor of the
 
 ### Fixed
 
+- Add test for `RoomElement.onleave` handler failure to ensure it correctly transitions the room status to `error`.
 - `VideoAnalyserNode`: report `frameIndex` as the cumulative *input* frame count (it previously counted only analyzed frames, so with `analysisInterval > 1` it understated the true frame number); validate `analysisSize` / `historySize` / `analysisInterval` (0 or non-integer values previously produced `NaN` metrics or silently disabled analysis; `analysisSize` is also capped at 4096 per side to prevent a multi-hundred-MB allocation from an oversized value).
 - `videoEncoderConfig` now validates `width` / `height` / `frameRate` (negative or non-finite values previously produced a negative computed bitrate forwarded to the encoder) and treats an explicit `bitrate` of `0` or negative as "not set", falling back to the calculated bitrate instead of configuring the encoder with bitrate 0.
 - Close `VideoFrame`s on throw across the video pipeline (`VideoOverlayNode`, `VideoDestinationNode`, `VideoSourceNode`) so a throwing overlay function, `drawImage`, or `VideoFrame` constructor can no longer leak a GPU-backed frame; and stop the `MediaStreamVideoSourceNode` polyfill from pacing frames twice (it delivered ~half the configured frame rate because both the source loop and the stream `pull()` awaited the next frame).
