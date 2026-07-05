@@ -114,10 +114,15 @@ export class RoomElement extends HTMLElement {
 	render(): void {
 		// Minimal Light DOM structure - no styling
 		this.innerHTML = `
-            <div class="room-status-display status-${this.#statusState.type}">${this.#statusState.message}</div>
+            <div class="room-status-display"></div>
             <div class="local-participant"></div>
             <div class="remote-participants"></div>
         `;
+		const statusDisplay = this.querySelector(".room-status-display") as HTMLElement;
+		if (statusDisplay) {
+			statusDisplay.textContent = this.#statusState.message;
+			statusDisplay.className = `room-status-display status-${this.#statusState.type}`;
+		}
 	}
 
 	// Private methods
