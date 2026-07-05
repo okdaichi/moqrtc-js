@@ -92,8 +92,7 @@ export class VideoAnalyserNode extends VideoNode {
 	#pixelBuffer?: Uint8Array;
 	#grayscaleBuffer?: Uint8Array;
 	#previousFrameBuffer?: Uint8Array;
-	// Histogram scratch buffer reused across #calculateDensity calls.
-	#histBuffer: Uint32Array = new Uint32Array(256);
+	#previousMotionEnergy = 0;
 
 	// Performance optimization
 	#canvas?: OffscreenCanvas;
@@ -547,14 +546,16 @@ export class VideoAnalyserNode extends VideoNode {
 		const frameDelta = sumAbsoluteDiff / (pixelCount * 3 * 255);
 		const motionEnergy = Math.sqrt(sumSquaredDiff / (pixelCount * 3)) / 255;
 
-		// activityLevel is smoothed by the caller (#runDeferredAnalysis) via the
-		// configurable smoothingTimeConstant. Do NOT smooth again here — double
-		// smoothing against different state (this inner EWMA vs the outer EWMA's
-		// previous output) makes the metric drift and match no clean EWMA.
+		// Activity level (smoothed motion energy with emphasis on changes)
+		const alpha = 0.3; // Smoothing factor
+		const activityLevel = alpha * motionEnergy +
+			(1 - alpha) * this.#previousMotionEnergy;
+		this.#previousMotionEnergy = activityLevel;
+
 		return {
 			frameDelta: Math.max(0, Math.min(1, frameDelta)),
 			motionEnergy: Math.max(0, Math.min(1, motionEnergy)),
-			activityLevel: Math.max(0, Math.min(1, motionEnergy)),
+			activityLevel: Math.max(0, Math.min(1, activityLevel)),
 		};
 	}
 
@@ -599,8 +600,7 @@ export class VideoAnalyserNode extends VideoNode {
 		const highFrequencyRatio = Math.min(1, edgeDensity * 2);
 
 		// Spatial complexity (entropy)
-		const hist = this.#histBuffer;
-		hist.fill(0);
+		const hist = new Uint32Array(256);
 		for (let i = 0; i < grayscale.length; i++) {
 			const idx = grayscale[i]!;
 			hist[idx] = (hist[idx] ?? 0) + 1;
