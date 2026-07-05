@@ -21,6 +21,12 @@ const MAX_DECODE_QUEUE_SIZE = 3;
  * // Start decoding from stream
  * decodeNode.decodeFrom(encodedAudioStream);
  * ```
+ *
+ * `init.latency` (ms, default 100) sizes the worklet's jitter-buffer cushion.
+ * 100 ms is enough for smooth/trickled delivery, but bursty sources — e.g. RTSP
+ * AAC where ffmpeg coalesces several access units per RTP packet into ~80 ms
+ * bursts — leave only ~20 ms of headroom and will click on spikes. Size the
+ * cushion to the burst interval (a bit over one burst, ~150 ms for that case).
  */
 export class AudioDecodeNode extends GainNode {
 	#decoder: AudioDecoder;

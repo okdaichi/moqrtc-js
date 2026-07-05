@@ -17,6 +17,18 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	// drains by playback frame. Gaps are silence-filled; late/overlapping
 	// blocks are dropped/overwritten; bursts are absorbed up to one buffer of
 	// look-ahead. See issue #18.
+	//
+	// Overlap policy is last-writer-wins: two blocks scheduled into the same
+	// frame range simply overwrite (no keep-earliest, no mix). That's correct
+	// for a single-source live stream; if this buffer is ever reused for
+	// splicing / dual sources, that assumption needs revisiting.
+	//
+	// TODO(long-term drift): the playback clock (sound card, advanced once per
+	// `process()` quantum) and the media clock (PTS) are independent oscillators
+	// and will drift. The lag cushion absorbs ±lag; beyond that the buffer pins
+	// one edge (persistent underrun or overflow). Fine for short/medium
+	// sessions; a long-running stream wants a slow leaky correction (nudge
+	// #playoutFrame ±1 sample when the level sits at an edge for N seconds).
 	class AudioOffloadProcessor extends AudioWorkletProcessor {
 		#channelsBuffer: Float32Array[] = [];
 
