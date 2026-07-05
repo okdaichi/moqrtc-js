@@ -54,7 +54,10 @@ Deno.test("MediaDeviceContext", async (t) => {
 		const originalWarn = console.warn;
 		let warnCalled = false;
 		console.warn = (...args) => {
-			if (typeof args[0] === "string" && args[0].includes("Failed to request video permission")) {
+			if (
+				typeof args[0] === "string" &&
+				args[0].includes("Failed to request video permission")
+			) {
 				warnCalled = true;
 			}
 		};
