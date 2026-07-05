@@ -20,7 +20,7 @@
  * Static lastCreated lets tests retrieve the most recently constructed encoder:
  *   const enc = FakeAudioEncoder.lastCreated!;
  */
-export class FakeAudioEncoder {
+export class FakeAudioEncoder extends EventTarget {
 	/** Most recently constructed instance — useful in tests where the encoder is created inside production code. */
 	static lastCreated: FakeAudioEncoder | null = null;
 
@@ -70,6 +70,7 @@ export class FakeAudioEncoder {
 	#error: WebCodecsErrorCallback;
 
 	constructor(init: AudioEncoderInit) {
+		super();
 		this.#output = init.output;
 		this.#error = init.error;
 		FakeAudioEncoder.lastCreated = this;
@@ -86,6 +87,7 @@ export class FakeAudioEncoder {
 
 		queueMicrotask(() => {
 			this.#encodeQueueSize--;
+			this.dispatchEvent(new Event("dequeue"));
 			const chunk = {
 				type: "key" as EncodedAudioChunkType,
 				timestamp: data.timestamp,
