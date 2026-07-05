@@ -249,3 +249,66 @@ Deno.test("Room.connect uses URL + dial and exposes on/once helpers", async () =
 	assertEquals(room.state, "disconnected");
 	assertEquals(stateTransitions.includes("connecting->connected"), true);
 });
+
+Deno.test("Room emits error when remote broadcast creation fails", async () => {
+	const room = new Room({ roomID: "test-room" });
+	const errors: string[] = [];
+	room.on(RoomEvents.Error, (event) => {
+		const detail = (event as CustomEvent<{ error: Error; context: string }>).detail;
+		errors.push(`${detail.context}:${detail.error.message}`);
+	});
+
+	let receivedCount = 0;
+	const session = {
+		mux: { publish: () => {} },
+		acceptAnnounce: async () => [
+			{
+				receive: async () => {
+					receivedCount++;
+					if (receivedCount === 1) {
+						// First announce is local to acknowledge join
+						return [
+							{
+								broadcastPath: "/test-room/alice.hang",
+								ended: () => Promise.resolve(),
+							},
+							undefined,
+						] as const;
+					}
+					if (receivedCount === 2) {
+						let accessCount = 0;
+						return [
+							{
+								get broadcastPath(): string {
+									accessCount++;
+									if (accessCount === 1) {
+										// Return successfully for the localPath check
+										return "/test-room/bob.hang";
+									}
+									// Throw on the second access to trigger the error in createRemoteBroadcast
+									throw new Error("Init failure");
+								},
+								ended: () => Promise.resolve(),
+							},
+							undefined,
+						] as const;
+					}
+					return [undefined, new Error("done")] as const;
+				},
+				close: async () => {},
+			},
+			undefined,
+		],
+	};
+
+	await room.attach({
+		session: session as unknown as Session,
+		local: { name: "alice", serveTrack: () => {} },
+	});
+
+	// Wait for async background handlers to execute
+	await new Promise((resolve) => setTimeout(resolve, 10));
+
+	await room.disconnect();
+	assertEquals(errors, ["createRemoteBroadcast:Init failure"]);
+});
