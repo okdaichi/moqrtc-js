@@ -24,9 +24,11 @@ export function overrideOffscreenCanvas() {
 	const hasOffscreenCanvas = Object.prototype.hasOwnProperty.call(g, "OffscreenCanvas");
 	const originalOffscreenCanvas = g.OffscreenCanvas;
 
-	if (typeof OffscreenCanvas === "undefined") {
-		g.OffscreenCanvas = FakeOffscreenCanvas as unknown;
-	}
+	// Always install the fake. Deno ships a native OffscreenCanvas, but its 2D
+	// context returns null in a headless process, which would silently break any
+	// code (e.g. VideoAnalyserNode) that calls getContext("2d"). The fake is the
+	// only one that actually renders here.
+	g.OffscreenCanvas = FakeOffscreenCanvas as unknown;
 
 	return () => {
 		if (hasOffscreenCanvas) {
@@ -44,20 +46,19 @@ export function overrideIdleCallback() {
 	const hasCancelIdleCallback = Object.prototype.hasOwnProperty.call(g, "cancelIdleCallback");
 	const originalCancelIdleCallback = g.cancelIdleCallback;
 
-	if (typeof requestIdleCallback === "undefined") {
-		(g as unknown as { requestIdleCallback: unknown }).requestIdleCallback = (
-			callback: () => void,
-		) => {
-			setTimeout(callback, 1);
-			return 1;
-		};
-	}
+	// Always install the fake. A native requestIdleCallback (if present) only
+	// fires during browser idle time, which never arrives in a test, so the
+	// deferred work would never run.
+	(g as unknown as { requestIdleCallback: unknown }).requestIdleCallback = (
+		callback: () => void,
+	) => {
+		setTimeout(callback, 1);
+		return 1;
+	};
 
-	if (typeof cancelIdleCallback === "undefined") {
-		(g as unknown as { cancelIdleCallback: unknown }).cancelIdleCallback = (_id: number) => {
-			clearTimeout(_id);
-		};
-	}
+	(g as unknown as { cancelIdleCallback: unknown }).cancelIdleCallback = (_id: number) => {
+		clearTimeout(_id);
+	};
 
 	return () => {
 		if (hasRequestIdleCallback) {
