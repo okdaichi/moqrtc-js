@@ -185,7 +185,15 @@ export class AudioEncodeNode extends GainNode {
 				return;
 			}
 
-			await this.#waitForEncoderDrain(5000);
+			const drained = await this.#waitForEncoderDrain(5000);
+			if (!drained) {
+				console.warn(
+					"[AudioEncodeNode] Encoder stalled, stopping stream reads after timeout.",
+				);
+				stream.releaseLock();
+				return;
+			}
+
 			queueMicrotask(() => this.#next(stream));
 			return;
 		}
