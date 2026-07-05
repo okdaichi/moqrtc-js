@@ -24,6 +24,7 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`) with resource-lifecy
 This branch contains a large migration to the Deno runtime and a refactor of the AV/media and Room/elements APIs. For the full diff see the [compare view][Unreleased]. Related pull request: [#3].
 
 ### Added
+- Add missing test for `RoomElement.onjoin` error handling.
 
 - Migrate the repository to the Deno runtime: add `deno.json` and `deno.lock`, convert tests to `Deno.test`, and update CI workflows and VSCode tasks.
 - Add AV nodes package and media processing building blocks under `src/internal/av_nodes/` (audio/video encode & decode nodes, worklets, demo, build scripts and Deno tests).
