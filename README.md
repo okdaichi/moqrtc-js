@@ -17,7 +17,7 @@ This project provides a TypeScript implementation for real-time communication us
 
 ### For Deno projects
 ```typescript
-import { Room, BroadcastPublisher } from "jsr:@okudai/moqrtc-js";
+import { Room, BroadcastPublisher } from "jsr:@okdaichi/moqrtc-js";
 ```
 
 ### For Node.js projects (via npm)

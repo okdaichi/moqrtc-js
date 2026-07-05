@@ -1,6 +1,6 @@
 {
   "$schema": "https://deno.land/x/deno/cli/schemas/config-file.v1.json",
-  "name": "@okudai/moqrtc-js",
+  "name": "@okdaichi/moqrtc-js",
   "version": "0.1.0",
   "exports": {
     ".": "./src/mod.ts"
