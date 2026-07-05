@@ -362,6 +362,42 @@ Deno.test("RoomElement - onjoin callback fires when member joins", async () => {
 	}
 });
 
+Deno.test("RoomElement - onleave handler failure reports error status", async () => {
+	const { restoreDOM, element } = await createRoomElementFixture();
+	try {
+		element.setAttribute("room-id", "test-room");
+
+		let statusCalled = false;
+		let statusArg: RoomLifecycleStatus | undefined;
+		element.onstatus = (status) => {
+			if (status.type === "error") {
+				statusCalled = true;
+				statusArg = status;
+			}
+		};
+
+		element.onleave = () => {
+			throw new Error("test error");
+		};
+
+		await element.join(
+			createFakeSession("test-room", "test-publisher", {
+				includeRemote: true,
+			}) as unknown as Session,
+			{ name: "test-publisher", serveTrack: () => {} },
+		);
+		await Promise.resolve();
+		element.room?.disconnect();
+
+		assert(statusCalled);
+		assertExists(statusArg);
+		assertEquals(statusArg.type, "error");
+		assert(statusArg.message.includes("onleave handler failed: test error"));
+	} finally {
+		restoreDOM();
+	}
+});
+
 Deno.test("RoomElement - onleave callback fires when member leaves", async () => {
 	const { restoreDOM, element } = await createRoomElementFixture();
 	try {
