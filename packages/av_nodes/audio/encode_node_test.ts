@@ -734,6 +734,45 @@ Deno.test("AudioEncodeNode - worklet #next path", async (t) => {
 		encoder.dispatchEvent(new Event("dequeue"));
 	});
 
+	await t.step(
+		"#next stops the loop (does not spin) when encode() throws",
+		async () => {
+			const encoder = FakeAudioEncoder.lastCreated!;
+			encoder.encodeCalls = [];
+			encoder.encodeQueueSize = 0;
+
+			// Simulate the failure mode from the field: encode() throws on an
+			// unconfigured codec. A thrown error must NOT make #next reschedule
+			// forever, logging the same error once per posted frame.
+			let attempts = 0;
+			const encodeSlot = encoder as unknown as {
+				encode: (data: AudioData) => void;
+			};
+			const originalEncode = encodeSlot.encode;
+			encodeSlot.encode = (_data: AudioData) => {
+				attempts++;
+				throw new Error(
+					"Cannot call 'encode' on an unconfigured codec.",
+				);
+			};
+
+			try {
+				postFrame(1);
+				postFrame(2);
+				postFrame(3);
+				// Let any queued microtasks drain.
+				await new Promise<void>((r) => setTimeout(r, 10));
+				await new Promise<void>((r) => setTimeout(r, 10));
+
+				// The loop must stop at the first failing frame — exactly one
+				// attempt — instead of retrying for each posted frame.
+				assertEquals(attempts, 1);
+			} finally {
+				encodeSlot.encode = originalEncode;
+			}
+		},
+	);
+
 	await t.step("#next stops encoding after dispose", async () => {
 		const encoder = FakeAudioEncoder.lastCreated!;
 		encoder.encodeCalls = [];
