@@ -1,4 +1,4 @@
-# @qumo/log
+# @okdaichi/media-log
 
 A small, fast logging library for **real-time media apps** — Media over QUIC, audio/video streaming,
 WebCodecs pipelines. It speaks the media vocabulary natively (fps, bitrate, jitter, frame PTS,
@@ -19,19 +19,19 @@ decode queues) instead of forcing every app to rebuild the same ad-hoc stats plu
 Deno / [jsr](https://jsr.io):
 
 ```ts
-import { createMediaLogger, MediaTags, setLevel } from "jsr:@qumo/log@^0.1";
+import { createMediaLogger, MediaTags, setLevel } from "jsr:@okdaichi/media-log@^0.1";
 ```
 
 Node (via [jsr npm compatibility](https://jsr.io/docs/npm-compatibility)):
 
 ```sh
-npx jsr add @qumo/log
+npx jsr add @okdaichi/media-log
 ```
 
 ## Quick start
 
 ```ts
-import { createMediaLogger, MediaTags } from "@qumo/log";
+import { createMediaLogger, MediaTags } from "@okdaichi/media-log";
 
 // A video-decode logger bound to the stream's media clock (µs). Every entry it
 // emits carries `mts` so logs align to the stream timeline, not wall-clock.
@@ -150,7 +150,7 @@ const off2 = onLevelChange(() => refresh()); // level changes
 
 ## Generic engine (for non-media reuse)
 
-`@qumo/log` is media-first, but the underlying engine is a fine generic logger too.
+`@okdaichi/media-log` is media-first, but the underlying engine is a fine generic logger too.
 `createLogger(tag)` and `counter()` are exported and carry no media semantics — useful for mixed
 apps or non-media code paths.
 

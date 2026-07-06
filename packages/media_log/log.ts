@@ -1,4 +1,4 @@
-// @qumo/log — a small, fast logging engine for real-time media apps (Media over
+// @okdaichi/media-log — a small, fast logging engine for real-time media apps (Media over
 // QUIC, audio/video streaming), usable in the browser and Deno.
 //
 // This module is the generic engine: levels, tags, a ring buffer, dedup,
