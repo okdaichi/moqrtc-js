@@ -1,11 +1,11 @@
-// @qumo/log — public API surface.
+// @okdaichi/media-log — public API surface.
 //
 // A logging library for real-time media apps. The generic engine (levels, tags,
 // ring buffer, dedup, sinks, export) plus a media-domain layer (curated tags,
 // fps/bitrate/rate/gauge meters, PTS media-time stamping, frame() shortcut).
 //
 // Import from the package entry, e.g.:
-//   import { createMediaLogger, MediaTags, setLevel } from "@qumo/log";
+//   import { createMediaLogger, MediaTags, setLevel } from "@okdaichi/media-log";
 
 // Generic engine.
 export {

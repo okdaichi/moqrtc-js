@@ -1,5 +1,5 @@
 {
-	"name": "@qumo/log",
+	"name": "@okdaichi/media-log",
 	"version": "0.1.0",
 	"exports": {
 		".": "./mod.ts"
@@ -8,7 +8,7 @@
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/okdaichi/moqrtc-js",
-		"directory": "packages/log"
+		"directory": "packages/media_log"
 	},
 	"description": "Media-domain logging for real-time media apps (Media over QUIC, audio/video streaming, WebCodecs): tagged, level-filtered, structured, with fps/bitrate/gauge meters, PTS media-time stamping, and a ring buffer for bug-report export.",
 	"keywords": [

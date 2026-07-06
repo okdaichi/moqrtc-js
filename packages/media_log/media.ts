@@ -1,4 +1,4 @@
-// @qumo/log — media-domain layer.
+// @okdaichi/media-log — media-domain layer.
 //
 // The generic engine (log.ts) speaks the vocabulary of any app: levels, tags,
 // messages, fields. This layer speaks the vocabulary of real-time media:
