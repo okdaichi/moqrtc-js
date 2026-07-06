@@ -212,10 +212,17 @@ export class AudioEncodeNode extends GainNode {
 		try {
 			this.#encoder.encode(value);
 		} catch (e) {
-			// Only log if not a closed codec error during shutdown
+			// encode() throws InvalidStateError on an unconfigured codec — e.g.
+			// the caller never called configure() (or configure failed) yet is
+			// still routing audio in. Rescheduling would spin here forever,
+			// logging the same error once per frame. Stop the loop instead; a
+			// later configure() must re-encodeTo() to restart it.
 			if (!this.#disposed) {
-				console.error("[AudioEncodeNode] encode error:", e);
+				console.error("[AudioEncodeNode] encode error — stopping loop:", e);
 			}
+			value.close();
+			stream.releaseLock();
+			return;
 		}
 
 		value.close();
