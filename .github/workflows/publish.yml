@@ -1,0 +1,61 @@
+name: Publish
+
+# Publishes a single package to JSR (https://jsr.io) using OIDC auth — no
+# secrets required. Each JSR package (@okdaichi/av-nodes, @okdaichi/media-log)
+# must be linked to this repo (okdaichi/moqrtc-js) in its JSR package settings.
+#
+# Triggered by a release tag push (av-nodes/v*, media-log/v*) so only the
+# tagged package is published, exactly at its tagged version. Use the manual
+# `workflow_dispatch` to (re)publish a package from the current main checkout,
+# e.g. to publish tags that were pushed before this workflow existed.
+
+on:
+  push:
+    tags:
+      - "av-nodes/v*"
+      - "media-log/v*"
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Package to publish from current main"
+        required: true
+        type: choice
+        options:
+          - av-nodes
+          - media-log
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC auth to JSR; no token secret needed.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Determine package directory
+        id: pkg
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            prefix="${{ inputs.package }}"
+          else
+            # tag ref like "av-nodes/v0.10.4" -> prefix "av-nodes"
+            prefix="${GITHUB_REF_NAME%%/*}"
+          fi
+          case "$prefix" in
+            av-nodes) dir="packages/av_nodes" ;;
+            media-log) dir="packages/media_log" ;;
+            *) echo "::error::Unknown package prefix '$prefix' (expected av-nodes or media-log)"; exit 1 ;;
+          esac
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "Publishing '$prefix' from $dir"
+
+      - name: Publish to JSR
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        run: deno publish
