@@ -169,14 +169,26 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			}
 
 			// Burst cap: never write more than one buffer ahead of the read pointer,
-			// or the ring would wrap over not-yet-played data. Drop the overflow tail.
+			// or the ring would wrap over not-yet-played data. When an incoming
+			// block schedules beyond the cap the buffer is over-full — playback has
+			// fallen behind the media (catch-up burst after a slow spell, or slight
+			// publisher>sound-card rate drift). For a live stream the backlog is
+			// already stale, so resync to the live edge: advance the read pointer so
+			// this block lands at the cushion, dropping the excess. Without this,
+			// every later block schedules at the (pinned-full) cap and is dropped,
+			// which is the per-frame click. Cost is a skip at each resync — far
+			// better than dropping all new audio.
 			const maxFrame = this.#playoutFrame + this.#bufferLength;
 			let writeEnd = end;
 			if (start >= maxFrame) {
-				return;
+				this.#playoutFrame = start - this.#lagSamples;
+				this.#nextWriteFrame = this.#playoutFrame;
+				// Recompute the cap against the new read pointer; writeHead below
+				// is now == playoutFrame, so the gap-fill silence-fills the cushion
+				// and this block writes at the live edge.
 			}
-			if (writeEnd > maxFrame) {
-				writeEnd = maxFrame;
+			if (writeEnd > this.#playoutFrame + this.#bufferLength) {
+				writeEnd = this.#playoutFrame + this.#bufferLength;
 			}
 
 			// If the block is scheduled ahead of what we've written, the gap in

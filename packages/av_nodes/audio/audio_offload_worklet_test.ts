@@ -124,8 +124,14 @@ function createProcessor(): AudioOffloadProcessorInstance {
 
 				const maxFrame = this.#playoutFrame + this.#bufferLength;
 				let writeEnd = end;
-				if (start >= maxFrame) return;
-				if (writeEnd > maxFrame) writeEnd = maxFrame;
+				if (start >= maxFrame) {
+					// Overflow: resync to the live edge instead of dropping the block.
+					this.#playoutFrame = start - this.#lagSamples;
+					this.#nextWriteFrame = this.#playoutFrame;
+				}
+				if (writeEnd > this.#playoutFrame + this.#bufferLength) {
+					writeEnd = this.#playoutFrame + this.#bufferLength;
+				}
 
 				const writeHead = this.#nextWriteFrame ?? start;
 				if (start > writeHead) {
@@ -594,36 +600,36 @@ Deno.test("audio_offload_worklet", async (t) => {
 		assertEquals(first, new Float32Array(QUANTUM).fill(9));
 	});
 
-	await t.step("drops a block scheduled beyond one buffer ahead", () => {
-		// Burst-cap full-drop: a block whose timestamp jumps more than one buffer
-		// ahead of the read pointer is dropped entirely (must not wrap the ring).
+	await t.step("resyncs to the live edge when a block overflows the buffer", () => {
+		// A block whose timestamp jumps more than one buffer ahead means playback
+		// is behind the media (catch-up burst / drift). Rather than drop every
+		// later block at the pinned-full cap (per-frame silence), resync: advance
+		// the read pointer so the far block plays at the live edge. The stale
+		// backlog before it is abandoned.
 		const processor = createProcessor();
 		processor.append(
 			[new Float32Array(QUANTUM).fill(1), new Float32Array(QUANTUM).fill(1)],
 			0,
 		);
-		// 2*BLOCK_US beyond the first block maps to LAG + 2*QUANTUM; push the
-		// timestamp past one buffer ahead (LAG + bufferLength) so start >= maxFrame.
+		// 3*LAG samples ahead → start = LAG + 3*LAG = 4*LAG, well past maxFrame
+		// (LAG + bufferLength = 3*LAG) → triggers resync.
 		const farTs = Math.round((LAG_SAMPLES + 2 * LAG_SAMPLES) * 1_000_000 / SAMPLE_RATE);
 		processor.append(
 			[new Float32Array(QUANTUM).fill(42), new Float32Array(QUANTUM).fill(42)],
 			farTs,
 		);
-		// A subsequent in-window block must still play (state not corrupted by the drop).
+		// A block contiguous with the far one (next 128 frames) must play too —
+		// resync doesn't corrupt subsequent placement.
 		processor.append(
-			[new Float32Array(QUANTUM).fill(3), new Float32Array(QUANTUM).fill(3)],
-			BLOCK_US,
+			[new Float32Array(QUANTUM).fill(5), new Float32Array(QUANTUM).fill(5)],
+			farTs + BLOCK_US,
 		);
 		const out = drain(processor, LAG_SAMPLES / QUANTUM + 3);
-		assertEquals(
-			out.subarray(LAG_SAMPLES, LAG_SAMPLES + QUANTUM),
-			new Float32Array(QUANTUM).fill(1),
-		);
-		assertEquals(
-			out.subarray(LAG_SAMPLES + QUANTUM, LAG_SAMPLES + 2 * QUANTUM),
-			new Float32Array(QUANTUM).fill(3),
-		);
-		// The far-future block (value 42) never appears in the rendered output.
-		assert(!out.includes(42));
+		// The far block (42) and its contiguous follower (5) both render: the
+		// resync recovered playback to the live edge instead of dropping them.
+		assert(out.includes(42));
+		assert(out.includes(5));
+		// The first block (1) is behind the resynced read pointer → abandoned.
+		assert(!out.includes(1));
 	});
 });

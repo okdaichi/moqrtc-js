@@ -61,16 +61,16 @@ export class VideoDecodeNode extends VideoNode {
 				this.#activeReader = reader;
 				while (this.context.state === "running" && !this.disposed) {
 					// Backpressure: Wait for decoder queue to drain before reading
-					// from upstream so the stream can naturally slow down.
+					// from upstream so the stream can naturally slow down. The
+					// queue sitting at the cap (MAX+1) is *normal* steady-state —
+					// it oscillates there every cycle as long as the decoder keeps
+					// up — so we don't warn per chunk (that's pure noise). A real
+					// stall surfaces as the drain timeout below.
 					while (
 						this.context.state === "running" &&
 						!this.disposed &&
 						this.decodeQueueSize > MAX_QUEUE_SIZE
 					) {
-						console.warn(
-							`[VideoDecodeNode] Decoder overloaded (queue: ${this.decodeQueueSize}), waiting...`,
-						);
-
 						if (this.#decoder.state !== "configured") {
 							return;
 						}
