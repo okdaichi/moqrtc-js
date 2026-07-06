@@ -1,22 +1,22 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@okdaichi/golikejs@0.9.0": "0.9.0",
-    "jsr:@std/assert@^1.0.16": "1.0.16",
-    "jsr:@std/internal@^1.0.12": "1.0.12"
+    "jsr:@okdaichi/golikejs@0.10.0": "0.10.0",
+    "jsr:@std/assert@^1.0.19": "1.0.19",
+    "jsr:@std/internal@^1.0.12": "1.0.14"
   },
   "jsr": {
-    "@okdaichi/golikejs@0.9.0": {
-      "integrity": "9e99fab2a4a96c6b04143b37ecd5d18e9783fce4b5cdb716a3cabdb44fc5c00e"
+    "@okdaichi/golikejs@0.10.0": {
+      "integrity": "761440b50ff8bc21df1061e3361c6542208e0f4f434da4b1494a9b1bb5ab73d3"
     },
-    "@std/assert@1.0.16": {
-      "integrity": "6a7272ed1eaa77defe76e5ff63ca705d9c495077e2d5fd0126d2b53fc5bd6532",
+    "@std/assert@1.0.19": {
+      "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
       "dependencies": [
         "jsr:@std/internal"
       ]
     },
-    "@std/internal@1.0.12": {
-      "integrity": "972a634fd5bc34b242024402972cd5143eac68d8dffaca5eaa4dba30ce17b027"
+    "@std/internal@1.0.14": {
+      "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
     }
   },
   "remote": {
@@ -106,8 +106,8 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@okdaichi/golikejs@0.9.0",
-      "jsr:@std/assert@^1.0.16"
+      "jsr:@okdaichi/golikejs@0.10.0",
+      "jsr:@std/assert@^1.0.19"
     ]
   }
 }
