@@ -32,6 +32,30 @@ overrideGlobal("GainNode", FakeGainNode);
 
 // AudioData ctor that accepts either AudioDataInit (from worklet) or the
 // positional (frames, channels, sampleRate, ts) form used by FakeAudioData.
+// Args are resolved by a free function so the derived constructor has a single
+// unconditional super() call (calling super conditionally trips constructor-super).
+function resolveAudioDataCtorArgs(
+	initOrFrames?: unknown,
+	channels?: number,
+	sampleRate?: number,
+	timestamp?: number,
+): [number, number, number, number] {
+	if (typeof initOrFrames === "object" && initOrFrames !== null) {
+		const init = initOrFrames as AudioDataInit;
+		return [
+			init.numberOfFrames ?? 1024,
+			init.numberOfChannels ?? 2,
+			init.sampleRate ?? 44100,
+			init.timestamp ?? 0,
+		];
+	}
+	return [
+		(initOrFrames as number | undefined) ?? 1024,
+		channels ?? 2,
+		sampleRate ?? 44100,
+		timestamp ?? 0,
+	];
+}
 class FakeAudioDataCtor extends FakeAudioData {
 	constructor(
 		initOrFrames?: unknown,
@@ -39,24 +63,7 @@ class FakeAudioDataCtor extends FakeAudioData {
 		sampleRate?: number,
 		timestamp?: number,
 	) {
-		if (
-			typeof initOrFrames === "object" && initOrFrames !== null
-		) {
-			const init = initOrFrames as AudioDataInit;
-			super(
-				init.numberOfFrames ?? 1024,
-				init.numberOfChannels ?? 2,
-				init.sampleRate ?? 44100,
-				init.timestamp ?? 0,
-			);
-		} else {
-			super(
-				initOrFrames as number | undefined,
-				channels,
-				sampleRate,
-				timestamp,
-			);
-		}
+		super(...resolveAudioDataCtorArgs(initOrFrames, channels, sampleRate, timestamp));
 	}
 }
 overrideGlobal("AudioData", FakeAudioDataCtor);
