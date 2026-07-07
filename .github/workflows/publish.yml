@@ -33,7 +33,7 @@ jobs:
       contents: read
       id-token: write # OIDC auth to JSR; no token secret needed.
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Deno
         uses: denoland/setup-deno@v2
