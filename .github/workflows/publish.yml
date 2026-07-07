@@ -58,6 +58,10 @@ jobs:
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
           echo "Publishing '$prefix' from $dir"
 
+      - name: Test (publish gate)
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        run: deno task test
+
       - name: Publish to JSR
         working-directory: ${{ steps.pkg.outputs.dir }}
         run: deno publish
