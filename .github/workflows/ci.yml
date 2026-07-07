@@ -41,8 +41,13 @@ jobs:
           verbose: true
 
       # The published packages live under packages/ and have their own
-      # deno.json check/test tasks. The root coverage step above only covers
-      # src/ (root test.include), so type-check and test each package here too.
+      # deno.json lint/check/test config. The root steps above only cover
+      # src/ (root lint/fmt/test include), so lint, type-check, and test each
+      # package here too.
+      - name: Lint av-nodes
+        working-directory: packages/av_nodes
+        run: deno lint
+
       - name: Check av-nodes
         working-directory: packages/av_nodes
         run: deno task check
@@ -50,6 +55,10 @@ jobs:
       - name: Test av-nodes
         working-directory: packages/av_nodes
         run: deno task test
+
+      - name: Lint media-log
+        working-directory: packages/media_log
+        run: deno lint
 
       - name: Check media-log
         working-directory: packages/media_log
