@@ -39,3 +39,22 @@ jobs:
           name: moqrtc-js-coverage
           fail_ci_if_error: false
           verbose: true
+
+      # The published packages live under packages/ and have their own
+      # deno.json check/test tasks. The root coverage step above only covers
+      # src/ (root test.include), so type-check and test each package here too.
+      - name: Check av-nodes
+        working-directory: packages/av_nodes
+        run: deno task check
+
+      - name: Test av-nodes
+        working-directory: packages/av_nodes
+        run: deno task test
+
+      - name: Check media-log
+        working-directory: packages/media_log
+        run: deno task check
+
+      - name: Test media-log
+        working-directory: packages/media_log
+        run: deno task test

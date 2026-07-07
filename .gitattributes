@@ -1,0 +1,4 @@
+# Normalize line endings to LF on checkout and commit, regardless of OS.
+# CI runs on Linux (already LF); this stops Windows contributors from hitting
+# spurious `deno fmt --check` failures caused by git's CRLF autocrlf conversion.
+* text=auto eol=lf

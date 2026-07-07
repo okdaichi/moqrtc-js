@@ -50,6 +50,7 @@ Enhancement suggestions are welcome! Please create an issue with:
 - Reference issues and pull requests when relevant
 
 Example:
+
 ```
 Add support for X feature
 
@@ -134,6 +135,51 @@ moqrtc-js/
 ├── MIGRATION_NOTES.md   # Migration documentation
 └── README.md            # Project documentation
 ```
+
+## Releasing
+
+This repo publishes two independent packages to [JSR](https://jsr.io) —
+`@okdaichi/av-nodes` (`packages/av_nodes`) and `@okdaichi/media-log`
+(`packages/media_log`). Releases are **per-package**, driven by **tags**, and
+published automatically from GitHub Actions via OIDC (no tokens or secrets
+required). The root `@okdaichi/moqrtc-js` package is not currently released.
+
+> Prerequisite: each JSR package must be linked to this repo
+> (`okdaichi/moqrtc-js`) in its JSR settings so OIDC auth works. Both packages
+> are already linked.
+
+To cut a release of one package:
+
+1. **Bump the version** in `packages/<package>/deno.json` (`version` field).
+   Follow SemVer: patch for bug fixes, minor for added functionality, major for
+   breaking changes (this is a 0.x project, so most releases are patch/minor).
+2. **Update `CHANGELOG.md`**: add a `## [X.Y.Z] - YYYY-MM-DD` entry at the top of
+   the versioned section (above the previous release), summarize the changes,
+   reference the relevant PRs (`[#NN]`), and add the PR + version-compare link
+   references at the bottom (e.g.
+   `[0.10.4]: .../compare/av-nodes/v0.10.3...av-nodes/v0.10.4`).
+3. **Commit**, e.g. `release(av-nodes): bump version to 0.10.4`.
+4. **Tag and push** the release tag — the tag name determines which package
+   publishes:
+
+   ```bash
+   git tag av-nodes/v0.10.4   # or: media-log/v0.1.0
+   git push origin av-nodes/v0.10.4
+   ```
+
+   Pushing a tag matching `av-nodes/v*` or `media-log/v*` triggers the
+   `Publish` workflow (`.github/workflows/publish.yml`), which checks out the
+   tagged commit, runs that package's tests as a gate, then runs `deno publish`.
+   The package is published at exactly the tagged version.
+
+To publish a package without a fresh tag (e.g. a tag was pushed before the
+workflow existed, or to recover from a failed publish), use the **Run workflow**
+button on the Publish workflow in GitHub Actions — it dispatches from `main`
+and is restricted to the `main` branch.
+
+CI (`ci.yml`) runs `deno fmt --check`, `deno lint`, type-checks, and the root
+`src/` tests on every push/PR to `main`, and also runs each package's
+`deno task check` + `deno task test`. Don't publish a package whose CI is red.
 
 ## Getting Help
 
