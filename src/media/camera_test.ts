@@ -1,6 +1,7 @@
 import { assertEquals, assertNotEquals, assertRejects } from "@std/assert";
+import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
 import { Camera } from "./camera.ts";
-import { MediaDeviceContext } from "./device.ts";
+import { Device, MediaDeviceContext } from "./device.ts";
 import { setupFakeMediaDevices } from "./fake_media_devices_test.ts";
 
 Deno.test("Camera", async (t) => {
@@ -89,6 +90,27 @@ Deno.test("Camera", async (t) => {
 			await assertRejects(
 				() => camera.getVideoTrack(),
 			);
+		});
+	});
+
+	await t.step("switchDevice", async (t) => {
+		await t.step("delegates to device.switchDevice", async () => {
+			using _env = setupFakeMediaDevices([]);
+			const ctx = new MediaDeviceContext();
+			const camera = new Camera(ctx);
+
+			const deviceSwitchSpy = spy(Device.prototype, "switchDevice");
+
+			try {
+				await camera.switchDevice("new-device-id");
+
+				assertSpyCalls(deviceSwitchSpy, 1);
+				assertSpyCall(deviceSwitchSpy, 0, {
+					args: ["new-device-id"],
+				});
+			} finally {
+				deviceSwitchSpy.restore();
+			}
 		});
 	});
 
