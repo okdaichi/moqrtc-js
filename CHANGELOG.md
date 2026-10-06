@@ -14,6 +14,10 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`). Robustness fixes fo
 - `VideoDecodeNode` / `AudioDecodeNode` / `VideoEncodeNode` / `AudioEncodeNode`: guard `flush()` on `state !== "configured"` to prevent `InvalidStateError` when tearing down nodes prior to codec configuration ([#50]).
 - `AudioDecodeNode` / `AudioEncodeNode`: silently swallow `AbortError` on `audioWorklet.addModule()` during early node disposal or `AudioContext` shutdown ([#50]).
 
+### Security
+
+- Fix XSS vulnerability in `RoomElement` caused by rendering unescaped state variables directly into `innerHTML` (now uses safe DOM manipulation APIs).
+
 ### Changed
 
 - `AudioEncodeNode`: replace recursive `queueMicrotask` in `#next` with a `while` loop, cutting pipeline latency in half and doubling throughput (~1.07M → 2.22M fps in benchmarks) ([#51]).
