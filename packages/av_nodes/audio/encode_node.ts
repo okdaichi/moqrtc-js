@@ -40,13 +40,20 @@ export class AudioEncodeNode extends GainNode {
 	// pending read(); closing the port detaches the onmessage that feeds it.
 	#readableController?: ReadableStreamDefaultController<AudioData>;
 	#worklet: AudioWorkletNode | null = null;
+	#context: AudioContextLike;
+	// Channels of the frames handed to the encoder: the configured count, or
+	// the output device's until configure() is called. WebCodecs refuses a
+	// frame whose channel count differs from the encoder's and closes.
+	#channels: number;
 
 	constructor(context: AudioContextLike) {
 		// Initialize as a passthrough GainNode
 		super(context as unknown as AudioContext, { gain: 1.0 });
 
 		// Set channel properties appropriate for a terminal encode node
-		this.channelCount = Math.max(1, context.destination.channelCount);
+		this.#context = context;
+		this.#channels = Math.max(1, context.destination.channelCount);
+		this.channelCount = this.#channels;
 		this.channelCountMode = "explicit" as ChannelCountMode;
 		this.#encoder = new AudioEncoder({
 			output: (chunk, meta) => {
@@ -77,47 +84,15 @@ export class AudioEncodeNode extends GainNode {
 			createHijackWorkletBlobUrl(),
 		).then(
 			() => {
-				const worklet = new AudioWorkletNode(
-					context as unknown as BaseAudioContext,
-					hijackWorkletName,
-					{
-						numberOfInputs: 1,
-						numberOfOutputs: 1,
-						channelCount: context.destination.channelCount,
-						processorOptions: {
-							sampleRate: context.sampleRate,
-							targetChannels: context.destination.channelCount,
-						},
-					},
-				);
+				// Disposed while the module was loading: capture nothing.
+				if (this.#disposed) return undefined;
 
 				const readable = new ReadableStream<AudioData>({
 					start: (controller) => {
 						this.#readableController = controller;
-						worklet.port.onmessage = (
-							{ data }: { data: AudioDataInit },
-						) => {
-							try {
-								const frame = new AudioData(data);
-								controller.enqueue(frame);
-							} catch (e) {
-								console.error(
-									"[AudioEncodeNode] Failed to create AudioData:",
-									e,
-								);
-							}
-						};
-					},
-					cancel() {
-						// Clean up when stream is cancelled
 					},
 				});
-
-				// Connect this GainNode (super) to the worklet
-				// This captures all audio flowing into this node
-				super.connect(worklet);
-
-				this.#worklet = worklet;
+				const worklet = this.#attachWorklet();
 				this.#next(readable.getReader());
 				return worklet;
 			},
@@ -134,8 +109,68 @@ export class AudioEncodeNode extends GainNode {
 		});
 	}
 
+	/**
+	 * Configures the encoder. The node captures `config.numberOfChannels`
+	 * channels from then on, mixing its input up or down as Web Audio does, so
+	 * the frames match the encoder whatever the source and the output device
+	 * have.
+	 */
 	configure(config: AudioEncoderConfig): void {
+		const channels = config.numberOfChannels;
+		if (channels !== this.#channels) {
+			// Web Audio refuses a count it does not support, before anything
+			// is committed.
+			this.channelCount = channels;
+			if (this.#worklet) {
+				this.#worklet.channelCount = channels;
+				this.#worklet.port.postMessage({ targetChannels: channels });
+			}
+			this.#channels = channels;
+		}
+
 		this.#encoder.configure(config);
+	}
+
+	/**
+	 * Creates the capture worklet for the current channel count, feeds its
+	 * frames to the encode loop and routes this node's input into it.
+	 */
+	#attachWorklet(): AudioWorkletNode {
+		const worklet = new AudioWorkletNode(
+			this.#context as unknown as BaseAudioContext,
+			hijackWorkletName,
+			{
+				numberOfInputs: 1,
+				numberOfOutputs: 1,
+				channelCount: this.#channels,
+				channelCountMode: "explicit",
+				processorOptions: {
+					sampleRate: this.#context.sampleRate,
+					targetChannels: this.#channels,
+				},
+			},
+		);
+		worklet.port.onmessage = ({ data }: { data: AudioDataInit }) => {
+			let frame: AudioData;
+			try {
+				frame = new AudioData(data);
+			} catch (e) {
+				console.error("[AudioEncodeNode] Failed to create AudioData:", e);
+				return;
+			}
+			try {
+				this.#readableController?.enqueue(frame);
+			} catch (_) {
+				// The stream closed on dispose; a frame already posted is not kept.
+				frame.close();
+			}
+		};
+
+		// Connect this GainNode (super) to the worklet
+		// This captures all audio flowing into this node
+		super.connect(worklet);
+		this.#worklet = worklet;
+		return worklet;
 	}
 
 	/**
@@ -144,6 +179,13 @@ export class AudioEncodeNode extends GainNode {
 	 */
 	process(input: AudioData): void {
 		if (this.#disposed || this.#encoder.state === "closed") {
+			return;
+		}
+
+		// The encoder refuses a frame with another channel count and closes.
+		if (
+			this.#encoder.state === "configured" && input.numberOfChannels !== this.#channels
+		) {
 			return;
 		}
 
@@ -186,6 +228,20 @@ export class AudioEncodeNode extends GainNode {
 					return;
 				}
 
+				// Nothing to encode with until configure(): drop the frame and keep
+				// reading, so a later configure() starts encoding.
+				if (this.#encoder.state === "unconfigured") {
+					value.close();
+					continue;
+				}
+
+				// A frame captured before configure() changed the channel count: the
+				// encoder would refuse it and close.
+				if (value.numberOfChannels !== this.#channels) {
+					value.close();
+					continue;
+				}
+
 				// Backpressure: When queue is overloaded, drop this frame but wait for the
 				// encoder to actually drain before reading the next one.
 				if (this.encodeQueueSize > MAX_ENCODE_QUEUE_SIZE) {
@@ -217,10 +273,8 @@ export class AudioEncodeNode extends GainNode {
 				try {
 					this.#encoder.encode(value);
 				} catch (e) {
-					// encode() throws InvalidStateError on an unconfigured codec — e.g.
-					// the caller never called configure() (or configure failed) yet is
-					// still routing audio in. Stop the loop instead; a
-					// later configure() must re-encodeTo() to restart it.
+					// A thrown encode() is terminal (the codec closed, or it refuses
+					// the frame): stop the loop instead of failing once per frame.
 					if (!this.#disposed) {
 						console.error("[AudioEncodeNode] encode error — stopping loop:", e);
 					}
@@ -347,9 +401,9 @@ export class AudioEncodeNode extends GainNode {
 		}
 
 		// Clean up worklet
-		this.#workletReady.then((worklet) => {
+		this.#workletReady.then(() => {
 			try {
-				worklet?.disconnect();
+				this.#worklet?.disconnect();
 			} catch (_) {
 				/* ignore */
 			}

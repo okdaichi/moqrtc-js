@@ -70,6 +70,14 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`) with resource-lifecy
 
 Merged work on `main` not yet cut as a tagged release. The Deno runtime migration and AV/media + Room/elements refactor landed in [#3]; the fixes and features from that work are recorded (with PR references) under the versioned `@okdaichi/av-nodes` and `@okdaichi/media-log` entries above. Full pre-release history is preserved in git.
 
+### Fixed
+
+- `AudioEncodeNode`: capture the channel count given to `configure()`. The node captured as many channels as the output device has (`context.destination.channelCount`), whatever the encoder was configured for. With a mono config on a stereo device, WebCodecs refused the first frame (`EncodingError: Input audio buffer is incompatible with codec parameters`) and closed the encoder, so nothing was ever encoded. `configure()` now sets the channel count of the node and of its capture worklet (`channelCountMode: "explicit"`, so Web Audio mixes the input up or down) and tells the worklet's processor, which keeps its frame counter, so timestamps continue across a change. Until `configure()` is called the node still captures the output device's channel count.
+- `AudioEncodeNode`: a frame whose channel count is not the configured one is dropped before it reaches the encoder, on the worklet path and in `process()`.
+- `AudioEncodeNode`: frames that arrive before `configure()` are dropped and the encode loop keeps reading. It used to stop at the first one, so a node that was fed audio before it was configured never encoded anything afterwards.
+- `AudioEncodeNode`: a node disposed while its worklet module is still loading creates no capture worklet. It used to attach one after disposal, which kept posting frames.
+- `AudioEncodeNode`: a frame posted by the worklet after the node's stream closed is closed instead of being left open, and is no longer reported as a failure to create `AudioData`.
+
 ### Changed
 
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
