@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-10-14
+
+Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioEncodeNode` sends the audio it holds when the capture input stops, instead of late after the input returns.
+
+### Fixed
+
+- `AudioEncodeNode`: the audio the encoder holds when the capture input stops (up to one Opus frame, 20 ms) is sent at once, at its time. It used to stay in the encoder until the input came back, and then went out stamped at the time it was captured, so a player that places audio by its timestamp took it as late and dropped it: the last words before a mute were lost. The capture worklet now reports when its input stops, and the node flushes the encoder then ([#56]).
+- `AudioEncodeNode`: the encode loop no longer waits for a flush; frames encoded after it are queued behind it in order. Frames captured during a slow flush no longer pile up unread ([#56]).
+- `AudioEncodeNode.process()`: a gap in its input is kept in the encoded timestamps, as on the worklet path ([#56]).
+
 ## [0.11.0] - 2026-10-14
 
 Minor release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioEncodeNode` stamps audio by the audio context's clock, so a muted (disconnected) source shows as a gap in the encoded timestamps instead of collapsing it. A minor bump, not a patch: the timestamps no longer start at 0, and a consumer that offsets them for muted time must drop that workaround.
@@ -94,12 +104,6 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`) with resource-lifecy
 
 Merged work on `main` not yet cut as a tagged release. The Deno runtime migration and AV/media + Room/elements refactor landed in [#3]; the fixes and features from that work are recorded (with PR references) under the versioned `@okdaichi/av-nodes` and `@okdaichi/media-log` entries above. Full pre-release history is preserved in git.
 
-### Fixed
-
-- `AudioEncodeNode`: the audio the encoder holds when the capture input stops (up to one Opus frame, 20 ms) is sent at once, at its time. It used to stay in the encoder until the input came back, and then went out stamped at the time it was captured, so a player that places audio by its timestamp took it as late and dropped it: the last words before a mute were lost. The capture worklet now reports when its input stops, and the node flushes the encoder then.
-- `AudioEncodeNode`: the encode loop no longer waits for a flush; frames encoded after it are queued behind it in order. Frames captured during a slow flush no longer pile up unread.
-- `AudioEncodeNode.process()`: a gap in its input is kept in the encoded timestamps, as on the worklet path.
-
 ### Changed
 
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
@@ -127,7 +131,8 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 - **Minor version (0.X.0)**: Add functionality in a backward compatible manner
 - **Patch version (0.0.X)**: Backward compatible bug fixes
 
-[Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.0...HEAD
+[Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.1...HEAD
+[0.11.1]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.0...av-nodes/v0.11.1
 [0.11.0]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.6...av-nodes/v0.11.0
 [0.10.6]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.5...av-nodes/v0.10.6
 ["#3"]: https://github.com/okdaichi/moqrtc-js/pull/3
@@ -150,6 +155,7 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 [#51]: https://github.com/okdaichi/moqrtc-js/pull/51
 [#52]: https://github.com/okdaichi/moqrtc-js/pull/52
 [#54]: https://github.com/okdaichi/moqrtc-js/pull/54
+[#56]: https://github.com/okdaichi/moqrtc-js/pull/56
 [0.1.0]: https://github.com/okdaichi/moqrtc-js/releases/tag/media-log/v0.1.0
 [0.10.1]: https://github.com/okdaichi/moqrtc-js/releases/tag/av-nodes/v0.10.1
 [0.10.2]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.1...av-nodes/v0.10.2
