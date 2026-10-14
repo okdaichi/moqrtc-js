@@ -10,7 +10,6 @@ export const workletName: string = "audio-hijacker";
 if (typeof AudioWorkletProcessor !== "undefined") {
 	// Worklet code
 	class AudioHijackProcessor extends AudioWorkletProcessor {
-		#currentFrame: number = 0;
 		#sampleRate: number;
 		#targetChannels: number;
 
@@ -80,13 +79,14 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 				numberOfChannels: numberOfChannels,
 				numberOfFrames: numberOfFrames,
 				data: data,
-				timestamp: Math.round(this.#currentFrame * 1_000_000 / this.#sampleRate),
+				// Stamped by the audio context's clock, not by counting captured
+				// frames: a stretch with no input (a disconnected source) shows as
+				// a gap in the timestamps, so a player keeps later audio in place.
+				timestamp: Math.round(currentFrame * 1_000_000 / sampleRate),
 				transfer: [data.buffer],
 			};
 
 			this.port.postMessage(init);
-
-			this.#currentFrame += numberOfFrames;
 
 			return true;
 		}
