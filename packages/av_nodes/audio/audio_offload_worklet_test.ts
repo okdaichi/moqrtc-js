@@ -30,217 +30,23 @@ const QUANTUM = 128;
 // 128-sample blocks map to consecutive 128-frame playout slots.
 const BLOCK_US = Math.round(QUANTUM / SAMPLE_RATE * 1_000_000); // 2667
 
-// Faithful inline copy of AudioOffloadProcessor (audio_offload_worklet.ts) so the
-// scheduling logic can be exercised directly under the fake AudioWorkletProcessor.
-// Defined once here as the single source for the behavioral tests.
-function createProcessor(): AudioOffloadProcessorInstance {
+// The real AudioOffloadProcessor: the worklet module evaluated once in a fake
+// worklet scope, so the behavioural tests exercise the code that ships.
+const OffloadProcessor = await (async () => {
 	const env = setupFakeAudioWorkletEnvironment();
 	try {
-		class AudioOffloadProcessor extends AudioWorkletProcessor {
-			#channelsBuffer: Float32Array[] = [];
-			#playoutFrame = 0;
-			#baseTsUs: number | null = null;
-			#playoutOriginFrame = 0;
-			#nextWriteFrame: number | null = null;
-			#lagSamples = 0;
-			#bufferLength = 0;
-			readonly #sampleRate = 0;
-
-			constructor(options: AudioWorkletNodeOptions) {
-				super();
-				if (!options.processorOptions) {
-					throw new Error("processorOptions is required");
-				}
-				const channelCount = options.channelCount;
-				if (!channelCount || channelCount <= 0) {
-					throw new Error("invalid channelCount");
-				}
-				const sampleRate = options.processorOptions.sampleRate;
-				if (!sampleRate || sampleRate <= 0) {
-					throw new Error("invalid sampleRate");
-				}
-				const latency = options.processorOptions.latency;
-				if (!latency || latency <= 0) {
-					throw new Error("invalid latency");
-				}
-				this.#sampleRate = sampleRate;
-				this.#lagSamples = Math.ceil(sampleRate * latency / 1000);
-				this.#bufferLength = this.#lagSamples * 2;
-				for (let i = 0; i < channelCount; i++) {
-					this.#channelsBuffer[i] = new Float32Array(this.#bufferLength);
-				}
-				this.port.onmessage = ({ data }: Message) => {
-					this.append(data.channels, data.timestamp);
-				};
-			}
-
-			#playoutFrameForTs(tsUs: number): number {
-				const base = this.#baseTsUs ?? 0;
-				return this.#playoutOriginFrame + this.#lagSamples +
-					Math.round((tsUs - base) * this.#sampleRate / 1_000_000);
-			}
-
-			#silenceFill(from: number, to: number): void {
-				const len = this.#bufferLength;
-				for (const dst of this.#channelsBuffer) {
-					if (!dst) continue;
-					let pos = from % len;
-					let remaining = to - from;
-					while (remaining > 0) {
-						const toCopy = Math.min(remaining, len - pos);
-						dst.fill(0, pos, pos + toCopy);
-						pos = (pos + toCopy) % len;
-						remaining -= toCopy;
-					}
-				}
-			}
-
-			append(channels: Float32Array[], tsUs: number): void {
-				if (
-					!channels.length || !channels[0] || channels[0].length === 0 ||
-					this.#channelsBuffer === undefined ||
-					this.#channelsBuffer.length === 0 ||
-					this.#channelsBuffer[0] === undefined
-				) return;
-
-				const numberOfFrames = channels[0].length;
-
-				if (this.#baseTsUs === null) {
-					this.#baseTsUs = tsUs;
-					this.#playoutOriginFrame = this.#playoutFrame;
-					this.#nextWriteFrame = this.#playoutFrame;
-				}
-
-				let start = this.#playoutFrameForTs(tsUs);
-				const end = start + numberOfFrames;
-
-				if (end <= this.#playoutFrame) return;
-
-				let srcOffset0 = 0;
-				if (start < this.#playoutFrame) {
-					srcOffset0 = this.#playoutFrame - start;
-					start = this.#playoutFrame;
-				}
-
-				const maxFrame = this.#playoutFrame + this.#bufferLength;
-				let writeEnd = end;
-				if (start >= maxFrame) {
-					// Overflow: resync to the live edge instead of dropping the block.
-					this.#playoutFrame = start - this.#lagSamples;
-					this.#nextWriteFrame = this.#playoutFrame;
-				}
-				if (writeEnd > this.#playoutFrame + this.#bufferLength) {
-					writeEnd = this.#playoutFrame + this.#bufferLength;
-				}
-
-				const writeHead = this.#nextWriteFrame ?? start;
-				if (start > writeHead) {
-					this.#silenceFill(writeHead, start);
-				}
-
-				const len = this.#bufferLength;
-				const writeLen = writeEnd - start;
-
-				for (
-					let channel = 0;
-					channel < this.#channelsBuffer.length;
-					channel++
-				) {
-					const src = channels[channel];
-					const dst = this.#channelsBuffer[channel];
-					if (!dst) continue;
-					if (!src) {
-						let pos = start % len;
-						let remaining = writeLen;
-						while (remaining > 0) {
-							const toCopy = Math.min(remaining, len - pos);
-							dst.fill(0, pos, pos + toCopy);
-							pos = (pos + toCopy) % len;
-							remaining -= toCopy;
-						}
-						continue;
-					}
-					let writePos = start % len;
-					let srcOffset = 0;
-					while (srcOffset < writeLen) {
-						const remaining = writeLen - srcOffset;
-						const spaceToEnd = len - writePos;
-						const toCopy = Math.min(remaining, spaceToEnd);
-						dst.set(
-							src.subarray(srcOffset0 + srcOffset, srcOffset0 + srcOffset + toCopy),
-							writePos,
-						);
-						srcOffset += toCopy;
-						writePos = (writePos + toCopy) % len;
-					}
-				}
-
-				if (this.#nextWriteFrame === null || writeEnd > this.#nextWriteFrame) {
-					this.#nextWriteFrame = writeEnd;
-				}
-			}
-
-			process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-				const outputLength = outputs?.[0]?.[0]?.length ?? 128;
-				if (
-					outputs === undefined || outputs.length === 0 ||
-					outputs[0] === undefined || outputs[0]?.length === 0
-				) {
-					this.#playoutFrame += outputLength;
-					return true;
-				}
-				if (
-					this.#channelsBuffer.length === 0 ||
-					this.#channelsBuffer[0] === undefined
-				) {
-					this.#playoutFrame += outputLength;
-					return true;
-				}
-
-				const len = this.#bufferLength;
-				const written = this.#nextWriteFrame ?? this.#playoutFrame;
-				const realEnd = Math.min(this.#playoutFrame + outputLength, written);
-				const realFrames = Math.max(0, realEnd - this.#playoutFrame);
-
-				for (const output of outputs) {
-					for (let channel = 0; channel < output.length; channel++) {
-						const src = this.#channelsBuffer[channel];
-						const dst = output[channel];
-						if (!dst) continue;
-						if (!src || realFrames <= 0) {
-							dst.fill(0);
-							continue;
-						}
-						let readPos = this.#playoutFrame % len;
-						let dstOffset = 0;
-						while (dstOffset < realFrames) {
-							const remaining = realFrames - dstOffset;
-							const availableToEnd = len - readPos;
-							const toCopy = Math.min(remaining, availableToEnd);
-							dst.set(src.subarray(readPos, readPos + toCopy), dstOffset);
-							dstOffset += toCopy;
-							readPos = (readPos + toCopy) % len;
-						}
-						if (dstOffset < dst.length) dst.fill(0, dstOffset);
-					}
-				}
-
-				this.#playoutFrame += outputLength;
-				return true;
-			}
-		}
-
-		globalThis.registerProcessor("audio-offloader", AudioOffloadProcessor);
-
-		const ProcessorCtor = env
-			.registerProcessorCalls[0]![1] as AudioOffloadProcessorConstructor;
-		return new ProcessorCtor({
-			channelCount: 2,
-			processorOptions: { sampleRate: SAMPLE_RATE, latency: LATENCY_MS },
-		});
+		await import("./audio_offload_worklet.ts?behaviour");
+		return env.registerProcessorCalls[0]![1] as AudioOffloadProcessorConstructor;
 	} finally {
 		env.restore();
 	}
+})();
+
+function createProcessor(): AudioOffloadProcessorInstance {
+	return new OffloadProcessor({
+		channelCount: 2,
+		processorOptions: { sampleRate: SAMPLE_RATE, latency: LATENCY_MS },
+	});
 }
 
 // Run `quanta` render quanta through `processor`, concatenating channel 0 of the
@@ -631,5 +437,97 @@ Deno.test("audio_offload_worklet", async (t) => {
 		assert(out.includes(5));
 		// The first block (1) is behind the resynced read pointer → abandoned.
 		assert(!out.includes(1));
+	});
+	// A stream whose clock stopped for two seconds (a sender's suspended
+	// AudioContext): its blocks resume where they stopped, two seconds behind
+	// the playback clock.
+	const block = (value: number) => [
+		new Float32Array(QUANTUM).fill(value),
+		new Float32Array(QUANTUM).fill(value),
+	];
+	const twoSecondsOfQuanta = (2 * SAMPLE_RATE) / QUANTUM;
+
+	await t.step("starts over from a stream that fell more than a cushion behind", () => {
+		const processor = createProcessor();
+		processor.append(block(1), 0);
+		drain(processor, LAG_SAMPLES / QUANTUM + 1);
+		drain(processor, twoSecondsOfQuanta);
+
+		// The sender's clock resumes at 1 block in: three blocks in a row arrive
+		// two seconds behind.
+		for (let i = 1; i <= 3; i++) processor.append(block(7), i * BLOCK_US);
+
+		// Played one cushion from now, not dropped.
+		const out = drain(processor, LAG_SAMPLES / QUANTUM + 1);
+		assertEquals(
+			out.subarray(LAG_SAMPLES, LAG_SAMPLES + QUANTUM),
+			new Float32Array(QUANTUM).fill(7),
+		);
+	});
+
+	await t.step("keeps the stream's timing after starting over", () => {
+		const processor = createProcessor();
+		processor.append(block(1), 0);
+		drain(processor, LAG_SAMPLES / QUANTUM + 1 + twoSecondsOfQuanta);
+		for (let i = 1; i <= 3; i++) processor.append(block(7), i * BLOCK_US);
+
+		// The next block follows the one that restarted playback directly.
+		processor.append(block(9), 4 * BLOCK_US);
+
+		const out = drain(processor, LAG_SAMPLES / QUANTUM + 2);
+		assertEquals(
+			out.subarray(LAG_SAMPLES + QUANTUM, LAG_SAMPLES + 2 * QUANTUM),
+			new Float32Array(QUANTUM).fill(9),
+		);
+	});
+
+	await t.step("starts over from a stream less than a cushion behind", () => {
+		const processor = createProcessor();
+		processor.append(block(1), 0);
+		drain(processor, LAG_SAMPLES / QUANTUM + 1);
+		// The sender's clock stopped for half a cushion: its next blocks are
+		// wholly in the playback past, but by less than one cushion.
+		drain(processor, LAG_SAMPLES / 2 / QUANTUM);
+
+		for (let i = 1; i <= 3; i++) processor.append(block(7), i * BLOCK_US);
+
+		const out = drain(processor, LAG_SAMPLES / QUANTUM + 1);
+		assertEquals(
+			out.subarray(LAG_SAMPLES, LAG_SAMPLES + QUANTUM),
+			new Float32Array(QUANTUM).fill(7),
+		);
+	});
+
+	await t.step("drops a single block that is far behind without starting over", () => {
+		const processor = createProcessor();
+		processor.append(block(1), 0);
+		drain(processor, LAG_SAMPLES / QUANTUM + 1 + twoSecondsOfQuanta);
+
+		// One straggler from long ago, then the stream on time.
+		processor.append(block(42), BLOCK_US);
+		const onTime = 0 + (LAG_SAMPLES / QUANTUM + 1 + twoSecondsOfQuanta) * BLOCK_US -
+			LAG_SAMPLES / QUANTUM * BLOCK_US;
+		processor.append(block(8), onTime);
+
+		const out = drain(processor, LAG_SAMPLES / QUANTUM + 2);
+		assert(!out.includes(42));
+		assert(out.includes(8));
+	});
+
+	await t.step("counts only blocks in a row: an on-time block resets the count", () => {
+		const processor = createProcessor();
+		processor.append(block(1), 0);
+		const played = LAG_SAMPLES / QUANTUM + 1 + twoSecondsOfQuanta;
+		drain(processor, played);
+		const onTime = (played - LAG_SAMPLES / QUANTUM) * BLOCK_US;
+
+		processor.append(block(42), 1 * BLOCK_US);
+		processor.append(block(42), 2 * BLOCK_US);
+		processor.append(block(8), onTime);
+		processor.append(block(42), 3 * BLOCK_US);
+
+		const out = drain(processor, LAG_SAMPLES / QUANTUM + 2);
+		assert(!out.includes(42));
+		assert(out.includes(8));
 	});
 });
