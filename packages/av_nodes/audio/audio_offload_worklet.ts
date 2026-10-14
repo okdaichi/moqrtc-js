@@ -6,6 +6,10 @@ export function importWorkletUrl(): string {
 export const workletName: string = "audio-offloader";
 
 // Check if we're in a worklet context
+// Blocks in a row, each more than a cushion behind, after which playback starts
+// over from the stream as it now arrives. One late block is only dropped.
+const REANCHOR_AFTER_BEHIND_BLOCKS = 3;
+
 if (typeof AudioWorkletProcessor !== "undefined") {
 	// AudioWorkletProcessor for AudioEmitter
 	//
@@ -59,6 +63,11 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 		readonly #sampleRate: number = 0;
 
+		// Blocks in a row that arrived more than one cushion behind the playback
+		// clock. A run of them means the stream itself fell behind (the sender's
+		// audio clock stopped, or delivery stalled), not that one block was late.
+		#behindBlocks: number = 0;
+
 		constructor(options: AudioWorkletNodeOptions) {
 			super();
 			if (!options.processorOptions) {
@@ -105,6 +114,16 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 				Math.round((tsUs - base) * this.#sampleRate / 1_000_000);
 		}
 
+		// Makes tsUs the media-clock origin, played one cushion from now. The
+		// write head starts at the read pointer so the gap-fill populates the
+		// pre-roll region [#playoutFrame, start).
+		#anchor(tsUs: number): void {
+			this.#baseTsUs = tsUs;
+			this.#playoutOriginFrame = this.#playoutFrame;
+			this.#nextWriteFrame = this.#playoutFrame;
+			this.#behindBlocks = 0;
+		}
+
 		// Zero-fill ring slots [from, to) on every channel (wrap-aware).
 		#silenceFill(from: number, to: number): void {
 			const len = this.#bufferLength;
@@ -142,19 +161,29 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			// #nextWriteFrame) stays validly populated (without relying on the ring
 			// happening to start zeroed, and without touching already-past slots).
 			if (this.#baseTsUs === null) {
-				this.#baseTsUs = tsUs;
-				this.#playoutOriginFrame = this.#playoutFrame;
-				this.#nextWriteFrame = this.#playoutFrame;
+				this.#anchor(tsUs);
 			}
 
 			let start = this.#playoutFrameForTs(tsUs);
-			const end = start + numberOfFrames;
 
 			// Stale (late) block: its whole range is already in the playback past.
-			// Drop it rather than clobber current playback.
-			if (end <= this.#playoutFrame) {
-				return;
+			// Drop it rather than clobber current playback. A run of blocks that are
+			// each more than a cushion behind means the stream fell behind for good
+			// (it carries no time for a stretch the sender did not capture, such as
+			// a suspended AudioContext): every later block would be dropped too, so
+			// start over from this block, as for the first one. The mirror of the
+			// resync to the live edge below.
+			if (start + numberOfFrames <= this.#playoutFrame) {
+				const behind = this.#playoutFrame - (start + numberOfFrames) > this.#lagSamples;
+				this.#behindBlocks = behind ? this.#behindBlocks + 1 : 0;
+				if (this.#behindBlocks < REANCHOR_AFTER_BEHIND_BLOCKS) {
+					return;
+				}
+				this.#anchor(tsUs);
+				start = this.#playoutFrameForTs(tsUs);
 			}
+			this.#behindBlocks = 0;
+			const end = start + numberOfFrames;
 
 			// Partially-late block (start < #playoutFrame < end): discard the
 			// already-played prefix. This keeps `start >= #playoutFrame`, so the
