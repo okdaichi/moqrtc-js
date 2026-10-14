@@ -464,3 +464,70 @@ Deno.test("audio_hijack_worklet", async (t) => {
 		});
 	});
 });
+
+Deno.test("audio_hijack_worklet - channel count from the node", async (t) => {
+	type Processor = {
+		port: { onmessage: ((ev: { data: unknown }) => void) | null; postMessage: unknown };
+		process(inputs: Float32Array[][]): boolean;
+	};
+
+	// Evaluates the worklet module itself in a fake worklet scope and returns a
+	// processor of the class it registers, with the frames it posts.
+	async function realProcessor(
+		targetChannels: number,
+		tag: string,
+	): Promise<{ processor: Processor; posted: AudioDataInit[] }> {
+		const env = setupFakeAudioWorkletEnvironment();
+		try {
+			await import(`./audio_hijack_worklet.ts?${tag}`);
+			const ctor = env.registerProcessorCalls[0]![1] as new (
+				options: AudioWorkletNodeOptions,
+			) => Processor;
+			const processor = new ctor({ processorOptions: { sampleRate: 48000, targetChannels } });
+			const posted: AudioDataInit[] = [];
+			processor.port.postMessage = (init: AudioDataInit) => {
+				posted.push(init);
+			};
+			return { processor, posted };
+		} finally {
+			env.restore();
+		}
+	}
+
+	const quantum = (channels: number) =>
+		Array.from({ length: channels }, () => new Float32Array(128));
+
+	await t.step("posts the channel count a message sets", async () => {
+		const { processor, posted } = await realProcessor(2, "message");
+
+		processor.process([quantum(2)]);
+		processor.port.onmessage!({ data: { targetChannels: 1 } });
+		processor.process([quantum(1)]);
+
+		assertEquals(posted.map((init) => init.numberOfChannels), [2, 1]);
+	});
+
+	await t.step("keeps counting frames across a change of channel count", async () => {
+		const { processor, posted } = await realProcessor(2, "timestamps");
+
+		processor.process([quantum(2)]);
+		processor.port.onmessage!({ data: { targetChannels: 1 } });
+		processor.process([quantum(1)]);
+
+		assertEquals(posted.map((init) => init.timestamp), [
+			0,
+			Math.round(128 * 1_000_000 / 48000),
+		]);
+	});
+
+	await t.step("ignores a message without a usable channel count", async () => {
+		const { processor, posted } = await realProcessor(2, "ignored");
+
+		for (const data of [undefined, {}, { targetChannels: 0 }, { targetChannels: 1.5 }]) {
+			processor.port.onmessage!({ data });
+		}
+		processor.process([quantum(2)]);
+
+		assertEquals(posted.map((init) => init.numberOfChannels), [2]);
+	});
+});
