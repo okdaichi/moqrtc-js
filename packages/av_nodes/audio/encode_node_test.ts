@@ -1022,6 +1022,67 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 		},
 	);
 
+	await t.step("flushes held audio as soon as the capture input ends", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 1 });
+		await workletReady();
+		const encoder = FakeAudioEncoder.lastCreated!;
+		const events: string[] = [];
+		const flush = encoder.flush.bind(encoder);
+		encoder.flush = () => {
+			events.push("flush");
+			return flush();
+		};
+		const encode = encoder.encode.bind(encoder);
+		encoder.encode = (data: AudioData) => {
+			events.push(`encode ${data.timestamp}`);
+			encode(data);
+		};
+		const inputEnded = () =>
+			(worklets[0]!.port.onmessage as unknown as (ev: { data: unknown }) => void)({
+				data: { inputEnded: true },
+			});
+
+		// Nothing encoded yet: nothing to flush.
+		inputEnded();
+		await settle();
+		postFrame(worklets[0]!, 1, 0);
+		await settle();
+		// The input ends, and comes back five seconds later.
+		inputEnded();
+		await settle();
+		postFrame(worklets[0]!, 1, 5_000_000);
+		await settle();
+
+		// One flush, when the input ended; the frame after the gap needs no other.
+		assertEquals(events, ["encode 0", "flush", "encode 5000000"]);
+
+		await node.dispose();
+	});
+
+	await t.step("process() keeps a gap in its input in the encoded timestamps", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 1 });
+		const encoder = FakeAudioEncoder.lastCreated!;
+		let flushes = 0;
+		const flush = encoder.flush.bind(encoder);
+		encoder.flush = () => {
+			flushes++;
+			return flush();
+		};
+
+		for (const ts of [0, 20_000, 5_000_000]) {
+			node.process(new FakeAudioData(960, 1, 48000, ts) as unknown as AudioData);
+		}
+
+		assertEquals(flushes, 1);
+		assertEquals(encoder.encodeCalls.map((c) => c.timestamp), [0, 20_000, 5_000_000]);
+
+		await node.dispose();
+	});
+
 	await t.step(
 		"process() drops a frame whose channel count is not the configured one",
 		async () => {

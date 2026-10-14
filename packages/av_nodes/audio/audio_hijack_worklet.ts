@@ -11,6 +11,8 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	// Worklet code
 	class AudioHijackProcessor extends AudioWorkletProcessor {
 		#sampleRate: number;
+		// Whether the last render quantum had input.
+		#capturing = false;
 		#targetChannels: number;
 
 		constructor(options: AudioWorkletNodeOptions) {
@@ -38,8 +40,15 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			const channels = inputs[0];
 
 			if (!channels || channels.length === 0 || !channels[0]) {
+				// The input stopped (its source was disconnected): say so once, so
+				// the node can release the audio its encoder still holds.
+				if (this.#capturing) {
+					this.#capturing = false;
+					this.port.postMessage({ inputEnded: true });
+				}
 				return true;
 			}
+			this.#capturing = true;
 
 			const inputChannels = channels.length;
 			const numberOfFrames = channels[0].length;

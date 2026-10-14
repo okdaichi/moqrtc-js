@@ -20,6 +20,10 @@ const MAX_ENCODE_QUEUE_SIZE = 2;
 // backpressure, are not.
 const CAPTURE_GAP_US = 100_000;
 
+// Queued in place of a frame when the capture worklet's input stops.
+const INPUT_ENDED = Symbol("input ended");
+type Captured = AudioData | typeof INPUT_ENDED;
+
 /**
  * AudioEncodeNode extends GainNode to capture audio from the Web Audio graph
  * and encode it using WebCodecs AudioEncoder.
@@ -43,12 +47,14 @@ export class AudioEncodeNode extends GainNode {
 	#dests: Map<AudioEncodeDestination, CancelFunc> = new Map();
 	// Retained to tear down on dispose: closing the controller unblocks #next's
 	// pending read(); closing the port detaches the onmessage that feeds it.
-	#readableController?: ReadableStreamDefaultController<AudioData>;
+	#readableController?: ReadableStreamDefaultController<Captured>;
 	#worklet: AudioWorkletNode | null = null;
 	#context: AudioContextLike;
 	// Where the next captured frame starts if no audio is missing, in
 	// microseconds, or null before the first frame.
 	#nextTimestamp: number | null = null;
+	// Whether the encoder was given audio since it was last flushed.
+	#unflushed = false;
 	// Channels of the frames handed to the encoder: the configured count, or
 	// the output device's until configure() is called. WebCodecs refuses a
 	// frame whose channel count differs from the encoder's and closes.
@@ -95,7 +101,7 @@ export class AudioEncodeNode extends GainNode {
 				// Disposed while the module was loading: capture nothing.
 				if (this.#disposed) return undefined;
 
-				const readable = new ReadableStream<AudioData>({
+				const readable = new ReadableStream<Captured>({
 					start: (controller) => {
 						this.#readableController = controller;
 					},
@@ -158,7 +164,17 @@ export class AudioEncodeNode extends GainNode {
 				},
 			},
 		);
-		worklet.port.onmessage = ({ data }: { data: AudioDataInit }) => {
+		worklet.port.onmessage = (
+			{ data }: { data: AudioDataInit | { inputEnded: true } },
+		) => {
+			if ("inputEnded" in data) {
+				try {
+					this.#readableController?.enqueue(INPUT_ENDED);
+				} catch (_) {
+					// The stream closed on dispose.
+				}
+				return;
+			}
 			let frame: AudioData;
 			try {
 				frame = new AudioData(data);
@@ -205,12 +221,15 @@ export class AudioEncodeNode extends GainNode {
 			return; // Drop frame without encoding
 		}
 
+		this.#followTimeline(input);
+
 		// Ownership: Caller owns input, so we clone for our use
 		const clonedData = input.clone();
 
 		// Encode the data
 		try {
 			this.#encoder.encode(clonedData);
+			this.#unflushed = true;
 		} catch (e) {
 			// Only log if not a closed codec error during shutdown
 			if (!this.#disposed) {
@@ -222,12 +241,48 @@ export class AudioEncodeNode extends GainNode {
 		clonedData.close();
 	}
 
-	async #next(stream: ReadableStreamDefaultReader<AudioData>): Promise<void> {
+	/**
+	 * Keeps a gap in the captured audio in the encoded timestamps. WebCodecs
+	 * stamps encoded chunks by counting samples from the first frame it was
+	 * given, so a gap (a source that was disconnected) would vanish; a flush
+	 * makes the encoder start again from the next frame's timestamp. Called
+	 * just before frame is encoded.
+	 */
+	#followTimeline(frame: AudioData): void {
+		if (
+			this.#nextTimestamp !== null &&
+			frame.timestamp - this.#nextTimestamp > CAPTURE_GAP_US
+		) {
+			this.#flushHeld();
+		}
+		this.#nextTimestamp = frame.timestamp +
+			Math.round(frame.numberOfFrames * 1_000_000 / frame.sampleRate);
+	}
+
+	/**
+	 * Flushes the encoder if it holds audio: it emits the partial frame it
+	 * buffers, at that audio's time. It is not awaited: frames encoded after it
+	 * are queued behind it, in order.
+	 */
+	#flushHeld(): void {
+		if (!this.#unflushed) return;
+		this.#unflushed = false;
+		void this.flush();
+	}
+
+	async #next(stream: ReadableStreamDefaultReader<Captured>): Promise<void> {
 		try {
 			while (!this.#disposed) {
 				const { done, value } = await stream.read();
 				if (done) {
 					return;
+				}
+
+				// The capture input stopped: send what the encoder holds now, at its
+				// time, rather than after the input comes back, when it would be late.
+				if (value === INPUT_ENDED) {
+					this.#flushHeld();
+					continue;
 				}
 
 				// Check again after await - state may have changed
@@ -273,22 +328,7 @@ export class AudioEncodeNode extends GainNode {
 					continue;
 				}
 
-				// WebCodecs stamps encoded chunks by counting samples from the first
-				// frame it was given, so a gap in the capture (a source that was
-				// disconnected) would vanish from the timestamps. A flush makes the
-				// encoder start again from the next frame's timestamp.
-				if (
-					this.#nextTimestamp !== null &&
-					value.timestamp - this.#nextTimestamp > CAPTURE_GAP_US
-				) {
-					await this.flush();
-					if (this.#disposed) {
-						value.close();
-						return;
-					}
-				}
-				this.#nextTimestamp = value.timestamp +
-					Math.round(value.numberOfFrames * 1_000_000 / value.sampleRate);
+				this.#followTimeline(value);
 
 				// Ownership: this node owns `value` — the ReadableStream is created in
 				// the constructor and the AudioData is constructed here from worklet
@@ -297,6 +337,7 @@ export class AudioEncodeNode extends GainNode {
 				// (unlike process(), where the caller owns the frame).
 				try {
 					this.#encoder.encode(value);
+					this.#unflushed = true;
 				} catch (e) {
 					// A thrown encode() is terminal (the codec closed, or it refuses
 					// the frame): stop the loop instead of failing once per frame.

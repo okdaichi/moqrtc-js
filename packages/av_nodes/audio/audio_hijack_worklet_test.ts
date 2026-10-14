@@ -162,14 +162,15 @@ Deno.test("audio_hijack_worklet", async (t) => {
 			assertEquals(message.data, new Float32Array([0.1, 0.2, 0.3, 0.4]));
 		});
 
-		await t.step("handles empty input", () => {
+		await t.step("reports once that the input ended", () => {
 			mockPort.messages = [];
-			const inputs = [[]];
 
-			const result = processor.process(inputs);
+			// The previous step had input; these two quanta have none.
+			const first = processor.process([[]]);
+			const second = processor.process([[]]);
 
-			assertEquals(result, true);
-			assert(!mockPort.messages || mockPort.messages.length === 0);
+			assertEquals([first, second], [true, true]);
+			assertEquals(mockPort.messages as unknown[], [{ inputEnded: true }]);
 		});
 
 		await t.step("handles null input channels", () => {
@@ -335,14 +336,15 @@ Deno.test("audio_hijack_worklet - channel count from the node", async (t) => {
 
 		at(48000);
 		processor.process([quantum(1)]);
-		// No input for five seconds: the processor posts nothing.
+		// No input for five seconds: the processor posts no frame.
 		at(48000 * 6);
 		processor.process([[]]);
 		at(48000 * 6 + 128);
 		processor.process([quantum(1)]);
 
-		assertEquals(posted.map((init) => init.timestamp), [
+		assertEquals(posted.map((message) => message.timestamp ?? "input ended"), [
 			1_000_000,
+			"input ended",
 			Math.round((48000 * 6 + 128) * 1_000_000 / 48000),
 		]);
 	});
