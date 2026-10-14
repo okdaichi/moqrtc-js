@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-10-14
+
+Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioDecodeNode` starts playback over from a stream that fell behind, instead of dropping it for good.
+
+### Fixed
+
+- `AudioDecodeNode`: playback starts over from a stream that fell behind for good. Its playback worklet places each block by its timestamp and drops a block whose time has already been played; it caught up with a stream running ahead (the resync to the live edge) but not with one running behind. A sender whose audio clock stopped for a while, such as a suspended `AudioContext` on a locked phone, resumes with timestamps from where it stopped, so every later block was dropped and the listener heard nothing more. After three blocks in a row arrive wholly in the playback past, however far, the worklet now takes the stream as it arrives as its new origin. One late block is still only dropped ([#58]).
+- `audio_offload_worklet_test.ts` runs the worklet module itself instead of a hand-copied processor ([#58]).
+
 ## [0.11.1] - 2026-10-14
 
 Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioEncodeNode` sends the audio it holds when the capture input stops, instead of late after the input returns.
@@ -104,11 +113,6 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`) with resource-lifecy
 
 Merged work on `main` not yet cut as a tagged release. The Deno runtime migration and AV/media + Room/elements refactor landed in [#3]; the fixes and features from that work are recorded (with PR references) under the versioned `@okdaichi/av-nodes` and `@okdaichi/media-log` entries above. Full pre-release history is preserved in git.
 
-### Fixed
-
-- `AudioDecodeNode`: playback starts over from a stream that fell behind for good. Its playback worklet places each block by its timestamp and drops a block whose time has already been played; it caught up with a stream running ahead (the resync to the live edge) but not with one running behind. A sender whose audio clock stopped for a while, such as a suspended `AudioContext` on a locked phone, resumes with timestamps from where it stopped, so every later block was dropped and the listener heard nothing more. After three blocks in a row arrive wholly in the playback past, however far, the worklet now takes the stream as it arrives as its new origin. One late block is still only dropped.
-- `audio_offload_worklet_test.ts` runs the worklet module itself instead of a hand-copied processor.
-
 ### Changed
 
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
@@ -136,7 +140,8 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 - **Minor version (0.X.0)**: Add functionality in a backward compatible manner
 - **Patch version (0.0.X)**: Backward compatible bug fixes
 
-[Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.1...HEAD
+[Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.2...HEAD
+[0.11.2]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.1...av-nodes/v0.11.2
 [0.11.1]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.0...av-nodes/v0.11.1
 [0.11.0]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.6...av-nodes/v0.11.0
 [0.10.6]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.5...av-nodes/v0.10.6
@@ -161,6 +166,7 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 [#52]: https://github.com/okdaichi/moqrtc-js/pull/52
 [#54]: https://github.com/okdaichi/moqrtc-js/pull/54
 [#56]: https://github.com/okdaichi/moqrtc-js/pull/56
+[#58]: https://github.com/okdaichi/moqrtc-js/pull/58
 [0.1.0]: https://github.com/okdaichi/moqrtc-js/releases/tag/media-log/v0.1.0
 [0.10.1]: https://github.com/okdaichi/moqrtc-js/releases/tag/av-nodes/v0.10.1
 [0.10.2]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.1...av-nodes/v0.10.2
