@@ -94,6 +94,12 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`) with resource-lifecy
 
 Merged work on `main` not yet cut as a tagged release. The Deno runtime migration and AV/media + Room/elements refactor landed in [#3]; the fixes and features from that work are recorded (with PR references) under the versioned `@okdaichi/av-nodes` and `@okdaichi/media-log` entries above. Full pre-release history is preserved in git.
 
+### Fixed
+
+- `AudioEncodeNode`: the audio the encoder holds when the capture input stops (up to one Opus frame, 20 ms) is sent at once, at its time. It used to stay in the encoder until the input came back, and then went out stamped at the time it was captured, so a player that places audio by its timestamp took it as late and dropped it: the last words before a mute were lost. The capture worklet now reports when its input stops, and the node flushes the encoder then.
+- `AudioEncodeNode`: the encode loop no longer waits for a flush; frames encoded after it are queued behind it in order. Frames captured during a slow flush no longer pile up unread.
+- `AudioEncodeNode.process()`: a gap in its input is kept in the encoded timestamps, as on the worklet path.
+
 ### Changed
 
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
