@@ -497,28 +497,43 @@ Deno.test("audio_hijack_worklet - channel count from the node", async (t) => {
 	const quantum = (channels: number) =>
 		Array.from({ length: channels }, () => new Float32Array(128));
 
+	// The context's render clock, as the worklet scope exposes it.
+	const g = globalThis as unknown as Record<string, unknown>;
+	const clock = { frame: g.currentFrame, rate: g.sampleRate };
+	const at = (frame: number) => {
+		g.currentFrame = frame;
+		g.sampleRate = 48000;
+	};
+
 	await t.step("posts the channel count a message sets", async () => {
 		const { processor, posted } = await realProcessor(2, "message");
 
+		at(0);
 		processor.process([quantum(2)]);
 		processor.port.onmessage!({ data: { targetChannels: 1 } });
+		at(128);
 		processor.process([quantum(1)]);
 
 		assertEquals(posted.map((init) => init.numberOfChannels), [2, 1]);
 	});
 
-	await t.step("keeps counting frames across a change of channel count", async () => {
-		const { processor, posted } = await realProcessor(2, "timestamps");
+	await t.step(
+		"stamps frames by the context's clock across a change of channel count",
+		async () => {
+			const { processor, posted } = await realProcessor(2, "timestamps");
 
-		processor.process([quantum(2)]);
-		processor.port.onmessage!({ data: { targetChannels: 1 } });
-		processor.process([quantum(1)]);
+			at(0);
+			processor.process([quantum(2)]);
+			processor.port.onmessage!({ data: { targetChannels: 1 } });
+			at(128);
+			processor.process([quantum(1)]);
 
-		assertEquals(posted.map((init) => init.timestamp), [
-			0,
-			Math.round(128 * 1_000_000 / 48000),
-		]);
-	});
+			assertEquals(posted.map((init) => init.timestamp), [
+				0,
+				Math.round(128 * 1_000_000 / 48000),
+			]);
+		},
+	);
 
 	await t.step("ignores a message without a usable channel count", async () => {
 		const { processor, posted } = await realProcessor(2, "ignored");
@@ -526,8 +541,30 @@ Deno.test("audio_hijack_worklet - channel count from the node", async (t) => {
 		for (const data of [undefined, {}, { targetChannels: 0 }, { targetChannels: 1.5 }]) {
 			processor.port.onmessage!({ data });
 		}
+		at(0);
 		processor.process([quantum(2)]);
 
 		assertEquals(posted.map((init) => init.numberOfChannels), [2]);
+	});
+	await t.step("shows a stretch with no input as a gap in the timestamps", async () => {
+		const { processor, posted } = await realProcessor(1, "gap");
+
+		at(48000);
+		processor.process([quantum(1)]);
+		// No input for five seconds: the processor posts nothing.
+		at(48000 * 6);
+		processor.process([[]]);
+		at(48000 * 6 + 128);
+		processor.process([quantum(1)]);
+
+		assertEquals(posted.map((init) => init.timestamp), [
+			1_000_000,
+			Math.round((48000 * 6 + 128) * 1_000_000 / 48000),
+		]);
+	});
+
+	await t.step("cleanup", () => {
+		g.currentFrame = clock.frame;
+		g.sampleRate = clock.rate;
 	});
 });

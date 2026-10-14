@@ -981,6 +981,48 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 	});
 
 	await t.step(
+		"flushes the encoder before the first frame after a gap in the capture",
+		async () => {
+			worklets = [];
+			const node = new AudioEncodeNode(new FakeAudioContext());
+			node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 1 });
+			await workletReady();
+			const encoder = FakeAudioEncoder.lastCreated!;
+			encoder.encodeCalls = [];
+			// Each event is what the encoder was asked to do, in order.
+			const events: string[] = [];
+			const flush = encoder.flush.bind(encoder);
+			encoder.flush = () => {
+				events.push("flush");
+				return flush();
+			};
+			const encode = encoder.encode.bind(encoder);
+			encoder.encode = (data: AudioData) => {
+				events.push(`encode ${data.timestamp}`);
+				encode(data);
+			};
+
+			// 128 frames at 48 kHz last 2667 µs; then nothing is captured for half a
+			// second, then capture goes on; a 5 ms gap is not one.
+			for (const ts of [0, 2667, 500_000, 502_667, 507_667]) {
+				postFrame(worklets[0]!, 1, ts);
+				await settle();
+			}
+
+			assertEquals(events, [
+				"encode 0",
+				"encode 2667",
+				"flush",
+				"encode 500000",
+				"encode 502667",
+				"encode 507667",
+			]);
+
+			await node.dispose();
+		},
+	);
+
+	await t.step(
 		"process() drops a frame whose channel count is not the configured one",
 		async () => {
 			worklets = [];

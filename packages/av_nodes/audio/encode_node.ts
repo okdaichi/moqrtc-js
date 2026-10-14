@@ -15,6 +15,11 @@ interface AudioContextLike {
 // Backpressure management: Maximum queue size before dropping frames
 const MAX_ENCODE_QUEUE_SIZE = 2;
 
+// A gap in the captured audio longer than this (in microseconds) is kept in
+// the encoded timestamps; shorter ones, such as a frame dropped under
+// backpressure, are not.
+const CAPTURE_GAP_US = 100_000;
+
 /**
  * AudioEncodeNode extends GainNode to capture audio from the Web Audio graph
  * and encode it using WebCodecs AudioEncoder.
@@ -41,6 +46,9 @@ export class AudioEncodeNode extends GainNode {
 	#readableController?: ReadableStreamDefaultController<AudioData>;
 	#worklet: AudioWorkletNode | null = null;
 	#context: AudioContextLike;
+	// Where the next captured frame starts if no audio is missing, in
+	// microseconds, or null before the first frame.
+	#nextTimestamp: number | null = null;
 	// Channels of the frames handed to the encoder: the configured count, or
 	// the output device's until configure() is called. WebCodecs refuses a
 	// frame whose channel count differs from the encoder's and closes.
@@ -264,6 +272,23 @@ export class AudioEncodeNode extends GainNode {
 
 					continue;
 				}
+
+				// WebCodecs stamps encoded chunks by counting samples from the first
+				// frame it was given, so a gap in the capture (a source that was
+				// disconnected) would vanish from the timestamps. A flush makes the
+				// encoder start again from the next frame's timestamp.
+				if (
+					this.#nextTimestamp !== null &&
+					value.timestamp - this.#nextTimestamp > CAPTURE_GAP_US
+				) {
+					await this.flush();
+					if (this.#disposed) {
+						value.close();
+						return;
+					}
+				}
+				this.#nextTimestamp = value.timestamp +
+					Math.round(value.numberOfFrames * 1_000_000 / value.sampleRate);
 
 				// Ownership: this node owns `value` — the ReadableStream is created in
 				// the constructor and the AudioData is constructed here from worklet

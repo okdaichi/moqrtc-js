@@ -18,6 +18,7 @@ declare global {
 		processorCtor: new (...args: any[]) => unknown,
 	) => void;
 	var sampleRate: number;
+	var currentFrame: number;
 
 	/* ------------------------------------------------------------------ */
 	/*  MediaStreamTrackProcessor (not in lib.dom.d.ts)                    */

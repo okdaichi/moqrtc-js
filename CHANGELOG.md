@@ -82,6 +82,10 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`) with resource-lifecy
 
 Merged work on `main` not yet cut as a tagged release. The Deno runtime migration and AV/media + Room/elements refactor landed in [#3]; the fixes and features from that work are recorded (with PR references) under the versioned `@okdaichi/av-nodes` and `@okdaichi/media-log` entries above. Full pre-release history is preserved in git.
 
+### Fixed
+
+- `AudioEncodeNode`: a stretch with no captured audio shows as a gap in the encoded timestamps. The capture worklet stamped frames by counting the frames it captured, and it captures nothing while its source is disconnected (a muted microphone), so the frames after the gap carried the time the gap began; a player that places audio by its timestamp took them as late and dropped them. The worklet now stamps frames by the audio context's clock (`currentFrame`). WebCodecs stamps encoded chunks by counting samples from the first frame it was given, so the node also flushes the encoder before the first frame after a gap longer than 100 ms, and the encoder starts again from that frame's timestamp. Timestamps now start at the context's time when capture begins, not at 0.
+
 ### Changed
 
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
