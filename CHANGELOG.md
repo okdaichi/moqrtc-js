@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-10-14
+
+Minor release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioEncodeNode` stamps audio by the audio context's clock, so a muted (disconnected) source shows as a gap in the encoded timestamps instead of collapsing it. A minor bump, not a patch: the timestamps no longer start at 0, and a consumer that offsets them for muted time must drop that workaround.
+
+### Fixed
+
+- `AudioEncodeNode`: a stretch with no captured audio shows as a gap in the encoded timestamps. The capture worklet stamped frames by counting the frames it captured, and it captures nothing while its source is disconnected (a muted microphone), so the frames after the gap carried the time the gap began; a player that places audio by its timestamp took them as late and dropped them. The worklet now stamps frames by the audio context's clock (`currentFrame`). WebCodecs stamps encoded chunks by counting samples from the first frame it was given, so the node also flushes the encoder before the first frame after a gap longer than 100 ms, and the encoder starts again from that frame's timestamp ([#54]).
+
+### Changed
+
+- `AudioEncodeNode`: encoded timestamps are on the audio context's clock, so they start at the context's time when capture begins, not at 0, and keep any time the node captured nothing. A consumer that adds the time its source spent disconnected to each timestamp, to work around the old counting, must stop, or that time is counted twice ([#54]).
+
 ## [0.10.6] - 2026-10-14
 
 Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioEncodeNode` captures the channel count its encoder is configured for; before, a mono encoder on a stereo output device encoded nothing.
@@ -82,13 +94,8 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`) with resource-lifecy
 
 Merged work on `main` not yet cut as a tagged release. The Deno runtime migration and AV/media + Room/elements refactor landed in [#3]; the fixes and features from that work are recorded (with PR references) under the versioned `@okdaichi/av-nodes` and `@okdaichi/media-log` entries above. Full pre-release history is preserved in git.
 
-### Fixed
-
-- `AudioEncodeNode`: a stretch with no captured audio shows as a gap in the encoded timestamps. The capture worklet stamped frames by counting the frames it captured, and it captures nothing while its source is disconnected (a muted microphone), so the frames after the gap carried the time the gap began; a player that places audio by its timestamp took them as late and dropped them. The worklet now stamps frames by the audio context's clock (`currentFrame`). WebCodecs stamps encoded chunks by counting samples from the first frame it was given, so the node also flushes the encoder before the first frame after a gap longer than 100 ms, and the encoder starts again from that frame's timestamp ([#54]).
-
 ### Changed
 
-- `AudioEncodeNode`: encoded timestamps are on the audio context's clock, so they start at the context's time when capture begins, not at 0, and keep any time the node captured nothing. A consumer that adds the time its source spent disconnected to each timestamp, to work around the old counting, must stop, or that time is counted twice ([#54]).
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
 
 ## [0.1.0] - TBD
@@ -114,7 +121,8 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 - **Minor version (0.X.0)**: Add functionality in a backward compatible manner
 - **Patch version (0.0.X)**: Backward compatible bug fixes
 
-[Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.6...HEAD
+[Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.0...HEAD
+[0.11.0]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.6...av-nodes/v0.11.0
 [0.10.6]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.5...av-nodes/v0.10.6
 ["#3"]: https://github.com/okdaichi/moqrtc-js/pull/3
 [#5]: https://github.com/okdaichi/moqrtc-js/pull/5
