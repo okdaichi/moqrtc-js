@@ -6,8 +6,8 @@ export function importWorkletUrl(): string {
 export const workletName: string = "audio-offloader";
 
 // Check if we're in a worklet context
-// Blocks in a row, each more than a cushion behind, after which playback starts
-// over from the stream as it now arrives. One late block is only dropped.
+// Blocks in a row, each wholly in the playback past, after which playback
+// starts over from the stream as it now arrives. One late block is only dropped.
 const REANCHOR_AFTER_BEHIND_BLOCKS = 3;
 
 if (typeof AudioWorkletProcessor !== "undefined") {
@@ -63,9 +63,9 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 		readonly #sampleRate: number = 0;
 
-		// Blocks in a row that arrived more than one cushion behind the playback
-		// clock. A run of them means the stream itself fell behind (the sender's
-		// audio clock stopped, or delivery stalled), not that one block was late.
+		// Blocks in a row that arrived wholly in the playback past. A run of them
+		// means the stream itself fell behind (the sender's audio clock stopped,
+		// or delivery stalled), not that one block was late.
 		#behindBlocks: number = 0;
 
 		constructor(options: AudioWorkletNodeOptions) {
@@ -167,15 +167,14 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			let start = this.#playoutFrameForTs(tsUs);
 
 			// Stale (late) block: its whole range is already in the playback past.
-			// Drop it rather than clobber current playback. A run of blocks that are
-			// each more than a cushion behind means the stream fell behind for good
-			// (it carries no time for a stretch the sender did not capture, such as
-			// a suspended AudioContext): every later block would be dropped too, so
-			// start over from this block, as for the first one. The mirror of the
-			// resync to the live edge below.
+			// Drop it rather than clobber current playback. A run of them means the
+			// stream fell behind for good, by however much (it carries no time for
+			// a stretch the sender did not capture, such as a suspended
+			// AudioContext): every later block would be dropped too, so start over
+			// from this block, as for the first one. The mirror of the resync to
+			// the live edge below.
 			if (start + numberOfFrames <= this.#playoutFrame) {
-				const behind = this.#playoutFrame - (start + numberOfFrames) > this.#lagSamples;
-				this.#behindBlocks = behind ? this.#behindBlocks + 1 : 0;
+				this.#behindBlocks++;
 				if (this.#behindBlocks < REANCHOR_AFTER_BEHIND_BLOCKS) {
 					return;
 				}

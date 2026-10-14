@@ -106,7 +106,7 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 
 ### Fixed
 
-- `AudioDecodeNode`: playback starts over from a stream that fell behind for good. Its playback worklet places each block by its timestamp and drops a block whose time has already been played; it caught up with a stream running ahead (the resync to the live edge) but not with one running behind. A sender whose audio clock stopped for a while, such as a suspended `AudioContext` on a locked phone, resumes with timestamps from where it stopped, so every later block was dropped and the listener heard nothing more. After three blocks in a row arrive more than one latency cushion behind, the worklet now takes the stream as it arrives as its new origin. One late block is still only dropped.
+- `AudioDecodeNode`: playback starts over from a stream that fell behind for good. Its playback worklet places each block by its timestamp and drops a block whose time has already been played; it caught up with a stream running ahead (the resync to the live edge) but not with one running behind. A sender whose audio clock stopped for a while, such as a suspended `AudioContext` on a locked phone, resumes with timestamps from where it stopped, so every later block was dropped and the listener heard nothing more. After three blocks in a row arrive wholly in the playback past, however far, the worklet now takes the stream as it arrives as its new origin. One late block is still only dropped.
 - `audio_offload_worklet_test.ts` runs the worklet module itself instead of a hand-copied processor.
 
 ### Changed

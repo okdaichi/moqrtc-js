@@ -481,6 +481,23 @@ Deno.test("audio_offload_worklet", async (t) => {
 		);
 	});
 
+	await t.step("starts over from a stream less than a cushion behind", () => {
+		const processor = createProcessor();
+		processor.append(block(1), 0);
+		drain(processor, LAG_SAMPLES / QUANTUM + 1);
+		// The sender's clock stopped for half a cushion: its next blocks are
+		// wholly in the playback past, but by less than one cushion.
+		drain(processor, LAG_SAMPLES / 2 / QUANTUM);
+
+		for (let i = 1; i <= 3; i++) processor.append(block(7), i * BLOCK_US);
+
+		const out = drain(processor, LAG_SAMPLES / QUANTUM + 1);
+		assertEquals(
+			out.subarray(LAG_SAMPLES, LAG_SAMPLES + QUANTUM),
+			new Float32Array(QUANTUM).fill(7),
+		);
+	});
+
 	await t.step("drops a single block that is far behind without starting over", () => {
 		const processor = createProcessor();
 		processor.append(block(1), 0);
