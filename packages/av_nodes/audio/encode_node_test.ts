@@ -827,3 +827,154 @@ Deno.test("AudioEncodeNode - worklet #next path", async (t) => {
 		encodeNode.dispose();
 	});
 });
+
+Deno.test("AudioEncodeNode - captured channel count", async (t) => {
+	let restoreAudioEncoder: () => void;
+	let restoreAudioWorkletNode: () => void;
+	let restoreAudioData: () => void;
+	let restoreGainNode: () => void;
+	let worklets: RecordingWorklet[];
+
+	// Records every capture worklet with the options it was created with.
+	class RecordingWorklet extends FakeAudioWorkletNode {
+		options: AudioWorkletNodeOptions | undefined;
+		disconnected = false;
+		constructor(
+			ctx?: BaseAudioContext,
+			name?: string,
+			opts?: AudioWorkletNodeOptions,
+		) {
+			super(ctx, name, opts);
+			this.options = opts;
+			worklets.push(this);
+		}
+		override disconnect(): void {
+			this.disconnected = true;
+		}
+	}
+
+	class InitAudioData extends FakeAudioData {
+		constructor(init: AudioDataInit) {
+			super(init.numberOfFrames, init.numberOfChannels, init.sampleRate, init.timestamp);
+		}
+	}
+
+	function overrideAudioData(value: unknown): () => void {
+		const g = globalThis as unknown as Record<string, unknown>;
+		const had = Object.prototype.hasOwnProperty.call(g, "AudioData");
+		const orig = g.AudioData;
+		g.AudioData = value;
+		return () => {
+			if (had) g.AudioData = orig;
+			else delete g.AudioData;
+		};
+	}
+
+	function postFrame(worklet: RecordingWorklet, channels: number, timestamp: number): void {
+		(worklet.port.onmessage as unknown as (ev: { data: AudioDataInit }) => void)({
+			data: {
+				data: new Float32Array(128 * channels),
+				format: "f32-planar",
+				numberOfFrames: 128,
+				numberOfChannels: channels,
+				sampleRate: 48000,
+				timestamp,
+			},
+		});
+	}
+
+	async function workletReady(): Promise<void> {
+		await new Promise<void>((r) => setTimeout(r, 0));
+		await new Promise<void>((r) => setTimeout(r, 0));
+	}
+
+	async function settle(): Promise<void> {
+		for (let i = 0; i < 5; i++) await new Promise<void>((r) => setTimeout(r, 0));
+	}
+
+	await t.step("setup", () => {
+		worklets = [];
+		restoreGainNode = overrideGainNode(FakeGainNode);
+		restoreAudioEncoder = overrideAudioEncoder(FakeAudioEncoder);
+		restoreAudioWorkletNode = overrideAudioWorkletNode(RecordingWorklet);
+		restoreAudioData = overrideAudioData(InitAudioData);
+	});
+
+	await t.step("captures the configured channel count, not the output device's", async () => {
+		worklets = [];
+		// The fake output device is stereo.
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 1 });
+		await workletReady();
+
+		assertEquals(worklets.length, 1);
+		assertEquals(worklets[0]!.options?.channelCount, 1);
+		assertEquals(worklets[0]!.options?.channelCountMode, "explicit");
+		assertEquals(worklets[0]!.options?.processorOptions?.targetChannels, 1);
+		assertEquals(node.channelCount, 1);
+
+		await node.dispose();
+	});
+
+	await t.step("captures the output device's channel count until configured", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		await workletReady();
+
+		assertEquals(worklets.length, 1);
+		assertEquals(worklets[0]!.options?.channelCount, 2);
+		assertEquals(worklets[0]!.options?.processorOptions?.targetChannels, 2);
+
+		await node.dispose();
+	});
+
+	await t.step("replaces the capture worklet when configured after it started", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		await workletReady();
+		node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 1 });
+
+		assertEquals(worklets.length, 2);
+		assertEquals(worklets[0]!.disconnected, true);
+		assertEquals(worklets[0]!.port.onmessage, null);
+		assertEquals(worklets[1]!.options?.channelCount, 1);
+		assertEquals(worklets[1]!.options?.processorOptions?.targetChannels, 1);
+
+		await node.dispose();
+	});
+
+	await t.step("keeps the capture worklet when the channel count is unchanged", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		await workletReady();
+		node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 2 });
+
+		assertEquals(worklets.length, 1);
+
+		await node.dispose();
+	});
+
+	await t.step("drops a frame whose channel count is not the configured one", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 1 });
+		await workletReady();
+		const encoder = FakeAudioEncoder.lastCreated!;
+		encoder.encodeCalls = [];
+
+		postFrame(worklets[0]!, 2, 1000);
+		postFrame(worklets[0]!, 1, 2000);
+		await settle();
+
+		assertEquals(encoder.encodeCalls.map((c) => c.timestamp), [2000]);
+
+		await node.dispose();
+	});
+
+	await t.step("cleanup", () => {
+		restoreAudioData();
+		restoreAudioWorkletNode();
+		restoreAudioEncoder();
+		restoreGainNode();
+	});
+});
