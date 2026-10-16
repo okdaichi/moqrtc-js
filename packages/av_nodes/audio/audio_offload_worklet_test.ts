@@ -1,34 +1,27 @@
 /// <reference path="../../../src/test_globals.d.ts" />
-import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
+import {
+	assert,
+	assertAlmostEquals,
+	assertEquals,
+	assertExists,
+	assertGreater,
+	assertGreaterOrEqual,
+	assertLess,
+	assertLessOrEqual,
+	assertThrows,
+} from "@std/assert";
+import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
 import { importWorkletUrl } from "./audio_offload_worklet.ts";
-import { setupFakeAudioWorkletEnvironment } from "./fake_audio_worklet_environment_test.ts";
-
-type Message = { data: { channels: Float32Array[]; timestamp: number } };
-
-type PlaybackStats = {
-	targetDelayMs: number;
-	delayMs: number;
-	bufferLevelMs: number;
-	receivedBlocks: number;
-	lateBlocks: number;
-	droppedBlocks: number;
-	underruns: number;
-	expands: number;
-	expandedMs: number;
-	accelerates: number;
-	acceleratedMs: number;
-	resyncs: number;
-	reanchors: number;
-};
+import {
+	type FakeProcessorPort,
+	setupFakeAudioWorkletEnvironment,
+} from "./fake_audio_worklet_environment_test.ts";
 
 type AudioOffloadProcessorInstance = {
-	append(channels: Float32Array[], tsUs: number): void;
-	stats(): PlaybackStats;
+	append(channels: readonly Float32Array[], tsUs: number): void;
+	stats(): AudioPlaybackStats;
 	process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean;
-	port: {
-		onmessage?: (message: Message | { data: { type: "stats"; id: number } }) => void;
-		postMessage?: (message: unknown) => void;
-	};
+	port: FakeProcessorPort;
 };
 
 type AudioOffloadProcessorConstructor = new (
@@ -46,6 +39,8 @@ const QUANTUM = 128;
 // microseconds per 128-sample block (≈2666.67), rounded so that consecutive
 // 128-sample blocks map to consecutive 128-frame playout slots.
 const BLOCK_US = Math.round(QUANTUM / SAMPLE_RATE * 1_000_000); // 2667
+// Fades at every edge between audio and silence last this many frames.
+const FADE_FRAMES = 144; // ceil(48000 * 3 / 1000)
 
 // The real AudioOffloadProcessor: the worklet module evaluated once in a fake
 // worklet scope, so the behavioural tests exercise the code that ships.
@@ -81,12 +76,46 @@ function createFixedProcessor(): AudioOffloadProcessorInstance {
 // output into one flat Float32Array of length quanta * QUANTUM.
 function drain(processor: AudioOffloadProcessorInstance, quanta: number): Float32Array {
 	const out = new Float32Array(quanta * QUANTUM);
+	const left = new Float32Array(QUANTUM);
+	const buffers = [[left, new Float32Array(QUANTUM)]];
 	for (let q = 0; q < quanta; q++) {
-		const buffers = [[new Float32Array(QUANTUM), new Float32Array(QUANTUM)]];
 		processor.process([], buffers);
-		out.set(buffers[0]![0]!, q * QUANTUM);
+		out.set(left, q * QUANTUM);
 	}
 	return out;
+}
+
+// Delivers `data` to the processor's port as a message.
+function post(processor: AudioOffloadProcessorInstance, data: unknown): void {
+	processor.port.onmessage?.(new MessageEvent("message", { data }));
+}
+
+// A block of `frames` samples of `value` on both channels.
+function block(value: number, frames: number = QUANTUM): Float32Array[] {
+	return [new Float32Array(frames).fill(value), new Float32Array(frames).fill(value)];
+}
+
+// Timestamp (µs) of media frame `frames`.
+function ts(frames: number): number {
+	return Math.round(frames * 1_000_000 / SAMPLE_RATE);
+}
+
+// Audio after an asserted region, so the fade-out ahead of the end of the
+// written audio falls outside it.
+function appendTail(processor: AudioOffloadProcessorInstance, frame: number): void {
+	processor.append(block(0.5, 4 * QUANTUM), ts(frame));
+}
+
+function sampleAt(out: Float32Array, index: number): number {
+	const sample = out[index];
+	if (sample === undefined) throw new RangeError(`no sample ${index} in ${out.length}`);
+	return sample;
+}
+
+function countOf(out: Float32Array, value: number): number {
+	let count = 0;
+	for (const sample of out) if (sample === value) count++;
+	return count;
 }
 
 Deno.test("audio_offload_worklet", async (t) => {
@@ -225,21 +254,55 @@ Deno.test("audio_offload_worklet", async (t) => {
 		assertEquals(typeof processor.append, "function");
 	});
 
-	// Fades at every edge between audio and silence last this many frames.
-	const FADE_FRAMES = 144; // ceil(48000 * 3 / 1000)
-	const block = (value: number, frames: number = QUANTUM) => [
-		new Float32Array(frames).fill(value),
-		new Float32Array(frames).fill(value),
-	];
-	const ts = (frames: number) => Math.round(frames * 1_000_000 / SAMPLE_RATE);
-	// Audio after an asserted region, so the fade-out ahead of the end of the
-	// written audio falls outside it.
-	const appendTail = (processor: AudioOffloadProcessorInstance, frame: number) =>
-		processor.append(block(0.5, 4 * QUANTUM), ts(frame));
+	const invalidOptions = [
+		{ name: "latency 0", latency: 0, maxLatency: undefined, message: "invalid latency" },
+		{ name: "latency -1", latency: -1, maxLatency: undefined, message: "invalid latency" },
+		{ name: "latency NaN", latency: NaN, maxLatency: undefined, message: "invalid latency" },
+		{
+			name: "latency Infinity",
+			latency: Infinity,
+			maxLatency: undefined,
+			message: "invalid latency",
+		},
+		{ name: "maxLatency 0", latency: 80, maxLatency: 0, message: "invalid maxLatency" },
+		{ name: "maxLatency NaN", latency: 80, maxLatency: NaN, message: "invalid maxLatency" },
+		{
+			name: "maxLatency Infinity",
+			latency: 80,
+			maxLatency: Infinity,
+			message: "invalid maxLatency",
+		},
+		{
+			name: "maxLatency below latency",
+			latency: 80,
+			maxLatency: 79,
+			message: "invalid maxLatency",
+		},
+	] as const;
+	for (const c of invalidOptions) {
+		await t.step(`rejects ${c.name}`, () => {
+			assertThrows(
+				() => createProcessor({ latency: c.latency, maxLatency: c.maxLatency }),
+				Error,
+				c.message,
+			);
+		});
+	}
 
-	await t.step("rejects an invalid maxLatency", () => {
-		assertThrows(() => createProcessor({ maxLatency: -1 }), Error, "invalid maxLatency");
-	});
+	const validOptions = [
+		{ name: "maxLatency equal to latency", latency: 80, maxLatency: 80 },
+		{ name: "a 20 ms latency", latency: 20, maxLatency: undefined },
+		{ name: "a latency above the default maxLatency", latency: 500, maxLatency: undefined },
+	] as const;
+	for (const c of validOptions) {
+		await t.step(`starts at the latency with ${c.name}`, () => {
+			const processor = createProcessor({ latency: c.latency, maxLatency: c.maxLatency });
+
+			const stats = processor.stats();
+
+			assertEquals(stats.targetDelayMs, c.latency);
+		});
+	}
 
 	await t.step("process() with no outputs still advances the playback clock", () => {
 		const processor = createProcessor();
@@ -304,80 +367,104 @@ Deno.test("audio_offload_worklet", async (t) => {
 		assertEquals(out, expect);
 	});
 
-	await t.step("fades both edges of a silence gap between two blocks", () => {
+	// Two 512-frame blocks of 1 with a 512-frame gap between them, each
+	// arriving when it is captured.
+	const GAP_BLOCK = 4 * QUANTUM;
+	function playAroundGap() {
 		const processor = createProcessor();
-		const length = 4 * QUANTUM;
-		// Each block arrives when it is captured; the second is due one block
-		// length after the first ends.
-		processor.append(block(1, length), 0);
-		const before = drain(processor, 2 * length / QUANTUM);
-		processor.append(block(1, length), ts(2 * length));
-		const between = drain(processor, length / QUANTUM);
-		appendTail(processor, 3 * length);
+		processor.append(block(1, GAP_BLOCK), 0);
+		const before = drain(processor, 2 * GAP_BLOCK / QUANTUM);
+		processor.append(block(1, GAP_BLOCK), ts(2 * GAP_BLOCK));
+		const between = drain(processor, GAP_BLOCK / QUANTUM);
+		appendTail(processor, 3 * GAP_BLOCK);
 		const after = drain(processor, LAG_SAMPLES / QUANTUM);
 
 		const out = new Float32Array(before.length + between.length + after.length);
 		out.set(before);
 		out.set(between, before.length);
 		out.set(after, before.length + between.length);
-		const first = out.subarray(LAG_SAMPLES, LAG_SAMPLES + length);
-		const gap = out.subarray(LAG_SAMPLES + length, LAG_SAMPLES + 2 * length);
-		const second = out.subarray(LAG_SAMPLES + 2 * length, LAG_SAMPLES + 3 * length);
+		return {
+			first: out.subarray(LAG_SAMPLES, LAG_SAMPLES + GAP_BLOCK),
+			gap: out.subarray(LAG_SAMPLES + GAP_BLOCK, LAG_SAMPLES + 2 * GAP_BLOCK),
+			second: out.subarray(LAG_SAMPLES + 2 * GAP_BLOCK, LAG_SAMPLES + 3 * GAP_BLOCK),
+		};
+	}
+
+	await t.step("fades out the audio before a silence gap", () => {
+		const { first } = playAroundGap();
 
 		assertEquals(
-			first.subarray(0, length - FADE_FRAMES),
-			new Float32Array(length - FADE_FRAMES).fill(1),
+			first.subarray(0, GAP_BLOCK - FADE_FRAMES),
+			new Float32Array(GAP_BLOCK - FADE_FRAMES).fill(1),
 		);
-		assert(first[length - 1]! > 0 && first[length - 1]! < 0.01);
-		assertEquals(gap, new Float32Array(length));
-		assert(second[0]! > 0 && second[0]! < 0.01);
+		assertAlmostEquals(sampleAt(first, GAP_BLOCK - 1), 1 / (FADE_FRAMES + 1), 1e-6);
+	});
+
+	await t.step("keeps a silence gap silent", () => {
+		const { gap } = playAroundGap();
+
+		assertEquals(gap, new Float32Array(GAP_BLOCK));
+	});
+
+	await t.step("fades in the audio after a silence gap", () => {
+		const { second } = playAroundGap();
+
+		assertAlmostEquals(sampleAt(second, 0), 1 / (FADE_FRAMES + 1), 1e-6);
 		assertEquals(
 			second.subarray(FADE_FRAMES),
-			new Float32Array(length - FADE_FRAMES).fill(1),
+			new Float32Array(GAP_BLOCK - FADE_FRAMES).fill(1),
 		);
 	});
 
-	await t.step(
-		"with a fixed delay, drops a stale (late) block without disrupting playback",
-		() => {
-			const processor = createFixedProcessor();
-			processor.append(block(1), 0);
-			// Advance two quanta past the first block's scheduled position.
-			drain(processor, LAG_SAMPLES / QUANTUM + 2);
+	// A fixed-delay processor that played one block, ran two quanta dry, and
+	// then got that block again (stale) and a fresh 512-frame block of 8 due now.
+	function playStaleBlock() {
+		const processor = createFixedProcessor();
+		processor.append(block(1), 0);
+		drain(processor, LAG_SAMPLES / QUANTUM + 2);
+		processor.append(block(42), 0);
+		processor.append(block(8, 4 * QUANTUM), 2 * BLOCK_US);
+		appendTail(processor, 6 * QUANTUM);
+		return { processor, out: drain(processor, 4) };
+	}
 
-			// Stale block: ts 0 maps to a frame now in the playback past → dropped.
-			processor.append(block(42), 0);
+	await t.step("with a fixed delay, drops a stale (late) block", () => {
+		const { processor, out } = playStaleBlock();
 
-			// A fresh block scheduled at the current frame still plays, fading in
-			// after the underrun.
-			processor.append(block(8, 4 * QUANTUM), 2 * BLOCK_US);
-			appendTail(processor, 6 * QUANTUM);
+		assertEquals(countOf(out, 42), 0);
+		assertEquals(processor.stats().droppedBlocks, 1);
+	});
 
-			const out = drain(processor, 4);
-			assert(!out.includes(42));
-			assert(out[0]! < 8);
-			assertEquals(out[4 * QUANTUM - 1], 8);
-			assertEquals(processor.stats().droppedBlocks, 1);
-		},
-	);
+	await t.step("fades in the block after an underrun", () => {
+		const { out } = playStaleBlock();
 
-	await t.step("plays a late block by raising the delay instead of dropping it", () => {
+		assertLess(sampleAt(out, 0), 8);
+		assertEquals(sampleAt(out, 4 * QUANTUM - 1), 8);
+	});
+
+	// A processor that played one block and ran dry, then got the next block one
+	// quantum after its playout frame.
+	function playLateBlock() {
 		const processor = createProcessor();
 		processor.append(block(1), 0);
-		// The reader plays the block and runs dry.
 		drain(processor, LAG_SAMPLES / QUANTUM + 2);
-
-		// The next block arrives one quantum after its playout frame.
 		processor.append(block(42, 4 * QUANTUM), ts(QUANTUM));
 		appendTail(processor, 5 * QUANTUM);
+		return { processor, out: drain(processor, 20) };
+	}
 
-		const out = drain(processor, 20);
-		assert(out.includes(42));
-		const stats = processor.stats();
-		assertEquals(stats.lateBlocks, 1);
-		assertEquals(stats.droppedBlocks, 0);
-		// The delay now covers that block's lateness plus a margin.
-		assert(stats.delayMs > LATENCY_MS);
+	await t.step("plays a late block instead of dropping it", () => {
+		const { processor, out } = playLateBlock();
+
+		// All of it but the fade-in.
+		assertEquals(countOf(out, 42), 4 * QUANTUM - FADE_FRAMES);
+		assertEquals(processor.stats().lateBlocks, 1);
+	});
+
+	await t.step("raises the delay to cover a late block", () => {
+		const { processor } = playLateBlock();
+
+		assertGreater(processor.stats().delayMs, LATENCY_MS);
 	});
 
 	await t.step("recovers from underrun when a future block arrives", () => {
@@ -435,21 +522,27 @@ Deno.test("audio_offload_worklet", async (t) => {
 		assertEquals(out, new Float32Array(QUANTUM).fill(7));
 	});
 
-	await t.step("does not crash on a pre-base (non-monotonic) timestamp", () => {
-		// A block whose timestamp maps before the playback origin must be clamped,
-		// not index the ring with a negative offset (RangeError → dead onmessage).
-		const late = new Float32Array(2400).fill(9);
+	// A block stamped 100 ms before the first: with a fixed 80 ms delay its
+	// start is in the playback past and its end is not.
+	const preBase = new Float32Array(2400).fill(9);
+
+	await t.step("accepts a pre-base (non-monotonic) timestamp", () => {
 		for (const processor of [createProcessor(), createFixedProcessor()]) {
 			processor.append(block(1), 0);
-			processor.append([late, late], -100_000);
-		}
 
-		// With a fixed delay the block is partially late: the not-yet-played tail
-		// plays at once.
-		const fixed = createFixedProcessor();
-		fixed.append(block(1), 0);
-		fixed.append([late, late], -100_000);
-		assertEquals(drain(fixed, 1), new Float32Array(QUANTUM).fill(9));
+			processor.append([preBase, preBase], -100_000);
+
+			assertEquals(processor.stats().receivedBlocks, 2);
+		}
+	});
+
+	await t.step("with a fixed delay, plays the unplayed part of a partially late block", () => {
+		const processor = createFixedProcessor();
+		processor.append(block(1), 0);
+
+		processor.append([preBase, preBase], -100_000);
+
+		assertEquals(drain(processor, 1), new Float32Array(QUANTUM).fill(9));
 	});
 
 	await t.step("resyncs to the live edge when a block overflows the buffer", () => {
@@ -465,11 +558,13 @@ Deno.test("audio_offload_worklet", async (t) => {
 		// A block contiguous with the far one must play too.
 		processor.append(block(5), ts(farFrame + QUANTUM));
 		appendTail(processor, farFrame + 2 * QUANTUM);
+
 		const out = drain(processor, LAG_SAMPLES / QUANTUM + 3);
-		assert(out.includes(42));
-		assert(out.includes(5));
-		// The first block (1) is behind the resynced read pointer → abandoned.
-		assert(!out.includes(1));
+
+		assertEquals(
+			[countOf(out, 1), countOf(out, 42), countOf(out, 5)],
+			[0, QUANTUM, QUANTUM],
+		);
 		assertEquals(processor.stats().resyncs, 1);
 	});
 
@@ -542,19 +637,17 @@ Deno.test("audio_offload_worklet", async (t) => {
 		for (let i = 1; i <= 3; i++) processor.append(block(7), i * BLOCK_US);
 		appendTail(processor, 4 * QUANTUM);
 
-		// The first late block fades in after the margin the raised delay keeps,
-		// and the two after it follow without a gap.
+		// The first late block plays after the margin the raised delay keeps,
+		// fading in over all of its 128 frames, and the two after it follow at
+		// full level.
 		const margin = SAMPLE_RATE * 20 / 1000;
 		const out = drain(processor, Math.ceil(margin / QUANTUM) + 4);
-		assert(out[margin]! < 7);
-		assertEquals(
-			out.subarray(margin + FADE_FRAMES, margin + 3 * QUANTUM),
-			new Float32Array(3 * QUANTUM - FADE_FRAMES).fill(7),
-		);
+		assertEquals(countOf(out, 7), 2 * QUANTUM);
 		const stats = processor.stats();
-		assertEquals(stats.lateBlocks, 1);
-		assertEquals(stats.droppedBlocks, 0);
-		assertEquals(stats.reanchors, 0);
+		assertEquals(
+			[stats.lateBlocks, stats.droppedBlocks, stats.reanchors],
+			[1, 0, 0],
+		);
 	});
 
 	await t.step("drops a single block that is far behind without starting over", () => {
@@ -569,8 +662,9 @@ Deno.test("audio_offload_worklet", async (t) => {
 		processor.append(block(8, 4 * QUANTUM), onTime);
 
 		const out = drain(processor, LAG_SAMPLES / QUANTUM + 2);
-		assert(!out.includes(42));
-		assert(out.includes(8));
+		assertEquals(countOf(out, 42), 0);
+		assertGreater(countOf(out, 8), 0);
+		assertEquals(processor.stats().reanchors, 0);
 	});
 
 	await t.step("counts only blocks in a row: an on-time block resets the count", () => {
@@ -586,23 +680,56 @@ Deno.test("audio_offload_worklet", async (t) => {
 		processor.append(block(42), 3 * BLOCK_US);
 
 		const out = drain(processor, LAG_SAMPLES / QUANTUM + 2);
-		assert(!out.includes(42));
-		assert(out.includes(8));
+		assertEquals(countOf(out, 42), 0);
+		assertGreater(countOf(out, 8), 0);
 		assertEquals(processor.stats().reanchors, 0);
 	});
 
-	await t.step("replies to a stats request on its port", () => {
+	await t.step("replies to a stats request with the same id", () => {
 		const processor = createProcessor();
-		const replies: unknown[] = [];
-		processor.port.postMessage = (message: unknown) => replies.push(message);
-		processor.port.onmessage!({ data: { type: "stats", id: 7 } });
-		assertEquals(replies.length, 1);
-		const reply = replies[0] as { type: string; id: number; stats: PlaybackStats };
-		assertEquals(reply.type, "stats");
-		assertEquals(reply.id, 7);
-		assertEquals(reply.stats.targetDelayMs, LATENCY_MS);
-		assertEquals(reply.stats.receivedBlocks, 0);
+
+		post(processor, { type: "stats", id: 7 });
+
+		assertEquals(processor.port.sent, [{ type: "stats", id: 7, stats: processor.stats() }]);
 	});
+
+	await t.step("plays a block appended through its port", () => {
+		const processor = createProcessor();
+
+		post(processor, { type: "append", channels: block(1), timestamp: 0 });
+
+		assertEquals(processor.stats().receivedBlocks, 1);
+	});
+
+	const malformedMessages = [
+		{ name: "an unknown type", data: { type: "flush" } },
+		{ name: "no type", data: { channels: block(1), timestamp: 0 } },
+		{ name: "null", data: null },
+		{ name: "a string", data: "stats" },
+		{ name: "append without channels", data: { type: "append", timestamp: 0 } },
+		{
+			name: "append with a non-array channel list",
+			data: { type: "append", channels: new Float32Array(QUANTUM), timestamp: 0 },
+		},
+		{
+			name: "append with a NaN timestamp",
+			data: { type: "append", channels: block(1), timestamp: NaN },
+		},
+		{ name: "stats with a fractional id", data: { type: "stats", id: 1.5 } },
+		{ name: "stats without an id", data: { type: "stats" } },
+	] as const;
+	for (const c of malformedMessages) {
+		await t.step(`ignores a message with ${c.name}`, () => {
+			const processor = createProcessor();
+
+			post(processor, c.data);
+
+			assertEquals(
+				{ sent: processor.port.sent, received: processor.stats().receivedBlocks },
+				{ sent: [], received: 0 },
+			);
+		});
+	}
 });
 
 // Scenario tests: 20 ms Opus-sized blocks at 48 kHz with the node's default
@@ -610,28 +737,43 @@ Deno.test("audio_offload_worklet", async (t) => {
 const OPUS_FRAMES = 960;
 const OPUS_US = 20_000;
 const SECOND = SAMPLE_RATE;
-const FADE = 144;
 
-function createDefaultProcessor(maxLatency?: number): AudioOffloadProcessorInstance {
-	return createProcessor({ latency: 100, maxLatency });
+interface Scenario {
+	// Receiver frame at or after which block i is posted.
+	readonly arrivals: readonly number[];
+	readonly seconds: number;
+	// Sample value of block i (default 1).
+	readonly value?: (i: number) => number;
+	readonly maxLatency?: number;
+	// Underruns are also counted from this frame on.
+	readonly countUnderrunsFrom?: number;
 }
 
-// Plays blocks through the processor, one render quantum per step. Block i
+interface ScenarioResult {
+	readonly stats: AudioPlaybackStats;
+	// Channel 0 of the output.
+	readonly out: Float32Array;
+	readonly underrunsAfterMark: number;
+}
+
+// Plays blocks through a processor, one render quantum per step. Block i
 // holds OPUS_FRAMES samples of value(i), is stamped i * 20 ms, and is posted
-// before the first quantum at or after arrivals[i]. `at` is called before
-// each quantum. Returns channel 0 of the output.
-function simulate(
-	processor: AudioOffloadProcessorInstance,
-	arrivals: number[],
-	totalFrames: number,
-	value: (i: number) => number = () => 1,
-	at: (frame: number) => void = () => {},
-): Float32Array {
-	const out = new Float32Array(totalFrames);
-	const buffers = [[new Float32Array(QUANTUM), new Float32Array(QUANTUM)]];
+// before the first quantum at or after arrivals[i].
+function play(scenario: Scenario): ScenarioResult {
+	const processor = createProcessor({ latency: 100, maxLatency: scenario.maxLatency });
+	const value = scenario.value ?? (() => 1);
+	const mark = scenario.countUnderrunsFrom ?? 0;
+	const out = new Float32Array(scenario.seconds * SECOND);
+	const left = new Float32Array(QUANTUM);
+	const buffers = [[left, new Float32Array(QUANTUM)]];
+	let underrunsAtMark = 0;
 	let next = 0;
-	for (let frame = 0; frame + QUANTUM <= totalFrames; frame += QUANTUM) {
-		while (next < arrivals.length && arrivals[next]! <= frame) {
+	for (let frame = 0; frame + QUANTUM <= out.length; frame += QUANTUM) {
+		for (
+			let arrival = scenario.arrivals[next];
+			arrival !== undefined && arrival <= frame;
+			arrival = scenario.arrivals[next]
+		) {
 			const v = value(next);
 			processor.append(
 				[new Float32Array(OPUS_FRAMES).fill(v), new Float32Array(OPUS_FRAMES).fill(v)],
@@ -639,11 +781,12 @@ function simulate(
 			);
 			next++;
 		}
-		at(frame);
+		if (frame === mark) underrunsAtMark = processor.stats().underruns;
 		processor.process([], buffers);
-		out.set(buffers[0]![0]!, frame);
+		out.set(left, frame);
 	}
-	return out;
+	const stats = processor.stats();
+	return { stats, out, underrunsAfterMark: stats.underruns - underrunsAtMark };
 }
 
 // Frame at which block i has been captured by the sender.
@@ -660,12 +803,66 @@ function random(seed: number): () => number {
 	};
 }
 
-// A link that holds blocks and delivers them every `period` frames, after
-// `onTimeBlocks` delivered as they are captured.
-function bursty(count: number, onTimeBlocks: number, period: number): number[] {
+// Blocks delivered as they are captured, with up to 2 ms of jitter.
+function cleanLink(seconds: number): number[] {
+	const next = random(1);
 	return Array.from(
-		{ length: count },
-		(_, i) => i < onTimeBlocks ? captured(i) : Math.ceil(captured(i) / period) * period,
+		{ length: seconds * SECOND / OPUS_FRAMES },
+		(_, i) => captured(i) + Math.floor(next() * 96),
+	);
+}
+
+// A link that holds blocks and delivers them every 200 ms, after one second
+// delivered as they are captured.
+function burstyLink(seconds: number): number[] {
+	const period = 200 * SECOND / 1000;
+	return Array.from(
+		{ length: seconds * SECOND / OPUS_FRAMES },
+		(_, i) => i < 50 ? captured(i) : Math.ceil(captured(i) / period) * period,
+	);
+}
+
+// Deliveries 20 to 200 ms apart, each carrying every block captured.
+function randomBurstLink(seconds: number): number[] {
+	const next = random(7);
+	const arrivals: number[] = [];
+	let delivery = 0;
+	for (let i = 0; i < seconds * SECOND / OPUS_FRAMES; i++) {
+		while (delivery < captured(i)) {
+			delivery += Math.round((20 + next() * 180) * SECOND / 1000);
+		}
+		arrivals.push(delivery);
+	}
+	return arrivals;
+}
+
+// Blocks delayed by up to 150 ms each, in order, after one second on time.
+function jitteryLink(seconds: number): number[] {
+	const next = random(3);
+	const arrivals: number[] = [];
+	let last = 0;
+	for (let i = 0; i < seconds * SECOND / OPUS_FRAMES; i++) {
+		const extra = i < 50 ? 0 : Math.round(next() * 150 * SECOND / 1000);
+		last = Math.max(last, captured(i) + extra);
+		arrivals.push(last);
+	}
+	return arrivals;
+}
+
+// Ten seconds of 200 ms bursts, then on time until `seconds`.
+function burstsThenClean(seconds: number): number[] {
+	const arrivals = burstyLink(10);
+	for (let i = arrivals.length; i < seconds * SECOND / OPUS_FRAMES; i++) {
+		arrivals.push(captured(i));
+	}
+	return arrivals;
+}
+
+// Blocks on time by a sender clock running at `rate` times the receiver's.
+function driftingLink(seconds: number, rate: number): number[] {
+	return Array.from(
+		{ length: seconds * SECOND / OPUS_FRAMES },
+		(_, i) => Math.round(captured(i) / rate),
 	);
 }
 
@@ -673,179 +870,155 @@ function bursty(count: number, onTimeBlocks: number, period: number): number[] {
 // onset (a stream start is not faded in): for a constant signal, a hard edge
 // between audio and silence is a step of the full amplitude.
 function largestStep(out: Float32Array): number {
-	let i = out.findIndex((sample) => sample !== 0) + 1;
+	let previous: number | null = null;
 	let max = 0;
-	for (; i > 0 && i < out.length; i++) {
-		max = Math.max(max, Math.abs(out[i]! - out[i - 1]!));
+	for (const sample of out) {
+		if (previous !== null) max = Math.max(max, Math.abs(sample - previous));
+		if (previous !== null || sample !== 0) previous = sample;
 	}
 	return max;
 }
 
-// Underruns counted from `frame` on.
-function underrunsFrom(
-	processor: AudioOffloadProcessorInstance,
-	frame: number,
-): { at: (f: number) => void; count: () => number } {
-	let before = -1;
-	return {
-		at: (f) => {
-			if (f === frame) before = processor.stats().underruns;
-		},
-		count: () => processor.stats().underruns - before,
-	};
-}
+// The step of one fade frame: no edge may be steeper.
+const FADE_STEP = 1 / FADE_FRAMES + 1e-6;
 
 Deno.test("audio_offload_worklet adaptive delay", async (t) => {
 	await t.step("keeps the minimum delay on a clean link", () => {
-		const processor = createDefaultProcessor();
-		const next = random(1);
-		// Up to 2 ms of jitter, as on a good Wi-Fi link.
-		const count = 10 * SECOND / OPUS_FRAMES;
-		const arrivals = Array.from(
-			{ length: count },
-			(_, i) => captured(i) + Math.floor(next() * 96),
-		);
-		const out = simulate(processor, arrivals, 11 * SECOND);
+		const { stats } = play({ arrivals: cleanLink(10), seconds: 11 });
 
-		const stats = processor.stats();
 		assertEquals(stats.targetDelayMs, 100);
-		assert(stats.delayMs >= 100 && stats.delayMs <= 105, `delay ${stats.delayMs}`);
-		assertEquals(stats.lateBlocks, 0);
-		assertEquals(stats.droppedBlocks, 0);
-		assertEquals(stats.expands, 0);
-		assertEquals(stats.accelerates, 0);
-		// The only underrun is the end of the stream.
-		assertEquals(stats.underruns, 1);
-		assert(largestStep(out) <= 1 / FADE + 1e-6);
+		assertGreaterOrEqual(stats.delayMs, 100);
+		assertLessOrEqual(stats.delayMs, 105);
 	});
 
-	await t.step("absorbs 200 ms delivery bursts without drops once adapted", () => {
-		const processor = createDefaultProcessor();
-		// One second on time, then 10 blocks at a time every 200 ms.
-		const count = 20 * SECOND / OPUS_FRAMES;
-		const arrivals = bursty(count, 50, 200 * SECOND / 1000);
-		const after = underrunsFrom(processor, 3 * SECOND);
-		const out = simulate(processor, arrivals, 20 * SECOND, () => 1, after.at);
+	await t.step("makes no adjustment on a clean link", () => {
+		const { stats } = play({ arrivals: cleanLink(10), seconds: 11 });
 
-		const stats = processor.stats();
-		assertEquals(stats.droppedBlocks, 0);
-		assertEquals(after.count(), 0);
-		assert(
-			stats.targetDelayMs >= 180 && stats.targetDelayMs <= 230,
-			`target ${stats.targetDelayMs}`,
+		assertEquals(
+			[stats.expands, stats.accelerates, stats.lateBlocks, stats.droppedBlocks],
+			[0, 0, 0, 0],
 		);
-		// Adapting is silent, not a click: fades on every edge.
-		assert(largestStep(out) <= 1 / FADE + 1e-6, `step ${largestStep(out)}`);
 	});
 
-	await t.step("with a fixed delay, the same bursts are dropped", () => {
-		const processor = createDefaultProcessor(100);
-		const count = 20 * SECOND / OPUS_FRAMES;
-		simulate(processor, bursty(count, 50, 200 * SECOND / 1000), 20 * SECOND);
-		const stats = processor.stats();
-		assert(stats.droppedBlocks > 20, `dropped ${stats.droppedBlocks}`);
-		assert(stats.underruns > 40, `underruns ${stats.underruns}`);
-	});
-
-	await t.step("absorbs random bursts of up to 200 ms without drops", () => {
-		const processor = createDefaultProcessor();
-		const next = random(7);
-		const count = 30 * SECOND / OPUS_FRAMES;
-		// Deliveries 20 to 200 ms apart, each carrying every block captured.
-		const deliveries: number[] = [];
-		for (let t = 0; t < 31 * SECOND;) {
-			t += Math.round((20 + next() * 180) * SECOND / 1000);
-			deliveries.push(t);
-		}
-		let d = 0;
-		const arrivals = Array.from({ length: count }, (_, i) => {
-			while (deliveries[d]! < captured(i)) d++;
-			return deliveries[d]!;
+	await t.step("plays 200 ms delivery bursts without gaps once adapted", () => {
+		const { stats, underrunsAfterMark } = play({
+			arrivals: burstyLink(20),
+			seconds: 20,
+			countUnderrunsFrom: 3 * SECOND,
 		});
-		const after = underrunsFrom(processor, 5 * SECOND);
-		simulate(processor, arrivals, 31 * SECOND, () => 1, after.at);
 
-		const stats = processor.stats();
+		assertEquals([stats.droppedBlocks, underrunsAfterMark], [0, 0]);
+	});
+
+	await t.step("raises the target to cover 200 ms delivery bursts", () => {
+		const { stats } = play({ arrivals: burstyLink(20), seconds: 20 });
+
+		assertGreaterOrEqual(stats.targetDelayMs, 180);
+		assertLessOrEqual(stats.targetDelayMs, 230);
+	});
+
+	await t.step("fades every edge while adapting to 200 ms delivery bursts", () => {
+		const { out } = play({ arrivals: burstyLink(20), seconds: 20 });
+
+		assertLessOrEqual(largestStep(out), FADE_STEP);
+	});
+
+	await t.step("plays a link with up to 150 ms of jitter without dropping", () => {
+		const { stats, underrunsAfterMark } = play({
+			arrivals: jitteryLink(30),
+			seconds: 31,
+			countUnderrunsFrom: 5 * SECOND,
+		});
+
+		// The one underrun is the end of the stream.
+		assertEquals([stats.droppedBlocks, underrunsAfterMark], [0, 1]);
+	});
+
+	await t.step("with maxLatency equal to latency, drops blocks of a jittery link", () => {
+		const { stats } = play({ arrivals: jitteryLink(30), seconds: 31, maxLatency: 100 });
+
+		assertGreater(stats.droppedBlocks, 10);
+	});
+
+	await t.step("with maxLatency equal to latency, never adjusts the delay", () => {
+		const { stats } = play({ arrivals: burstyLink(20), seconds: 20, maxLatency: 100 });
+
+		assertEquals([stats.targetDelayMs, stats.expands, stats.accelerates], [100, 0, 0]);
+	});
+
+	await t.step("with maxLatency equal to latency, keeps the delay at latency", () => {
+		const { stats } = play({ arrivals: cleanLink(10), seconds: 11, maxLatency: 100 });
+
+		assertEquals(stats.targetDelayMs, 100);
+		assertAlmostEquals(stats.delayMs, 100, 2);
+	});
+
+	await t.step("plays random bursts of up to 200 ms without gaps once adapted", () => {
+		const { stats, underrunsAfterMark } = play({
+			arrivals: randomBurstLink(30),
+			seconds: 31,
+			countUnderrunsFrom: 5 * SECOND,
+		});
+
 		assertEquals(stats.droppedBlocks, 0);
-		assert(after.count() <= 2, `underruns ${after.count()}`);
-		assert(stats.targetDelayMs <= 260, `target ${stats.targetDelayMs}`);
+		assertLessOrEqual(underrunsAfterMark, 2);
 	});
 
 	await t.step("falls back to the minimum delay when the link turns clean", () => {
-		const processor = createDefaultProcessor();
-		// Ten seconds of 200 ms bursts, then 110 seconds on time.
-		const bursts = 10 * SECOND / OPUS_FRAMES;
-		const count = 120 * SECOND / OPUS_FRAMES;
-		const arrivals = bursty(bursts, 50, 200 * SECOND / 1000);
-		for (let i = bursts; i < count; i++) arrivals.push(captured(i));
-		const after = underrunsFrom(processor, 11 * SECOND);
-		const out = simulate(processor, arrivals, 121 * SECOND, () => 1, after.at);
+		const { stats } = play({ arrivals: burstsThenClean(120), seconds: 121 });
 
-		const stats = processor.stats();
 		assertEquals(stats.targetDelayMs, 100);
-		assert(stats.delayMs <= 105, `delay ${stats.delayMs}`);
-		assert(stats.accelerates > 0);
-		assertEquals(stats.droppedBlocks, 0);
-		// The end of the stream.
-		assertEquals(after.count(), 1);
-		assert(largestStep(out) <= 1 / FADE + 1e-6, `step ${largestStep(out)}`);
+		assertLessOrEqual(stats.delayMs, 105);
 	});
 
-	await t.step("lowers the delay at quiet stretches, keeping the audio", () => {
-		const processor = createDefaultProcessor();
-		const bursts = 10 * SECOND / OPUS_FRAMES;
-		const count = 120 * SECOND / OPUS_FRAMES;
-		const arrivals = bursty(bursts, 50, 200 * SECOND / 1000);
-		for (let i = bursts; i < count; i++) arrivals.push(captured(i));
+	await t.step("fades every edge while falling back to the minimum delay", () => {
+		const { out } = play({ arrivals: burstsThenClean(120), seconds: 121 });
+
+		assertLessOrEqual(largestStep(out), FADE_STEP);
+	});
+
+	await t.step("lowers the delay at quiet stretches without cutting audio", () => {
 		// Every fifth block is silence, like pauses in speech.
 		const value = (i: number) => i % 5 === 4 ? 0 : 1;
-		const out = simulate(processor, arrivals, 121 * SECOND, value);
+		const arrivals = burstsThenClean(120);
+		const { stats, out } = play({ arrivals, seconds: 121, value });
 
-		const stats = processor.stats();
-		assert(stats.delayMs <= 105, `delay ${stats.delayMs}`);
-		// Every lowering step cut silence: the audio lost is no more than the
-		// fades at each edge (underruns, inserted silence, crossfaded cuts).
-		let loud = 0;
-		for (let i = 0; i < count; i++) if (value(i) === 1) loud++;
-		let played = 0;
-		for (const sample of out) if (sample === 1) played++;
+		// The audio lost is no more than the fades at each edge (underruns,
+		// inserted silence, crossfaded cuts): every cut took silence.
+		const loud = arrivals.filter((_, i) => value(i) === 1).length;
+		const lost = loud * OPUS_FRAMES - countOf(out, 1);
 		const edges = 2 * stats.underruns + 2 * stats.expands + stats.accelerates +
 			2 * stats.lateBlocks;
-		assert(
-			loud * OPUS_FRAMES - played <= edges * (FADE + 1),
-			`lost ${loud * OPUS_FRAMES - played}, edges ${edges}`,
+		assertLessOrEqual(lost, edges * (FADE_FRAMES + 1));
+	});
+
+	await t.step("follows a sender clock running slow without gaps", () => {
+		const { stats, underrunsAfterMark } = play({
+			arrivals: driftingLink(60, 1 / 1.003),
+			seconds: 62,
+			countUnderrunsFrom: SECOND,
+		});
+
+		// The one underrun is the end of the stream.
+		assertEquals(
+			[stats.droppedBlocks, stats.lateBlocks, underrunsAfterMark],
+			[0, 0, 1],
 		);
 	});
 
-	await t.step("follows a sender clock running slow", () => {
-		const processor = createDefaultProcessor();
-		// The sender's clock runs 0.3% slow: blocks arrive ever later.
-		const count = 60 * SECOND / OPUS_FRAMES;
-		const arrivals = Array.from({ length: count }, (_, i) => Math.round(captured(i) * 1.003));
-		const after = underrunsFrom(processor, SECOND);
-		simulate(processor, arrivals, 62 * SECOND, () => 1, after.at);
+	await t.step("follows a sender clock running fast without resyncing", () => {
+		const { stats, underrunsAfterMark } = play({
+			arrivals: driftingLink(60, 1 / 0.997),
+			seconds: 61,
+			countUnderrunsFrom: SECOND,
+		});
 
-		const stats = processor.stats();
-		assertEquals(stats.droppedBlocks, 0);
-		assertEquals(stats.lateBlocks, 0);
-		assert(stats.expands > 0);
-		assert(stats.delayMs <= 115, `delay ${stats.delayMs}`);
-		// The end of the stream.
-		assertEquals(after.count(), 1);
+		assertEquals([stats.droppedBlocks, stats.resyncs, underrunsAfterMark], [0, 0, 1]);
 	});
 
-	await t.step("follows a sender clock running fast", () => {
-		const processor = createDefaultProcessor();
-		// The sender's clock runs 0.3% fast: blocks arrive ever earlier.
-		const count = 60 * SECOND / OPUS_FRAMES;
-		const arrivals = Array.from({ length: count }, (_, i) => Math.round(captured(i) * 0.997));
-		const after = underrunsFrom(processor, SECOND);
-		simulate(processor, arrivals, 61 * SECOND, () => 1, after.at);
+	await t.step("keeps the delay near the minimum with a sender clock running fast", () => {
+		const { stats } = play({ arrivals: driftingLink(60, 1 / 0.997), seconds: 61 });
 
-		const stats = processor.stats();
-		assertEquals(stats.droppedBlocks, 0);
-		assertEquals(stats.resyncs, 0);
-		assert(stats.accelerates > 0);
-		assertEquals(after.count(), 1);
+		assertLessOrEqual(stats.delayMs, 115);
 	});
 });

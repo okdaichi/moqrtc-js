@@ -1,3 +1,7 @@
+import { DEFAULT_MAX_LATENCY_MS, isAudioOffloadMessage } from "./audio_offload_protocol.ts";
+import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
+import { DelayEstimator } from "./delay_estimator.ts";
+
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
 	return new URL("./audio_offload_worklet.js", import.meta.url).href;
@@ -9,24 +13,6 @@ export const workletName: string = "audio-offloader";
 // raising the delay, after which playback starts over from the stream as it now
 // arrives. One such block is only dropped.
 const REANCHOR_AFTER_BEHIND_BLOCKS = 3;
-
-// Upper bound of the playout delay when `maxLatency` is not given (ms).
-const DEFAULT_MAX_LATENCY_MS = 400;
-
-// Relative-delay histogram: bucket width (ms), the quantile the target delay
-// covers, and the time constant (s) over which old arrivals are forgotten.
-const DELAY_BUCKET_MS = 10;
-const DELAY_QUANTILE = 0.97;
-const HISTOGRAM_TIME_CONSTANT_S = 20;
-
-// Fast attack: the largest recent relative delay plus this margin (ms) is
-// covered at once; that peak is released with this time constant (s).
-const PEAK_MARGIN_MS = 20;
-const PEAK_RELEASE_TIME_CONSTANT_S = 10;
-
-// The delay floor (the fastest arrival) is the minimum over the last one to
-// two windows of this length (s), so it follows a slowly drifting clock.
-const FLOOR_WINDOW_S = 2;
 
 // Target changes smaller than this (ms) are ignored.
 const ADJUST_DEADBAND_MS = 5;
@@ -42,6 +28,11 @@ const QUIET_LEVEL = 0.001; // -60 dBFS
 // Length (ms) of the fades at every edge between audio and silence.
 const FADE_MS = 3;
 
+// A positive, finite number.
+function isPositive(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 if (typeof AudioWorkletProcessor !== "undefined") {
 	// Adaptive, timestamp-scheduled jitter buffer.
 	//
@@ -52,15 +43,10 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	// live source).
 	//
 	// The playout delay adapts to the observed arrival jitter, after WebRTC's
-	// NetEQ. For each block the receiver measures its delay: the playback frame
-	// at arrival minus the frame its timestamp maps to. The delay floor is the
-	// fastest recent arrival; a block's relative delay is how far it came after
-	// that floor. A decaying histogram of relative delays gives the target
-	// cushion as a high quantile, and a peak detector raises it at once when a
-	// block comes later than any recent one (fast attack). The peak and the
-	// histogram forget slowly, so the delay falls back over tens of seconds
-	// (slow release). `latency` is the starting and minimum cushion over the
-	// floor, `maxLatency` the maximum.
+	// NetEQ: a DelayEstimator turns each block's arrival delay into a target
+	// cushion over the fastest recent arrival (the delay floor), raising it at
+	// once for a late block and lowering it slowly. `latency` is the starting
+	// and minimum cushion, `maxLatency` the maximum; equal, they fix the delay.
 	//
 	// The applied delay follows the target by moving the playout mapping:
 	// - A block that arrives after its playout frame raises the delay so it
@@ -77,8 +63,9 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	// When the reader runs out of audio it fades out over a few ms ahead of the
 	// end and fades back in when audio resumes, so an underrun is a soft gap.
 	//
-	// Posting `{ type: "stats", id }` to the port asks for a snapshot of the
-	// buffer's state; the processor replies with `{ type: "stats", id, stats }`.
+	// Messages are an AudioOffloadMessage: `append` plays a block, `stats`
+	// asks for a snapshot, answered with a StatsReply of the same id. Anything
+	// else is ignored.
 	class AudioOffloadProcessor extends AudioWorkletProcessor {
 		#channelsBuffer: Float32Array[] = [];
 
@@ -102,35 +89,21 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		// playout frame: the delay floor plus the cushion.
 		#delay: number = 0;
 
-		// Bounds of the cushion over the delay floor (frames).
-		readonly #minCushion: number = 0;
-		readonly #maxCushion: number = 0;
+		readonly #minCushion: number;
+		readonly #adaptive: boolean;
+		readonly #estimator: DelayEstimator;
 
 		// Ring size in frames: twice the maximum cushion, allocated once. Slot
 		// for absolute frame P is at P % #bufferLength.
-		readonly #bufferLength: number = 0;
+		readonly #bufferLength: number;
 
-		readonly #sampleRate: number = 0;
-		readonly #fadeFrames: number = 0;
-
-		// Delay floor: the minimum delay over the current and the previous window.
-		#floorCurrent: number = 0;
-		#floorPrevious: number = 0;
-		#floorWindowStart: number = 0;
-
-		// Relative-delay histogram: weight per bucket, summing to 1. It starts
-		// with all weight on no jitter, so a few early outliers do not set the
-		// target before the stream has shown its jitter.
-		readonly #histogram: Float64Array = new Float64Array(0);
-		readonly #bucketFrames: number = 1;
-
-		// Largest recent relative delay (frames), decaying.
-		#peak: number = 0;
+		readonly #sampleRate: number;
+		readonly #fadeFrames: number;
 
 		// Playback frame before which no further lowering step is taken, and
-		// the frame since which a step has waited for a quiet place (-1: none).
+		// the frame since which a step has waited for a quiet place.
 		#nextShrinkFrame: number = 0;
-		#shrinkWaitingSince: number = -1;
+		#shrinkWaitingSince: number | null = null;
 
 		// Output gain envelope for underrun fades, carried across quanta.
 		#gain: number = 1;
@@ -164,51 +137,54 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 				throw new Error("invalid channelCount");
 			}
 
-			const sampleRate = options.processorOptions.sampleRate;
-			if (!sampleRate || sampleRate <= 0) {
+			const sampleRate: unknown = options.processorOptions.sampleRate;
+			if (!isPositive(sampleRate)) {
 				throw new Error("invalid sampleRate");
 			}
 
-			const latency = options.processorOptions.latency;
-			if (!latency || latency <= 0) {
+			const latency: unknown = options.processorOptions.latency;
+			if (!isPositive(latency)) {
 				throw new Error("invalid latency");
 			}
 
-			const maxLatency = options.processorOptions.maxLatency ?? DEFAULT_MAX_LATENCY_MS;
-			if (typeof maxLatency !== "number" || !(maxLatency > 0)) {
+			const maxLatency: unknown = options.processorOptions.maxLatency ??
+				Math.max(DEFAULT_MAX_LATENCY_MS, latency);
+			if (!isPositive(maxLatency) || maxLatency < latency) {
 				throw new Error("invalid maxLatency");
 			}
 
 			this.#sampleRate = sampleRate;
 			this.#minCushion = this.#frames(latency);
-			this.#maxCushion = Math.max(this.#minCushion, this.#frames(maxLatency));
-			this.#bufferLength = this.#maxCushion * 2;
+			const maxCushion = Math.max(this.#minCushion, this.#frames(maxLatency));
+			this.#adaptive = maxCushion > this.#minCushion;
+			this.#estimator = new DelayEstimator({
+				sampleRate,
+				minCushion: this.#minCushion,
+				maxCushion,
+			});
+			this.#bufferLength = maxCushion * 2;
 			this.#delay = this.#minCushion;
 			this.#fadeFrames = Math.max(1, this.#frames(FADE_MS));
-			this.#bucketFrames = Math.max(1, this.#frames(DELAY_BUCKET_MS));
-			this.#histogram = new Float64Array(
-				Math.ceil(this.#maxCushion / this.#bucketFrames) + 1,
-			);
-			this.#histogram[0] = 1;
 
 			for (let i = 0; i < channelCount; i++) {
 				this.#channelsBuffer[i] = new Float32Array(this.#bufferLength);
 			}
 
-			this.port.onmessage = (
-				{ data }: {
-					data:
-						| { channels: Float32Array[]; timestamp: number }
-						| { type: "stats"; id: number };
-				},
-			) => {
-				if ("type" in data) {
-					if (data.type === "stats") {
-						this.port.postMessage({ type: "stats", id: data.id, stats: this.stats() });
+			this.port.onmessage = (event: MessageEvent<unknown>) => {
+				const message = event.data;
+				if (!isAudioOffloadMessage(message)) return;
+				switch (message.type) {
+					case "append":
+						this.append(message.channels, message.timestamp);
+						return;
+					case "stats":
+						this.port.postMessage({ type: "stats", id: message.id, stats: this.stats() });
+						return;
+					default: {
+						const unhandled: never = message;
+						return unhandled;
 					}
-					return;
 				}
-				this.append(data.channels, data.timestamp);
 			};
 		}
 
@@ -220,13 +196,12 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			return frames * 1000 / this.#sampleRate;
 		}
 
-		// Snapshot of the buffer's state. Delays are cushions over the delay
-		// floor, in ms.
-		stats() {
+		// Snapshot of the buffer's state.
+		stats(): AudioPlaybackStats {
 			const written = this.#nextWriteFrame ?? this.#playoutFrame;
 			return {
-				targetDelayMs: this.#ms(this.#targetCushion()),
-				delayMs: this.#ms(this.#delay - this.#floor()),
+				targetDelayMs: this.#ms(this.#estimator.targetCushion()),
+				delayMs: this.#ms(this.#delay - this.#estimator.floor()),
 				bufferLevelMs: this.#ms(Math.max(0, written - this.#playoutFrame)),
 				receivedBlocks: this.#receivedBlocks,
 				lateBlocks: this.#lateBlocks,
@@ -253,69 +228,6 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			return this.#scheduledFrameForTs(tsUs) + this.#delay;
 		}
 
-		#floor(): number {
-			return Math.min(this.#floorCurrent, this.#floorPrevious);
-		}
-
-		#resetFloor(delay: number): void {
-			this.#floorCurrent = delay;
-			this.#floorPrevious = delay;
-			this.#floorWindowStart = this.#playoutFrame;
-			this.#peak = 0;
-		}
-
-		// Cushion over the delay floor that the statistics ask for (frames).
-		#targetCushion(): number {
-			let quantile = 0;
-			let sum = 0;
-			for (let i = 0; i < this.#histogram.length; i++) {
-				sum += this.#histogram[i]!;
-				if (sum >= DELAY_QUANTILE) {
-					quantile = (i + 1) * this.#bucketFrames;
-					break;
-				}
-			}
-			const peak = this.#peak > 0 ? this.#peak + this.#frames(PEAK_MARGIN_MS) : 0;
-			const cushion = Math.round(Math.max(quantile, peak));
-			return Math.min(this.#maxCushion, Math.max(this.#minCushion, cushion));
-		}
-
-		// Records a block's delay (frames) into the floor, histogram and peak.
-		#observe(delay: number, numberOfFrames: number): void {
-			if (
-				this.#playoutFrame - this.#floorWindowStart >=
-					this.#frames(FLOOR_WINDOW_S * 1000)
-			) {
-				this.#floorPrevious = this.#floorCurrent;
-				this.#floorCurrent = delay;
-				this.#floorWindowStart = this.#playoutFrame;
-			} else if (delay < this.#floorCurrent) {
-				this.#floorCurrent = delay;
-			}
-
-			const relative = Math.max(0, delay - this.#floor());
-			const seconds = numberOfFrames / this.#sampleRate;
-			this.#peak *= Math.exp(-seconds / PEAK_RELEASE_TIME_CONSTANT_S);
-
-			// A relative delay beyond the maximum cushion cannot be absorbed: it
-			// is a straggler or a stream that fell behind, not jitter to cover.
-			if (relative > this.#maxCushion) return;
-
-			const keep = Math.exp(-seconds / HISTOGRAM_TIME_CONSTANT_S);
-			for (let i = 0; i < this.#histogram.length; i++) {
-				this.#histogram[i] = this.#histogram[i]! * keep;
-			}
-			const bucket = Math.min(
-				this.#histogram.length - 1,
-				Math.floor(relative / this.#bucketFrames),
-			);
-			this.#histogram[bucket] = this.#histogram[bucket]! + (1 - keep);
-
-			if (relative > this.#peak) {
-				this.#peak = relative;
-			}
-		}
-
 		// Makes tsUs the media-clock origin, played one cushion from now. The
 		// write head starts at the read pointer so the gap-fill populates the
 		// pre-roll region [#playoutFrame, start).
@@ -324,15 +236,14 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#playoutOriginFrame = this.#playoutFrame;
 			this.#nextWriteFrame = this.#playoutFrame;
 			this.#behindBlocks = 0;
-			this.#resetFloor(0);
-			this.#delay = this.#targetCushion();
+			this.#estimator.reset(0, this.#playoutFrame);
+			this.#delay = this.#estimator.targetCushion();
 		}
 
 		// Zero-fill ring slots [from, to) on every channel (wrap-aware).
 		#silenceFill(from: number, to: number): void {
 			const len = this.#bufferLength;
 			for (const dst of this.#channelsBuffer) {
-				if (!dst) continue;
 				let pos = from % len;
 				let remaining = to - from;
 				while (remaining > 0) {
@@ -351,10 +262,9 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			const fade = this.#fadeFrames;
 			const from = Math.max(this.#playoutFrame, end - fade);
 			for (const dst of this.#channelsBuffer) {
-				if (!dst) continue;
 				for (let f = from; f < end; f++) {
 					const pos = f % len;
-					dst[pos] = dst[pos]! * ((end - f) / (fade + 1));
+					dst[pos] = (dst[pos] ?? 0) * ((end - f) / (fade + 1));
 				}
 			}
 		}
@@ -363,27 +273,23 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		#isQuiet(from: number, to: number): boolean {
 			const len = this.#bufferLength;
 			for (const dst of this.#channelsBuffer) {
-				if (!dst) continue;
 				for (let f = from; f < to; f++) {
-					if (Math.abs(dst[f % len]!) > QUIET_LEVEL) return false;
+					if (Math.abs(dst[f % len] ?? 0) > QUIET_LEVEL) return false;
 				}
 			}
 			return true;
 		}
 
-		append(channels: Float32Array[], tsUs: number): void {
-			if (!channels.length || !channels[0] || channels[0].length === 0) {
+		append(channels: readonly Float32Array[], tsUs: number): void {
+			const first = channels[0];
+			if (!first || first.length === 0) {
 				return;
 			}
 
 			// Not initialized yet. Skip
-			if (
-				this.#channelsBuffer === undefined ||
-				this.#channelsBuffer.length === 0 ||
-				this.#channelsBuffer[0] === undefined
-			) return;
+			if (this.#channelsBuffer.length === 0) return;
 
-			const numberOfFrames = channels[0].length;
+			const numberOfFrames = first.length;
 			this.#receivedBlocks++;
 
 			// The first block establishes the media-clock origin and anchors the
@@ -402,48 +308,33 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			// after a slow spell). The backlog is stale for a live stream: advance
 			// the read pointer so this block lands one cushion ahead, and measure
 			// delays from here on.
-			const cushion = Math.max(this.#minCushion, this.#delay - this.#floor());
+			const cushion = Math.max(this.#minCushion, this.#delay - this.#estimator.floor());
 			if (start - this.#playoutFrame >= 2 * cushion) {
-				this.#playoutFrame = start - this.#targetCushion();
+				const target = this.#estimator.targetCushion();
+				this.#playoutFrame = start - target;
 				this.#nextWriteFrame = this.#playoutFrame;
-				this.#resetFloor(this.#playoutFrame - this.#scheduledFrameForTs(tsUs));
-				this.#delay = this.#floor() + this.#targetCushion();
+				this.#estimator.reset(
+					this.#playoutFrame - this.#scheduledFrameForTs(tsUs),
+					this.#playoutFrame,
+				);
+				this.#delay = this.#estimator.floor() + target;
 				start = this.#playoutFrameForTs(tsUs);
 				this.#resyncs++;
 				restart = true;
 			}
 
-			this.#observe(this.#playoutFrame - this.#scheduledFrameForTs(tsUs), numberOfFrames);
-			const target = this.#floor() + this.#targetCushion();
-			const deadband = this.#frames(ADJUST_DEADBAND_MS);
+			this.#estimator.observe(
+				this.#playoutFrame - this.#scheduledFrameForTs(tsUs),
+				numberOfFrames,
+				this.#playoutFrame,
+			);
 
 			// Frames at the head of this block to crossfade with the audio
 			// already in the ring, where a lowering step cut into it.
 			let crossfade = 0;
-
-			if (start < this.#playoutFrame) {
-				// Late: raise the delay so the block plays rather than being
-				// dropped, if the target covers it.
-				if (target - this.#delay >= this.#playoutFrame - start) {
-					this.#delay = target;
-					start = this.#playoutFrameForTs(tsUs);
-					this.#lateBlocks++;
-				}
-			} else if (target > this.#delay + deadband) {
-				// Raise: the gap this opens before the block is silence-filled
-				// below, with fades on both sides.
-				const raise = target - this.#delay;
-				this.#delay = target;
-				start += raise;
-				this.#expands++;
-				this.#expandedFrames += raise;
-			} else if (target < this.#delay - deadband) {
-				if (this.#playoutFrame >= this.#nextShrinkFrame) {
-					crossfade = this.#lower(target, start, numberOfFrames);
-					start = this.#playoutFrameForTs(tsUs);
-				}
-			} else {
-				this.#shrinkWaitingSince = -1;
+			if (this.#adaptive) {
+				crossfade = this.#adjust(start, numberOfFrames);
+				start = this.#playoutFrameForTs(tsUs);
 			}
 
 			// Stale (late) block: its whole range is already in the playback past
@@ -476,10 +367,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			// Never write more than one ring ahead of the read pointer, or the
 			// ring would wrap over not-yet-played data.
-			let writeEnd = end;
-			if (writeEnd > this.#playoutFrame + this.#bufferLength) {
-				writeEnd = this.#playoutFrame + this.#bufferLength;
-			}
+			const writeEnd = Math.min(end, this.#playoutFrame + this.#bufferLength);
 
 			// A block scheduled after the write head follows silence: a gap, or
 			// an underrun the reader has already run into. Fade it in, and fade
@@ -516,13 +404,14 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 					continue;
 				}
 
-				// Head frames: crossfaded with the ring's audio, or faded in.
+				// Head frames: crossfaded with the ring's audio, or faded in. A
+				// source channel shorter than the first reads as silence.
 				for (let i = 0; i < shaped; i++) {
 					const pos = (start + i) % len;
-					const sample = src[srcOffset0 + i]!;
+					const sample = src[srcOffset0 + i] ?? 0;
 					if (crossfade > 0) {
 						const g = (i + 1) / (crossfade + 1);
-						dst[pos] = dst[pos]! * (1 - g) + sample * g;
+						dst[pos] = (dst[pos] ?? 0) * (1 - g) + sample * g;
 					} else {
 						dst[pos] = sample * ((i + 1) / (fadeIn + 1));
 					}
@@ -548,6 +437,37 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			}
 		}
 
+		// Moves the applied delay towards the target for a block due at
+		// `start`. Returns the number of head frames to crossfade with the ring.
+		#adjust(start: number, numberOfFrames: number): number {
+			const target = this.#estimator.floor() + this.#estimator.targetCushion();
+			const deadband = this.#frames(ADJUST_DEADBAND_MS);
+
+			if (start < this.#playoutFrame) {
+				// Late: raise the delay so the block plays rather than being
+				// dropped, if the target covers it.
+				if (target - this.#delay >= this.#playoutFrame - start) {
+					this.#delay = target;
+					this.#lateBlocks++;
+				}
+				return 0;
+			}
+			if (target > this.#delay + deadband) {
+				// Raise: the gap this opens before the block is silence-filled,
+				// with fades on both sides.
+				this.#expands++;
+				this.#expandedFrames += target - this.#delay;
+				this.#delay = target;
+				return 0;
+			}
+			if (target < this.#delay - deadband) {
+				if (this.#playoutFrame < this.#nextShrinkFrame) return 0;
+				return this.#lower(target, start, numberOfFrames);
+			}
+			this.#shrinkWaitingSince = null;
+			return 0;
+		}
+
 		// Takes one lowering step towards `target` for a block due at `start`,
 		// playing it earlier. When there is no silence gap before it to take the
 		// step from, the step cuts the end of the audio already written: it
@@ -565,10 +485,9 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			const newStart = start - step;
 			const cut = Math.max(0, floor - newStart);
-			if (this.#shrinkWaitingSince < 0) {
-				this.#shrinkWaitingSince = this.#playoutFrame;
-			}
-			const waited = this.#playoutFrame - this.#shrinkWaitingSince >=
+			const waitingSince = this.#shrinkWaitingSince ?? this.#playoutFrame;
+			this.#shrinkWaitingSince = waitingSince;
+			const waited = this.#playoutFrame - waitingSince >=
 				this.#frames(SHRINK_QUIET_WAIT_S * 1000);
 			if (cut > 0 && !waited && !this.#isQuiet(newStart, floor)) return 0;
 
@@ -576,7 +495,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#accelerates++;
 			this.#acceleratedFrames += step;
 			this.#nextShrinkFrame = this.#playoutFrame + this.#frames(SHRINK_INTERVAL_S * 1000);
-			this.#shrinkWaitingSince = -1;
+			this.#shrinkWaitingSince = null;
 			return Math.min(cut, this.#fadeFrames);
 		}
 
@@ -651,7 +570,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 						for (let i = 0; i < realFrames; i++) {
 							const ahead = (written - playout - i) / (fade + 1);
 							g = Math.min(ahead, g + 1 / fade, 1);
-							dst[i] = dst[i]! * g;
+							dst[i] = (dst[i] ?? 0) * g;
 						}
 						gainEnd = g;
 					}
