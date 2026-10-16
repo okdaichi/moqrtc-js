@@ -7,6 +7,45 @@ const offloadWorkletName = "audio-offloader";
 const MAX_DECODE_QUEUE_SIZE = 3;
 
 /**
+ * Snapshot of an {@link AudioDecodeNode}'s playout buffer. Delays are the
+ * cushion over the fastest recent arrival, in ms.
+ */
+export interface AudioPlaybackStats {
+	/** Delay the arrival statistics ask for. */
+	targetDelayMs: number;
+	/** Delay applied now; it follows the target in steps. */
+	delayMs: number;
+	/** Audio written ahead of the playback position. */
+	bufferLevelMs: number;
+	/** Decoded blocks received. */
+	receivedBlocks: number;
+	/** Blocks that arrived after their playout time and played after raising the delay. */
+	lateBlocks: number;
+	/** Blocks that arrived too late to play and were dropped. */
+	droppedBlocks: number;
+	/** Times playback ran out of audio and faded to silence. */
+	underruns: number;
+	/** Silence insertions that raised the delay, and their total length. */
+	expands: number;
+	expandedMs: number;
+	/** Cuts that lowered the delay, and their total length. */
+	accelerates: number;
+	acceleratedMs: number;
+	/** Jumps to the live edge after the stream ran far ahead of playback. */
+	resyncs: number;
+	/** Restarts from a stream that fell too far behind. */
+	reanchors: number;
+}
+
+/** Options for {@link AudioDecodeNode}. */
+export interface AudioDecodeNodeInit {
+	/** Starting and minimum playout delay in ms (default 100). */
+	latency?: number;
+	/** Maximum playout delay in ms (default 400). Equal to `latency` fixes the delay. */
+	maxLatency?: number;
+}
+
+/**
  * AudioDecodeNode extends GainNode to decode audio using WebCodecs AudioDecoder
  * and output it to the Web Audio graph.
  *
@@ -22,11 +61,15 @@ const MAX_DECODE_QUEUE_SIZE = 3;
  * decodeNode.decodeFrom(encodedAudioStream);
  * ```
  *
- * `init.latency` (ms, default 100) sizes the worklet's jitter-buffer cushion.
- * 100 ms is enough for smooth/trickled delivery, but bursty sources — e.g. RTSP
- * AAC where ffmpeg coalesces several access units per RTP packet into ~80 ms
- * bursts — leave only ~20 ms of headroom and will click on spikes. Size the
- * cushion to the burst interval (a bit over one burst, ~150 ms for that case).
+ * The worklet holds decoded audio in an adaptive jitter buffer. Its playout
+ * delay starts at `init.latency` (ms, default 100) and follows the observed
+ * arrival jitter: it rises at once when audio arrives late and falls back
+ * slowly, over tens of seconds, once arrivals settle, never below `latency`
+ * and never above `init.maxLatency` (ms, default 400). A good link keeps the
+ * minimum delay; a bursty one (Wi-Fi power saving, coalesced RTP packets) gets
+ * as much as it needs to play without gaps. Changes of delay and underruns
+ * are faded over a few ms rather than cut. {@link AudioDecodeNode.getStats}
+ * reports the buffer's state.
  */
 export class AudioDecodeNode extends GainNode {
 	#decoder: AudioDecoder;
@@ -40,10 +83,17 @@ export class AudioDecodeNode extends GainNode {
 	// nobody drains).
 	#activeReader?: ReadableStreamDefaultReader<EncodedAudioChunk>;
 
+	// Stats requests waiting for the worklet's reply, by request id.
+	#statsRequests = new Map<
+		number,
+		{ resolve: (stats: AudioPlaybackStats) => void; reject: (error: Error) => void }
+	>();
+	#nextStatsRequest = 0;
+
 	// Callback for decoded output (for metrics)
 	onoutput: (() => void) | null = null;
 
-	constructor(context: AudioContext, init: { latency?: number } = {}) {
+	constructor(context: AudioContext, init: AudioDecodeNodeInit = {}) {
 		// Initialize as a passthrough GainNode
 		super(context, { gain: 1.0 });
 
@@ -63,9 +113,20 @@ export class AudioDecodeNode extends GainNode {
 						processorOptions: {
 							sampleRate: context.sampleRate,
 							latency: init.latency || 100, // Default to 100ms if not specified
+							maxLatency: init.maxLatency,
 						},
 					},
 				);
+
+				worklet.port.onmessage = (
+					{ data }: { data: { type?: string; id?: number; stats?: AudioPlaybackStats } },
+				) => {
+					if (data.type !== "stats" || data.id === undefined || !data.stats) return;
+					const request = this.#statsRequests.get(data.id);
+					if (!request) return;
+					this.#statsRequests.delete(data.id);
+					request.resolve(data.stats);
+				};
 
 				// Connect worklet to this GainNode (super)
 				// Audio flows: worklet → this GainNode → destination
@@ -276,6 +337,27 @@ export class AudioDecodeNode extends GainNode {
 		});
 	}
 
+	/**
+	 * Asks the playback worklet for a snapshot of its jitter buffer. Rejects if
+	 * the worklet failed to load or the node is disposed before it replies.
+	 */
+	async getStats(): Promise<AudioPlaybackStats> {
+		const worklet = await this.#workletReady;
+		if (!worklet || this.#disposed) {
+			throw new Error("AudioDecodeNode has no playback worklet");
+		}
+		const id = this.#nextStatsRequest++;
+		return new Promise<AudioPlaybackStats>((resolve, reject) => {
+			this.#statsRequests.set(id, { resolve, reject });
+			try {
+				worklet.port.postMessage({ type: "stats", id });
+			} catch (e) {
+				this.#statsRequests.delete(id);
+				reject(e instanceof Error ? e : new Error(String(e)));
+			}
+		});
+	}
+
 	async flush(): Promise<void> {
 		if (this.#decoder.state !== "configured") {
 			return;
@@ -304,6 +386,11 @@ export class AudioDecodeNode extends GainNode {
 	dispose(): void {
 		if (this.#disposed) return;
 		this.#disposed = true;
+
+		for (const request of this.#statsRequests.values()) {
+			request.reject(new Error("AudioDecodeNode disposed"));
+		}
+		this.#statsRequests.clear();
 
 		// Close decoder directly (skip flush to avoid AbortError)
 		try {

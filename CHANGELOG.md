@@ -113,8 +113,14 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`) with resource-lifecy
 
 Merged work on `main` not yet cut as a tagged release. The Deno runtime migration and AV/media + Room/elements refactor landed in [#3]; the fixes and features from that work are recorded (with PR references) under the versioned `@okdaichi/av-nodes` and `@okdaichi/media-log` entries above. Full pre-release history is preserved in git.
 
+### Added
+
+- `AudioDecodeNode`: an adaptive jitter buffer. The playback worklet's delay used to be fixed at `latency` (100 ms), so on a link whose delivery jitter exceeded it (a phone on 2.4 GHz Wi-Fi delivering 20 ms Opus frames in bursts up to 200 ms apart) a steady share of blocks arrived after their playout time and were dropped, a crackle every fraction of a second. The delay now follows the observed arrival jitter, after WebRTC's NetEQ: each block's delay over the fastest recent arrival feeds a decaying histogram whose 97th percentile is the target, and a peak detector raises the target at once when a block comes later than any recent one. A late block raises the delay and plays instead of being dropped. The delay falls back slowly (the peak and the histogram forget over 10 and 20 s) in 10 ms steps, cut preferably from silence or a quiet stretch. `latency` stays the starting and minimum delay, so a good link keeps it; the new `maxLatency` option (default 400 ms) caps it, and setting it to `latency` fixes the delay. A drift between the sender's and the receiver's audio clocks moves the delay floor and is absorbed the same way ([#61]).
+- `AudioDecodeNode.getStats()`: a snapshot of the playout buffer (target and applied delay, buffer level, late, dropped, underrun, expand and accelerate counts), asked of the worklet over its port ([#61]).
+
 ### Changed
 
+- `AudioDecodeNode`: playback no longer cuts hard between audio and silence. An underrun fades out over 3 ms ahead of the end of the buffered audio and fades back in; a gap in the stream, a raised delay and a lowered delay are faded or crossfaded the same way ([#61]).
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
 
 ## [0.1.0] - TBD
@@ -167,6 +173,7 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 [#54]: https://github.com/okdaichi/moqrtc-js/pull/54
 [#56]: https://github.com/okdaichi/moqrtc-js/pull/56
 [#58]: https://github.com/okdaichi/moqrtc-js/pull/58
+[#61]: https://github.com/okdaichi/moqrtc-js/pull/61
 [0.1.0]: https://github.com/okdaichi/moqrtc-js/releases/tag/media-log/v0.1.0
 [0.10.1]: https://github.com/okdaichi/moqrtc-js/releases/tag/av-nodes/v0.10.1
 [0.10.2]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.1...av-nodes/v0.10.2

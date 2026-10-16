@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { FakeAudioContext } from "./fake_audio_context_test.ts";
 import { FakeAudioWorkletNode } from "./fake_audio_workletnode_test.ts";
 import { FakeAudioDecoder } from "./fake_audiodecoder_test.ts";
@@ -314,6 +314,67 @@ Deno.test("AudioDecodeNode", async (t) => {
 			await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 		},
 	);
+
+	// A worklet node that records its options and answers stats requests the
+	// way the playback worklet does.
+	class StatsWorkletNode extends FakeAudioWorkletNode {
+		static created: StatsWorkletNode[] = [];
+		options?: AudioWorkletNodeOptions;
+
+		constructor(context?: BaseAudioContext, name?: string, options?: AudioWorkletNodeOptions) {
+			super(context, name, options);
+			this.options = options;
+			StatsWorkletNode.created.push(this);
+			this.port.postMessage = (message: { type: string; id: number }) => {
+				queueMicrotask(() => {
+					const onmessage = this.port.onmessage as
+						| ((event: { data: unknown }) => void)
+						| null;
+					onmessage?.({
+						data: { type: "stats", id: message.id, stats: { targetDelayMs: 150 } },
+					});
+				});
+			};
+		}
+	}
+
+	await t.step("passes latency and maxLatency to the playback worklet", async () => {
+		const restore = overrideAudioWorkletNode(StatsWorkletNode);
+		try {
+			const restoreDecoder = overrideAudioDecoder(FakeAudioDecoder);
+			const node = new AudioDecodeNode(
+				createContext() as unknown as AudioContext,
+				{ latency: 80, maxLatency: 300 },
+			);
+			restoreDecoder();
+			await node.getStats();
+			const options = StatsWorkletNode.created.at(-1)!.options!;
+			assertEquals(options.processorOptions.latency, 80);
+			assertEquals(options.processorOptions.maxLatency, 300);
+			node.dispose();
+		} finally {
+			restore();
+		}
+	});
+
+	await t.step("getStats() resolves with the worklet's reply", async () => {
+		const restore = overrideAudioWorkletNode(StatsWorkletNode);
+		try {
+			const node = createNodeWithDecoder(createContext(), FakeAudioDecoder);
+			const [first, second] = await Promise.all([node.getStats(), node.getStats()]);
+			assertEquals(first.targetDelayMs, 150);
+			assertEquals(second.targetDelayMs, 150);
+			node.dispose();
+		} finally {
+			restore();
+		}
+	});
+
+	await t.step("getStats() rejects once the node is disposed", async () => {
+		const node = createNodeWithDecoder(createContext(), FakeAudioDecoder);
+		node.dispose();
+		await assertRejects(() => node.getStats());
+	});
 
 	await t.step("cleanup", () => {
 		restoreGainNode();
