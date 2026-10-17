@@ -3,7 +3,8 @@
  *
  * Behaves like the real AudioEncoder:
  * - configure() sets state to "configured"
- * - encode(data) queues a microtask that calls init.output() with a fake EncodedAudioChunk
+ * - encode(data) queues a microtask that calls init.output() with a fake EncodedAudioChunk,
+ *   or, with holdOutput set, keeps it queued until release()
  * - close() sets state to "closed"
  * - flush() resolves after pending output microtasks drain
  *
@@ -55,6 +56,12 @@ export class FakeAudioEncoder extends EventTarget {
 	configureCalls: AudioEncoderConfig[] = [];
 	encodeCalls: AudioData[] = [];
 	closeCalls = 0;
+	/** For each flush() call, how many frames had been passed to encode() before it. */
+	flushedAfter: number[] = [];
+
+	/** When true, encode() keeps each frame queued until release() lets it out. */
+	holdOutput = false;
+	#held: AudioData[] = [];
 
 	get configureCalled(): boolean {
 		return this.configureCalls.length > 0;
@@ -85,18 +92,29 @@ export class FakeAudioEncoder extends EventTarget {
 		this.encodeCalls.push(data);
 		this.#encodeQueueSize++;
 
-		queueMicrotask(() => {
-			this.#encodeQueueSize--;
-			this.dispatchEvent(new Event("dequeue"));
-			const chunk = {
-				type: "key" as EncodedAudioChunkType,
-				timestamp: data.timestamp,
-				duration: data.duration ?? null,
-				byteLength: 1024,
-				copyTo: (_dest: AllowSharedBufferSource) => {},
-			} as EncodedAudioChunk;
-			this.#output(chunk);
-		});
+		if (this.holdOutput) {
+			this.#held.push(data);
+			return;
+		}
+		queueMicrotask(() => this.#dequeue(data));
+	}
+
+	/** Lets the frames held by holdOutput out of the queue, oldest first. */
+	release(): void {
+		for (const data of this.#held.splice(0)) this.#dequeue(data);
+	}
+
+	#dequeue(data: AudioData): void {
+		this.#encodeQueueSize--;
+		this.dispatchEvent(new Event("dequeue"));
+		const chunk = {
+			type: "key" as EncodedAudioChunkType,
+			timestamp: data.timestamp,
+			duration: data.duration ?? null,
+			byteLength: 1024,
+			copyTo: (_dest: AllowSharedBufferSource) => {},
+		} as EncodedAudioChunk;
+		this.#output(chunk);
 	}
 
 	close(): void {
@@ -105,6 +123,7 @@ export class FakeAudioEncoder extends EventTarget {
 	}
 
 	async flush(): Promise<void> {
+		this.flushedAfter.push(this.encodeCalls.length);
 		if (this.state !== "configured") {
 			throw new DOMException(
 				"Failed to execute 'flush' on 'AudioEncoder': Cannot call 'flush' on an unconfigured codec.",

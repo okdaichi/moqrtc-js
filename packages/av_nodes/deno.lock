@@ -30,6 +30,7 @@
     "@std/testing@1.0.19": {
       "integrity": "f4236172365b216728dc3cc8b5e80a9f4c33083d1e4ede7613d5b25b4014898e",
       "dependencies": [
+        "jsr:@std/assert",
         "jsr:@std/async",
         "jsr:@std/data-structures"
       ]

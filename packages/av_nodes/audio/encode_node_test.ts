@@ -1,4 +1,7 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
+import { stub } from "@std/testing/mock";
+import { FakeTime } from "@std/testing/time";
+import type { FrameMessage } from "./audio_hijack_protocol.ts";
 import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import type {
 	AudioEncodeDestination,
@@ -533,46 +536,22 @@ Deno.test("AudioEncodeNode - backpressure handling", async (t) => {
 		encodeNode = new AudioEncodeNode(context);
 	});
 
-	await t.step("should encode when queue size is within limit", () => {
-		const encoder = FakeAudioEncoder.lastCreated!;
-		encoder.encodeQueueSize = 1;
-		encoder.encodeCalls = [];
-
-		const audioData = new FakeAudioData(1024, 2, 48000);
-		encodeNode.process(audioData);
-
-		assertEquals(encoder.encodeCalls.length, 1);
-	});
-
-	await t.step(
-		"should drop frame when queue size exceeds MAX_ENCODE_QUEUE_SIZE",
-		() => {
+	// 200 ms of 20 ms frames.
+	const queueCases = [
+		{ name: "encodes while the encoder holds less than 200 ms", queued: 9, encoded: 1 },
+		{ name: "drops a frame once the encoder holds 200 ms", queued: 10, encoded: 0 },
+	] as const;
+	for (const c of queueCases) {
+		await t.step(c.name, () => {
 			const encoder = FakeAudioEncoder.lastCreated!;
-			encoder.encodeQueueSize = 3; // > 2 (MAX_ENCODE_QUEUE_SIZE)
+			encoder.encodeQueueSize = c.queued;
 			encoder.encodeCalls = [];
 
-			const audioData = new FakeAudioData(1024, 2, 48000);
-			encodeNode.process(audioData);
+			encodeNode.process(new FakeAudioData(960, 2, 48000));
 
-			// Should not encode
-			assertEquals(encoder.encodeCalls.length, 0);
-		},
-	);
-
-	await t.step(
-		"should encode when queue size equals MAX_ENCODE_QUEUE_SIZE",
-		() => {
-			const encoder = FakeAudioEncoder.lastCreated!;
-			encoder.encodeQueueSize = 2; // = MAX_ENCODE_QUEUE_SIZE
-			encoder.encodeCalls = [];
-
-			const audioData = new FakeAudioData(1024, 2, 48000);
-			encodeNode.process(audioData);
-
-			// Should still encode at the limit
-			assertEquals(encoder.encodeCalls.length, 1);
-		},
-	);
+			assertEquals(encoder.encodeCalls.length, c.encoded);
+		});
+	}
 
 	await t.step("cleanup", () => {
 		restoreAudioEncoder();
@@ -639,10 +618,10 @@ Deno.test("AudioEncodeNode - worklet #next path", async (t) => {
 		};
 	}
 
-	function makeInit(timestamp: number): AudioDataInit {
+	function makeFrame(timestamp: number): FrameMessage {
 		return {
+			type: "frame",
 			data: new Float32Array(1024 * 2),
-			format: "f32-planar" as AudioSampleFormat,
 			numberOfFrames: 1024,
 			numberOfChannels: 2,
 			sampleRate: 48000,
@@ -651,9 +630,7 @@ Deno.test("AudioEncodeNode - worklet #next path", async (t) => {
 	}
 
 	function postFrame(ts: number): void {
-		(capturedWorklet!.port.onmessage as unknown as (
-			ev: { data: AudioDataInit },
-		) => void)({ data: makeInit(ts) });
+		capturedWorklet?.port.onmessage?.(new MessageEvent("message", { data: makeFrame(ts) }));
 	}
 
 	async function waitForEncodes(
@@ -721,7 +698,7 @@ Deno.test("AudioEncodeNode - worklet #next path", async (t) => {
 	await t.step("#next drops frames when the encoder queue is overloaded", async () => {
 		const encoder = FakeAudioEncoder.lastCreated!;
 		encoder.encodeCalls = [];
-		encoder.encodeQueueSize = 10; // > MAX_ENCODE_QUEUE_SIZE (2)
+		encoder.encodeQueueSize = 10; // 200 ms of 20 ms frames
 
 		postFrame(9999);
 		// Let #next read the frame and take the drop branch (closes frame, no encode).
@@ -729,10 +706,6 @@ Deno.test("AudioEncodeNode - worklet #next path", async (t) => {
 		await new Promise<void>((r) => setTimeout(r, 0));
 
 		assertEquals(encoder.encodeCalls.length, 0); // dropped, not encoded
-
-		// #next is now suspended in its drain wait; unblock it via the dequeue
-		// event so the test does not stall on the 5s drain timeout.
-		encoder.dispatchEvent(new Event("dequeue"));
 	});
 
 	await t.step(
@@ -877,16 +850,15 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 	}
 
 	function postFrame(worklet: RecordingWorklet, channels: number, timestamp: number): void {
-		(worklet.port.onmessage as unknown as (ev: { data: AudioDataInit }) => void)({
-			data: {
-				data: new Float32Array(128 * channels),
-				format: "f32-planar",
-				numberOfFrames: 128,
-				numberOfChannels: channels,
-				sampleRate: 48000,
-				timestamp,
-			},
-		});
+		const frame: FrameMessage = {
+			type: "frame",
+			data: new Float32Array(128 * channels),
+			numberOfFrames: 128,
+			numberOfChannels: channels,
+			sampleRate: 48000,
+			timestamp,
+		};
+		worklet.port.onmessage?.(new MessageEvent("message", { data: frame }));
 	}
 
 	async function workletReady(): Promise<void> {
@@ -942,7 +914,8 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 
 		assertEquals(worklets.length, 1);
 		assertEquals(worklets[0]!.channelCount, 1);
-		assertEquals(worklets[0]!.posted, [{ targetChannels: 1 }]);
+		// 20 ms at the fake context's 44.1 kHz.
+		assertEquals(worklets[0]!.posted, [{ type: "format", channels: 1, frameLength: 882 }]);
 		assertEquals(node.channelCount, 1);
 
 		await node.dispose();
@@ -1043,9 +1016,9 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 			encode(data);
 		};
 		const inputEnded = () =>
-			(worklets[0]!.port.onmessage as unknown as (ev: { data: unknown }) => void)({
-				data: { inputEnded: true },
-			});
+			worklets[0]?.port.onmessage?.(
+				new MessageEvent("message", { data: { type: "inputEnded" } }),
+			);
 
 		// Nothing encoded yet: nothing to flush.
 		inputEnded();
@@ -1196,6 +1169,183 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 
 		await node.dispose();
 	});
+
+	await t.step("cleanup", () => {
+		restoreAudioData();
+		restoreAudioWorkletNode();
+		restoreAudioEncoder();
+		restoreGainNode();
+	});
+});
+
+Deno.test("AudioEncodeNode - captured frames under backpressure", async (t) => {
+	let restoreAudioEncoder: () => void;
+	let restoreAudioWorkletNode: () => void;
+	let restoreAudioData: () => void;
+	let restoreGainNode: () => void;
+	let worklets: RecordingWorklet[];
+
+	class RecordingWorklet extends FakeAudioWorkletNode {
+		options: AudioWorkletNodeOptions | undefined;
+		constructor(ctx?: BaseAudioContext, name?: string, opts?: AudioWorkletNodeOptions) {
+			super(ctx, name, opts);
+			this.options = opts;
+			worklets.push(this);
+		}
+	}
+
+	class InitAudioData extends FakeAudioData {
+		constructor(init: AudioDataInit) {
+			super(init.numberOfFrames, init.numberOfChannels, init.sampleRate, init.timestamp);
+		}
+	}
+
+	function overrideAudioData(value: unknown): () => void {
+		const g = globalThis as unknown as Record<string, unknown>;
+		const had = Object.prototype.hasOwnProperty.call(g, "AudioData");
+		const orig = g.AudioData;
+		g.AudioData = value;
+		return () => {
+			if (had) g.AudioData = orig;
+			else delete g.AudioData;
+		};
+	}
+
+	// A 20 ms mono frame at 48 kHz, captured `index` frames after the first.
+	function postFrame(worklet: RecordingWorklet, index: number): void {
+		const frame: FrameMessage = {
+			type: "frame",
+			data: new Float32Array(960),
+			numberOfFrames: 960,
+			numberOfChannels: 1,
+			sampleRate: 48000,
+			timestamp: index * 20_000,
+		};
+		worklet.port.onmessage?.(new MessageEvent("message", { data: frame }));
+	}
+
+	async function settle(): Promise<void> {
+		for (let i = 0; i < 5; i++) await new Promise<void>((r) => setTimeout(r, 0));
+	}
+
+	// A configured mono node, its capture worklet and its encoder.
+	async function startNode(config: Partial<AudioEncoderConfig> = {}) {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 1, ...config });
+		await settle();
+		const [worklet] = worklets;
+		const encoder = FakeAudioEncoder.lastCreated;
+		assertExists(worklet);
+		assertExists(encoder);
+		return { node, worklet, encoder };
+	}
+
+	await t.step("setup", () => {
+		worklets = [];
+		restoreGainNode = overrideGainNode(FakeGainNode);
+		restoreAudioEncoder = overrideAudioEncoder(FakeAudioEncoder);
+		restoreAudioWorkletNode = overrideAudioWorkletNode(RecordingWorklet);
+		restoreAudioData = overrideAudioData(InitAudioData);
+	});
+
+	// The fake context runs at 44.1 kHz.
+	const frameLengthCases = [
+		{ name: "20 ms by default", config: {}, frameLength: 882 },
+		{
+			name: "the configured Opus frame duration",
+			config: { opus: { frameDuration: 10_000 } },
+			frameLength: 441,
+		},
+	] as const;
+	for (const c of frameLengthCases) {
+		await t.step(`captures frames of ${c.name}`, async () => {
+			const { node, worklet } = await startNode(c.config);
+
+			assertEquals(worklet.options?.processorOptions?.frameLength, c.frameLength);
+
+			await node.dispose();
+		});
+	}
+
+	await t.step("encodes every frame while the encoder catches up in bursts", async () => {
+		const { node, worklet, encoder } = await startNode();
+		encoder.holdOutput = true;
+
+		// The encoder lets its queue out every eighth frame, 160 ms at a time.
+		for (let i = 0; i < 50; i++) {
+			postFrame(worklet, i);
+			await settle();
+			if (i % 8 === 7) encoder.release();
+		}
+
+		assertEquals(encoder.encodeCalls.length, 50);
+
+		await node.dispose();
+	});
+
+	await t.step("drops whole frames once the encoder has stalled for 200 ms", async () => {
+		const { node, worklet, encoder } = await startNode();
+		encoder.holdOutput = true;
+
+		for (let i = 0; i < 15; i++) postFrame(worklet, i);
+		await settle();
+
+		assertEquals(
+			encoder.encodeCalls.map((frame) => frame.timestamp),
+			Array.from({ length: 10 }, (_, i) => i * 20_000),
+		);
+
+		await node.dispose();
+	});
+
+	await t.step("stamps the frame after dropped ones at its own capture time", async () => {
+		const { node, worklet, encoder } = await startNode();
+		encoder.holdOutput = true;
+		for (let i = 0; i < 15; i++) postFrame(worklet, i);
+		await settle();
+		encoder.release();
+
+		postFrame(worklet, 15);
+		await settle();
+
+		// The encoder is flushed after the ten frames it took, so it stamps the
+		// next one by its own timestamp: a 100 ms jump, for the five dropped.
+		assertEquals(
+			{ flushedAfter: encoder.flushedAfter, last: encoder.encodeCalls.at(-1)?.timestamp },
+			{ flushedAfter: [10], last: 300_000 },
+		);
+
+		await node.dispose();
+	});
+
+	await t.step(
+		"warns of dropped frames at most once per five seconds, with their count",
+		async () => {
+			const { node, encoder } = await startNode();
+			encoder.encodeQueueSize = 10;
+			const time = new FakeTime();
+			const warn = stub(console, "warn");
+			try {
+				for (let i = 0; i < 5; i++) {
+					node.process(new FakeAudioData(960, 1, 48000, i * 20_000));
+				}
+				time.tick(5_000);
+				node.process(new FakeAudioData(960, 1, 48000, 100_000));
+
+				assertEquals(warn.calls.map((call) => call.args[0]), [
+					"[AudioEncodeNode] Encoder stalled: dropped 1 frame(s) since the last warning.",
+					"[AudioEncodeNode] Encoder stalled: dropped 5 frame(s) since the last warning.",
+				]);
+			} finally {
+				warn.restore();
+				time.restore();
+			}
+
+			encoder.encodeQueueSize = 0;
+			await node.dispose();
+		},
+	);
 
 	await t.step("cleanup", () => {
 		restoreAudioData();

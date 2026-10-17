@@ -993,6 +993,29 @@ function driftingLink(seconds: number, rate: number): number[] {
 	);
 }
 
+// A stream joined with a backlog of `ms`: the blocks captured in it arrive
+// at once, as the last of them is captured, and each later block as it is
+// captured.
+function backlogLink(seconds: number, ms: number): number[] {
+	const last = ms * SECOND / 1000 / OPUS_FRAMES - 1;
+	return Array.from(
+		{ length: seconds * SECOND / OPUS_FRAMES },
+		(_, i) => Math.max(0, i - last) * OPUS_FRAMES,
+	);
+}
+
+// A backlog of `ms` as backlogLink, with its blocks delivered one per render
+// quantum, as a decoder hands them over, rather than all at once.
+function spreadBacklogLink(seconds: number, ms: number): number[] {
+	const last = ms * SECOND / 1000 / OPUS_FRAMES - 1;
+	let previous = 0;
+	return Array.from({ length: seconds * SECOND / OPUS_FRAMES }, (_, i) => {
+		const at = i <= last ? i * QUANTUM : (i - last) * OPUS_FRAMES;
+		previous = Math.max(previous, at);
+		return previous;
+	});
+}
+
 // Largest step between consecutive output samples after the stream's first
 // onset (a stream start is not faded in): for a constant signal, a hard edge
 // between audio and silence is a step of the full amplitude.
@@ -1179,6 +1202,46 @@ Deno.test("audio_offload_worklet adaptive delay", async (t) => {
 		});
 
 		assertEquals([stats.droppedBlocks, stats.resyncs, underrunsAfterMark], [0, 0, 1]);
+	});
+
+	const backlogCases = [
+		{ name: "joined with a 240 ms backlog", arrivals: () => backlogLink(10, 240) },
+		{ name: "joined with a 1 s backlog", arrivals: () => backlogLink(10, 1000) },
+		{
+			name: "joined with a 240 ms backlog over several quanta",
+			arrivals: () => spreadBacklogLink(10, 240),
+		},
+	] as const;
+	for (const c of backlogCases) {
+		await t.step(`${c.name}, plays at the minimum delay`, () => {
+			const { stats } = play({ arrivals: c.arrivals(), seconds: 10 });
+
+			assertEquals(stats.targetDelayMs, 100);
+			assertGreaterOrEqual(stats.delayMs, 100);
+			assertLessOrEqual(stats.delayMs, 105);
+		});
+
+		await t.step(`${c.name}, takes no lowering step`, () => {
+			const { stats } = play({ arrivals: c.arrivals(), seconds: 10 });
+
+			assertEquals(stats.accelerates, 0);
+		});
+
+		await t.step(`${c.name}, fades in the audio it starts from`, () => {
+			const { out } = play({ arrivals: c.arrivals(), seconds: 1 });
+
+			const onset = out.findIndex((sample) => sample !== 0);
+			assertLessOrEqual(sampleAt(out, onset), FADE_STEP);
+		});
+	}
+
+	await t.step("joined with a 240 ms backlog, plays its last 100 ms", () => {
+		const { out } = play({ arrivals: backlogLink(1, 240), seconds: 1 });
+
+		// The newest backlog block lands one cushion ahead, with the backlog's
+		// last 100 ms before it, so playback starts at once.
+		const onset = out.findIndex((sample) => sample !== 0);
+		assertLessOrEqual(onset, QUANTUM);
 	});
 
 	await t.step("keeps the delay near the minimum with a sender clock running fast", () => {

@@ -2,8 +2,8 @@
 //
 // Drives the REAL production path: worklet.port.onmessage -> node-owned
 // ReadableStream -> #next (read/clone-or-not/encode/close). We feed N
-// AudioDataInit messages into the captured worklet port and wait until the
-// encoder has encoded all N.
+// capture worklet `frame` messages into the captured worklet port and wait
+// until the encoder has encoded all N.
 //
 // Scope: FakeAudioData.clone() allocates a real FakeAudioData, so the clone
 // cost IS measured (unlike video). FakeAudioEncoder models encode as a
@@ -16,6 +16,7 @@ import { FakeAudioWorkletNode } from "./fake_audio_workletnode_test.ts";
 import { FakeAudioEncoder } from "./fake_audioencoder_test.ts";
 import { FakeAudioData } from "./fake_audiodata_test.ts";
 import { FakeGainNode } from "./fake_gainnode_test.ts";
+import type { FrameMessage } from "./audio_hijack_protocol.ts";
 
 function overrideGlobal(name: string, value: unknown): () => void {
 	const g = globalThis as unknown as Record<string, unknown>;
@@ -91,6 +92,7 @@ overrideGlobal(
 const { AudioEncodeNode } = await import("./encode_node.ts");
 
 const N = 20000;
+const FRAME_LENGTH = 960;
 
 function makeContext(): FakeAudioContext {
 	const ctx = new FakeAudioContext();
@@ -110,22 +112,24 @@ async function runEncode(n: number): Promise<number> {
 	const worklet = lastWorklet!;
 	const encoder = FakeAudioEncoder.lastCreated!;
 
-	const audioDataInit: AudioDataInit = {
-		numberOfFrames: 1024,
-		numberOfChannels: 2,
-		sampleRate: 48000,
-		format: "f32-planar",
-		timestamp: 0,
-		data: new Float32Array(1024 * 2),
-	};
+	// One 20 ms frame at 48 kHz. The fake AudioData does not take over the
+	// buffer, so every message can share it.
+	const data = new Float32Array(FRAME_LENGTH * 2);
 
 	const start = performance.now();
 	for (let i = 0; i < n; i++) {
-		audioDataInit.timestamp = i * 21333;
+		const frame: FrameMessage = {
+			type: "frame",
+			data,
+			numberOfChannels: 2,
+			numberOfFrames: FRAME_LENGTH,
+			sampleRate: 48000,
+			timestamp: i * 20_000,
+		};
 		// Drive the node's worklet onmessage -> ReadableStream -> #next.
 		(worklet.port.onmessage as unknown as (
-			ev: { data: AudioDataInit },
-		) => void)({ data: audioDataInit });
+			ev: { data: FrameMessage },
+		) => void)({ data: frame });
 	}
 
 	// Wait until all N frames have been encoded.

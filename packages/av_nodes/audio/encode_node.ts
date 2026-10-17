@@ -1,6 +1,12 @@
 // Audio node API: AudioEncodeNode
 // Extends GainNode to enable standard connect() pattern while adding encoding capabilities
 import type { CancelFunc } from "@okdaichi/golikejs/context";
+import {
+	DEFAULT_FRAME_DURATION_US,
+	type FormatMessage,
+	type FrameMessage,
+	isCaptureMessage,
+} from "./audio_hijack_protocol.ts";
 import { HijackCode } from "./audio_hijack_worklet_inline.ts";
 import { AudioWorkletModule, stopProcessor } from "./audio_worklet_module.ts";
 import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
@@ -14,13 +20,18 @@ interface AudioContextLike {
 	readonly state?: AudioContextState;
 }
 
-// Backpressure management: Maximum queue size before dropping frames
-const MAX_ENCODE_QUEUE_SIZE = 2;
+// Audio the encoder may hold queued (µs) before a captured frame is dropped:
+// enough to ride out the main thread's jitter, so a frame is only dropped when
+// the encoder has stalled.
+const MAX_QUEUED_US = 200_000;
 
 // A gap in the captured audio longer than this (in microseconds) is kept in
-// the encoded timestamps; shorter ones, such as a frame dropped under
-// backpressure, are not.
+// the encoded timestamps; shorter ones are taken for jitter in the timestamps
+// of process()'s input. A dropped frame is always kept.
 const CAPTURE_GAP_US = 100_000;
+
+// Dropped frames are reported in one warning at most this often (ms).
+const DROP_WARNING_INTERVAL_MS = 5_000;
 
 // Queued in place of a frame when the capture worklet's input stops.
 const INPUT_ENDED = Symbol("input ended");
@@ -54,6 +65,15 @@ export class AudioEncodeNode extends GainNode {
 	// Where the next captured frame starts if no audio is missing, in
 	// microseconds, or null before the first frame.
 	#nextTimestamp: number | null = null;
+	// Whether a frame was dropped since the last one encoded.
+	#dropped = false;
+	// Frames dropped since the last warning, and when that was (ms).
+	#droppedSinceWarning = 0;
+	#lastDropWarning = -Infinity;
+	// Frames captured per frame handed to the encoder, and how many of them
+	// may be queued in the encoder before one is dropped.
+	#frameLength: number;
+	#maxQueuedFrames: number;
 	// Whether the encoder was given audio since it was last flushed.
 	#unflushed = false;
 	// Channels of the frames handed to the encoder: the configured count, or
@@ -70,6 +90,8 @@ export class AudioEncodeNode extends GainNode {
 		this.#channels = Math.max(1, context.destination.channelCount);
 		this.channelCount = this.#channels;
 		this.channelCountMode = "explicit" as ChannelCountMode;
+		this.#frameLength = this.#framesOf(DEFAULT_FRAME_DURATION_US);
+		this.#maxQueuedFrames = Math.ceil(MAX_QUEUED_US / DEFAULT_FRAME_DURATION_US);
 		this.#encoder = new AudioEncoder({
 			output: (chunk, meta) => {
 				for (const [dest, cancel] of this.#dests) {
@@ -124,22 +146,33 @@ export class AudioEncodeNode extends GainNode {
 	 * Configures the encoder. The node captures `config.numberOfChannels`
 	 * channels from then on, mixing its input up or down as Web Audio does, so
 	 * the frames match the encoder whatever the source and the output device
-	 * have.
+	 * have. It hands the encoder one frame per `config.opus.frameDuration`
+	 * (20 ms if not given).
 	 */
 	configure(config: AudioEncoderConfig): void {
 		const channels = config.numberOfChannels;
-		if (channels !== this.#channels) {
+		const duration = config.opus?.frameDuration ?? DEFAULT_FRAME_DURATION_US;
+		const frameLength = this.#framesOf(duration);
+		if (channels !== this.#channels || frameLength !== this.#frameLength) {
 			// Web Audio refuses a count it does not support, before anything
 			// is committed.
 			this.channelCount = channels;
 			if (this.#worklet) {
 				this.#worklet.channelCount = channels;
-				this.#worklet.port.postMessage({ targetChannels: channels });
+				const format: FormatMessage = { type: "format", channels, frameLength };
+				this.#worklet.port.postMessage(format);
 			}
 			this.#channels = channels;
+			this.#frameLength = frameLength;
 		}
+		this.#maxQueuedFrames = Math.ceil(MAX_QUEUED_US / duration);
 
 		this.#encoder.configure(config);
+	}
+
+	// Context frames lasting `durationUs`, at least one.
+	#framesOf(durationUs: number): number {
+		return Math.max(1, Math.round(this.#context.sampleRate * durationUs / 1_000_000));
 	}
 
 	/**
@@ -158,23 +191,23 @@ export class AudioEncodeNode extends GainNode {
 				processorOptions: {
 					sampleRate: this.#context.sampleRate,
 					targetChannels: this.#channels,
+					frameLength: this.#frameLength,
 				},
 			},
 		);
-		worklet.port.onmessage = (
-			{ data }: { data: AudioDataInit | { inputEnded: true } },
-		) => {
-			if ("inputEnded" in data) {
+		worklet.port.onmessage = ({ data }: MessageEvent<unknown>) => {
+			if (!isCaptureMessage(data)) return;
+			if (data.type === "inputEnded") {
 				try {
 					this.#readableController?.enqueue(INPUT_ENDED);
 				} catch (_) {
-					// The stream closed on dispose.
+					// reason: the stream closed on dispose; nothing is left to flush.
 				}
 				return;
 			}
 			let frame: AudioData;
 			try {
-				frame = new AudioData(data);
+				frame = new AudioData(audioDataInit(data));
 			} catch (e) {
 				console.error("[AudioEncodeNode] Failed to create AudioData:", e);
 				return;
@@ -209,12 +242,11 @@ export class AudioEncodeNode extends GainNode {
 			return;
 		}
 
-		// Backpressure: Drop frame if encoder is overloaded
-		if (this.encodeQueueSize > MAX_ENCODE_QUEUE_SIZE) {
-			console.warn(
-				`[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}`,
-			);
-			return; // Drop frame without encoding
+		// The encoder has stalled: drop the frame.
+		if (this.#encoderFull()) {
+			this.#dropped = true;
+			this.#countDrop();
+			return;
 		}
 
 		this.#followTimeline(input);
@@ -240,17 +272,21 @@ export class AudioEncodeNode extends GainNode {
 	/**
 	 * Keeps a gap in the captured audio in the encoded timestamps. WebCodecs
 	 * stamps encoded chunks by counting samples from the first frame it was
-	 * given, so a gap (a source that was disconnected) would vanish; a flush
-	 * makes the encoder start again from the next frame's timestamp. Called
-	 * just before frame is encoded.
+	 * given, so a gap (a source that was disconnected, or a dropped frame)
+	 * would vanish, and the receiver would play the audio on either side of it
+	 * back to back; a flush makes the encoder start again from the next frame's
+	 * timestamp, so the receiver sees the gap. Called just before frame is
+	 * encoded.
 	 */
 	#followTimeline(frame: AudioData): void {
 		if (
-			this.#nextTimestamp !== null &&
-			frame.timestamp - this.#nextTimestamp > CAPTURE_GAP_US
+			this.#dropped ||
+			(this.#nextTimestamp !== null &&
+				frame.timestamp - this.#nextTimestamp > CAPTURE_GAP_US)
 		) {
 			this.#flushHeld();
 		}
+		this.#dropped = false;
 		this.#nextTimestamp = frame.timestamp +
 			Math.round(frame.numberOfFrames * 1_000_000 / frame.sampleRate);
 	}
@@ -301,26 +337,12 @@ export class AudioEncodeNode extends GainNode {
 					continue;
 				}
 
-				// Backpressure: When queue is overloaded, drop this frame but wait for the
-				// encoder to actually drain before reading the next one.
-				if (this.encodeQueueSize > MAX_ENCODE_QUEUE_SIZE) {
-					console.warn(
-						`[AudioEncodeNode] Dropping frame, queue size: ${this.encodeQueueSize}, waiting for drain...`,
-					);
+				// The encoder has stalled: drop the frame. The next frame encoded
+				// keeps its own timestamp, so the receiver sees the gap.
+				if (this.#encoderFull()) {
 					value.close();
-
-					if (this.#encoder.state === "closed") {
-						return;
-					}
-
-					const drained = await this.#waitForEncoderDrain(5000);
-					if (!drained) {
-						console.warn(
-							"[AudioEncodeNode] Encoder stalled, stopping stream reads after timeout.",
-						);
-						return;
-					}
-
+					this.#dropped = true;
+					this.#countDrop();
 					continue;
 				}
 
@@ -351,37 +373,22 @@ export class AudioEncodeNode extends GainNode {
 		}
 	}
 
-	#waitForEncoderDrain(timeoutMs: number): Promise<boolean> {
-		return new Promise<boolean>((resolve) => {
-			let settled = false;
+	// Whether the encoder holds as much queued audio as it may: it has
+	// stalled, as a working one keeps up with real time.
+	#encoderFull(): boolean {
+		return this.encodeQueueSize >= this.#maxQueuedFrames;
+	}
 
-			const finish = (drained: boolean) => {
-				if (settled) return;
-				settled = true;
-				clearTimeout(timeoutId);
-				this.#encoder.removeEventListener("dequeue", onDequeue);
-				resolve(drained);
-			};
-
-			const onDequeue = () => {
-				finish(true);
-			};
-
-			const timeoutId = setTimeout(() => {
-				finish(false);
-			}, timeoutMs);
-
-			this.#encoder.addEventListener("dequeue", onDequeue, { once: true });
-
-			// Re-check immediately after attaching the listener so we don't miss
-			// a drain transition that happened just before listener registration.
-			if (
-				this.#encoder.state !== "configured" ||
-				this.encodeQueueSize <= MAX_ENCODE_QUEUE_SIZE
-			) {
-				finish(true);
-			}
-		});
+	// Counts a dropped frame, and warns of the drops at most once per interval.
+	#countDrop(): void {
+		this.#droppedSinceWarning++;
+		const now = Date.now();
+		if (now - this.#lastDropWarning < DROP_WARNING_INTERVAL_MS) return;
+		console.warn(
+			`[AudioEncodeNode] Encoder stalled: dropped ${this.#droppedSinceWarning} frame(s) since the last warning.`,
+		);
+		this.#lastDropWarning = now;
+		this.#droppedSinceWarning = 0;
 	}
 
 	// Codec state monitoring
@@ -465,6 +472,19 @@ export class AudioEncodeNode extends GainNode {
 		}
 		this.#dests.clear();
 	}
+}
+
+// The AudioData a captured frame makes, taking over its buffer.
+function audioDataInit(frame: FrameMessage): AudioDataInit {
+	return {
+		format: "f32-planar",
+		sampleRate: frame.sampleRate,
+		numberOfChannels: frame.numberOfChannels,
+		numberOfFrames: frame.numberOfFrames,
+		timestamp: frame.timestamp,
+		data: frame.data,
+		transfer: [frame.data.buffer],
+	};
 }
 
 export interface AudioEncodeDestination {
