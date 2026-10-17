@@ -1,4 +1,5 @@
 import { assert, assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
+import { FakeTime } from "@std/testing/time";
 import type { AudioPlayoutStats } from "./audio_playback_stats.ts";
 import { isStopMessage, OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import type { AudioDecodeNodeInit } from "./decode_node.ts";
@@ -489,7 +490,7 @@ Deno.test("AudioDecodeNode", async (t) => {
 		}
 	});
 
-	await t.step("getStats() ignores malformed replies and replies to other requests", async () => {
+	await t.step("getStats() resolves with the well-formed reply to its own request", async () => {
 		const worklet = installPlaybackWorklet((port) => {
 			port.respond = (message) => {
 				const id = requestId(message);
@@ -550,7 +551,10 @@ Deno.test("AudioDecodeNode", async (t) => {
 
 			const error = await assertRejects(() => node.getStats(), AudioPlaybackUnavailableError);
 
-			assertEquals(error.cause, postError);
+			assertEquals({ reason: error.reason, cause: error.cause }, {
+				reason: "post-failed",
+				cause: postError,
+			});
 			node.dispose();
 		} finally {
 			worklet.restore();
@@ -568,7 +572,8 @@ Deno.test("AudioDecodeNode", async (t) => {
 
 			created.onprocessorerror?.(new Event("processorerror"));
 
-			await assertRejects(() => pending, AudioPlaybackUnavailableError);
+			const error = await assertRejects(() => pending, AudioPlaybackUnavailableError);
+			assertEquals(error.reason, "processor-failed");
 			node.dispose();
 		} finally {
 			worklet.restore();
@@ -583,21 +588,25 @@ Deno.test("AudioDecodeNode", async (t) => {
 
 		const error = await assertRejects(() => node.getStats(), AudioPlaybackUnavailableError);
 
-		assertEquals(error.cause, loadError);
+		assertEquals({ reason: error.reason, cause: error.cause }, {
+			reason: "load-failed",
+			cause: loadError,
+		});
 		node.dispose();
 	});
 
 	await t.step("getStats() rejects when the worklet does not reply in time", async () => {
 		const worklet = installPlaybackWorklet();
+		using time = new FakeTime();
 		try {
 			const node = createNode();
+			const pending = node.getStats({ timeoutMs: 50 });
+			await worklet.posted;
 
-			const error = await assertRejects(
-				() => node.getStats({ timeoutMs: 1 }),
-				AudioPlaybackStatsTimeoutError,
-			);
+			time.tick(50);
 
-			assertEquals(error.timeoutMs, 1);
+			const error = await assertRejects(() => pending, AudioPlaybackStatsTimeoutError);
+			assertEquals(error.timeoutMs, 50);
 			node.dispose();
 		} finally {
 			worklet.restore();
@@ -607,8 +616,12 @@ Deno.test("AudioDecodeNode", async (t) => {
 	await t.step("getStats() rejects a timeout that is not positive", async () => {
 		const node = createNode();
 
-		await assertRejects(() => node.getStats({ timeoutMs: 0 }), RangeError);
+		const error = await assertRejects(
+			() => node.getStats({ timeoutMs: 0 }),
+			AudioDecodeNodeOptionError,
+		);
 
+		assertEquals(error.option, "timeoutMs");
 		node.dispose();
 	});
 
@@ -623,7 +636,8 @@ Deno.test("AudioDecodeNode", async (t) => {
 			context.state = "closed";
 			context.dispatchEvent(new Event("statechange"));
 
-			await assertRejects(() => pending, AudioPlaybackUnavailableError);
+			const error = await assertRejects(() => pending, AudioPlaybackUnavailableError);
+			assertEquals(error.reason, "context-closed");
 			node.dispose();
 		} finally {
 			worklet.restore();
@@ -747,7 +761,7 @@ Deno.test("AudioDecodeNode", async (t) => {
 			expected: { decoded: [0, 2], cancelled: false },
 		},
 		{
-			name: "stops reading and cancels the stream when the context closes",
+			name: "cancels the stream once the context closes",
 			reads: [
 				{ state: "running", timestamp: 0 },
 				{ state: "closed", timestamp: 1 },
@@ -902,9 +916,9 @@ Deno.test("AudioDecodeNode", async (t) => {
 		const { done } = node.decodeFrom(stream);
 
 		node.dispose();
-		await done;
 
 		assertEquals(cancelled, true);
+		await done;
 	});
 
 	await t.step("cleanup", () => {

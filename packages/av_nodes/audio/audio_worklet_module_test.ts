@@ -102,18 +102,31 @@ class FakeProcessorNode implements ProcessorNode {
 	}
 }
 
-Deno.test("stopProcessor posts a stop message, closes the port and disconnects", () => {
+Deno.test("stopProcessor posts a stop message to the processor", () => {
 	const node = new FakeProcessorNode();
 
 	stopProcessor(node);
 
-	assertEquals(
-		{ sent: node.sent, closed: node.closed, connected: node.connected },
-		{ sent: [{ type: "stop" }], closed: true, connected: false },
-	);
+	assertEquals(node.sent, [{ type: "stop" }]);
 });
 
-Deno.test("stopProcessor closes the port and disconnects when posting fails", () => {
+Deno.test("stopProcessor closes the node's port", () => {
+	const node = new FakeProcessorNode();
+
+	stopProcessor(node);
+
+	assertEquals(node.closed, true);
+});
+
+Deno.test("stopProcessor takes the node out of the graph", () => {
+	const node = new FakeProcessorNode();
+
+	stopProcessor(node);
+
+	assertEquals(node.connected, false);
+});
+
+Deno.test("stopProcessor still releases the node when posting fails", () => {
 	const node = new FakeProcessorNode();
 	node.postError = new DOMException("port closed", "InvalidStateError");
 

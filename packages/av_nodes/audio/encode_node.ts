@@ -433,7 +433,8 @@ export class AudioEncodeNode extends GainNode {
 		try {
 			this.#readableController?.close();
 		} catch (_) {
-			/* ignore */
+			// reason: the stream is already closed or errored, so no read is
+			// left waiting on it.
 		}
 		if (this.#worklet) stopProcessor(this.#worklet);
 
