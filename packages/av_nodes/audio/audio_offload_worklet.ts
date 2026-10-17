@@ -17,9 +17,11 @@ const REANCHOR_AFTER_BEHIND_BLOCKS = 3;
 // Target changes smaller than this (ms) are ignored.
 const ADJUST_DEADBAND_MS = 5;
 
-// Lowering the delay: at most this much (ms) per step, one step per interval
-// (s). A step waits for a silence gap or a quiet stretch to cut, for at most
-// the quiet wait (s); after that it cuts with a crossfade.
+// Lowering the delay: a step of at most this much (ms) is taken once the delay
+// has waited to be lowered for the step interval (s), at a silence gap or a
+// quiet stretch. With neither, it cuts with a crossfade once the wait reaches
+// the quiet wait (s). So the delay falls by 10 ms per second where there are
+// pauses, and by 10 ms per two seconds through continuous sound.
 const SHRINK_STEP_MS = 10;
 const SHRINK_INTERVAL_S = 1;
 const SHRINK_QUIET_WAIT_S = 2;
@@ -56,6 +58,8 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	//   fade-out before it and a fade-in after it.
 	// - A lower target removes audio in small steps, preferring a silence gap
 	//   or a quiet stretch, and crossfades the cut.
+	// - A block more than one cushion ahead of the cushion, or beyond the ring,
+	//   moves the reader to the live edge; the audio it was playing fades out.
 	// Because the floor tracks the fastest recent arrival, a drift between the
 	// sender's and the receiver's audio clocks shows up as a rising or falling
 	// floor and is absorbed the same way.
@@ -67,7 +71,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	// asks for a snapshot, answered with a StatsReply of the same id. Anything
 	// else is ignored.
 	class AudioOffloadProcessor extends AudioWorkletProcessor {
-		#channelsBuffer: Float32Array[] = [];
+		readonly #channelsBuffer: Float32Array[] = [];
 
 		// Absolute playback frame counter. Drives the read side; advanced by the
 		// output length each `process()` quantum. This is the audio clock.
@@ -100,10 +104,16 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		readonly #sampleRate: number;
 		readonly #fadeFrames: number;
 
-		// Playback frame before which no further lowering step is taken, and
-		// the frame since which a step has waited for a quiet place.
-		#nextShrinkFrame: number = 0;
+		// Playback frame since which the delay has waited to be lowered: when the
+		// target fell below it, or the last lowering step. Null while the target
+		// does not ask for a lower delay.
 		#shrinkWaitingSince: number | null = null;
+
+		// Fade-out of the audio that was playing when the reader jumped to the
+		// live edge (per channel, allocated once), and how many of its frames are
+		// still to be mixed into the output.
+		readonly #resyncTail: Float32Array[] = [];
+		#resyncTailFrames: number = 0;
 
 		// Output gain envelope for underrun fades, carried across quanta.
 		#gain: number = 1;
@@ -155,7 +165,8 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			this.#sampleRate = sampleRate;
 			this.#minCushion = this.#frames(latency);
-			const maxCushion = Math.max(this.#minCushion, this.#frames(maxLatency));
+			// At least #minCushion, as maxLatency is at least latency.
+			const maxCushion = this.#frames(maxLatency);
 			this.#adaptive = maxCushion > this.#minCushion;
 			this.#estimator = new DelayEstimator({
 				sampleRate,
@@ -168,6 +179,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			for (let i = 0; i < channelCount; i++) {
 				this.#channelsBuffer[i] = new Float32Array(this.#bufferLength);
+				this.#resyncTail[i] = new Float32Array(this.#fadeFrames);
 			}
 
 			this.port.onmessage = (event: MessageEvent<unknown>) => {
@@ -240,19 +252,44 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#delay = this.#estimator.targetCushion();
 		}
 
-		// Zero-fill ring slots [from, to) on every channel (wrap-aware).
-		#silenceFill(from: number, to: number): void {
+		// Zero-fill `count` ring slots of one channel from absolute frame `from`
+		// (wrap-aware).
+		#zero(dst: Float32Array, from: number, count: number): void {
 			const len = this.#bufferLength;
+			let pos = from % len;
+			let remaining = count;
+			while (remaining > 0) {
+				const toFill = Math.min(remaining, len - pos);
+				dst.fill(0, pos, pos + toFill);
+				pos = (pos + toFill) % len;
+				remaining -= toFill;
+			}
+		}
+
+		// Zero-fill ring slots [from, to) on every channel.
+		#silenceFill(from: number, to: number): void {
 			for (const dst of this.#channelsBuffer) {
-				let pos = from % len;
-				let remaining = to - from;
-				while (remaining > 0) {
-					const toCopy = Math.min(remaining, len - pos);
-					dst.fill(0, pos, pos + toCopy);
-					pos = (pos + toCopy) % len;
-					remaining -= toCopy;
+				this.#zero(dst, from, to - from);
+			}
+		}
+
+		// Keeps the next fade of audio the reader would have played, faded out,
+		// to mix into the output after it jumps.
+		#keepResyncTail(): void {
+			const len = this.#bufferLength;
+			const fade = this.#fadeFrames;
+			const written = this.#nextWriteFrame ?? this.#playoutFrame;
+			for (let channel = 0; channel < this.#channelsBuffer.length; channel++) {
+				const src = this.#channelsBuffer[channel];
+				const tail = this.#resyncTail[channel];
+				if (!src || !tail) continue;
+				for (let i = 0; i < fade; i++) {
+					const frame = this.#playoutFrame + i;
+					const sample = frame < written ? (src[frame % len] ?? 0) : 0;
+					tail[i] = sample * this.#gain * ((fade - i) / (fade + 1));
 				}
 			}
+			this.#resyncTailFrames = fade;
 		}
 
 		// Fades out the written frames just before `end`, so the audio ends
@@ -286,15 +323,12 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 				return;
 			}
 
-			// Not initialized yet. Skip
-			if (this.#channelsBuffer.length === 0) return;
-
 			const numberOfFrames = first.length;
 			this.#receivedBlocks++;
 
 			// The first block establishes the media-clock origin and anchors the
 			// delay to the playback frame at its arrival. Playback starting (or
-			// starting over) from a block is not faded in.
+			// starting over) from a block, after silence, is not faded in.
 			let restart = false;
 			if (this.#baseTsUs === null) {
 				this.#anchor(tsUs);
@@ -305,13 +339,18 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			// Resync to the live edge: a block more than one cushion ahead of the
 			// cushion means playback has fallen behind the media (a catch-up burst
-			// after a slow spell). The backlog is stale for a live stream: advance
-			// the read pointer so this block lands one cushion ahead, and measure
-			// delays from here on.
+			// after a slow spell), and a block reaching past the ring cannot be
+			// written at all. The backlog is stale for a live stream: advance the
+			// read pointer so this block lands one cushion ahead, fading out the
+			// audio it was playing, and measure delays from here on.
 			const cushion = Math.max(this.#minCushion, this.#delay - this.#estimator.floor());
-			if (start - this.#playoutFrame >= 2 * cushion) {
+			if (
+				start - this.#playoutFrame >= 2 * cushion ||
+				start + numberOfFrames > this.#playoutFrame + this.#bufferLength
+			) {
 				const target = this.#estimator.targetCushion();
-				this.#playoutFrame = start - target;
+				this.#keepResyncTail();
+				this.#playoutFrame = Math.max(this.#playoutFrame, start - target);
 				this.#nextWriteFrame = this.#playoutFrame;
 				this.#estimator.reset(
 					this.#playoutFrame - this.#scheduledFrameForTs(tsUs),
@@ -320,7 +359,6 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 				this.#delay = this.#estimator.floor() + target;
 				start = this.#playoutFrameForTs(tsUs);
 				this.#resyncs++;
-				restart = true;
 			}
 
 			this.#estimator.observe(
@@ -393,14 +431,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 				// Missing source channel → silence for this block's range.
 				if (!src) {
-					let pos = start % len;
-					let remaining = writeLen;
-					while (remaining > 0) {
-						const toCopy = Math.min(remaining, len - pos);
-						dst.fill(0, pos, pos + toCopy);
-						pos = (pos + toCopy) % len;
-						remaining -= toCopy;
-					}
+					this.#zero(dst, start, writeLen);
 					continue;
 				}
 
@@ -443,60 +474,78 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			const target = this.#estimator.floor() + this.#estimator.targetCushion();
 			const deadband = this.#frames(ADJUST_DEADBAND_MS);
 
+			if (target < this.#delay - deadband && start >= this.#playoutFrame) {
+				return this.#lower(target, start, numberOfFrames);
+			}
+			this.#shrinkWaitingSince = null;
+
 			if (start < this.#playoutFrame) {
 				// Late: raise the delay so the block plays rather than being
-				// dropped, if the target covers it.
-				if (target - this.#delay >= this.#playoutFrame - start) {
+				// dropped, if the target covers it and the reader has run dry at
+				// it. With a later block already written it arrived out of order,
+				// and moving the playout would play it after that block.
+				const written = this.#nextWriteFrame ?? start;
+				if (
+					target - this.#delay >= this.#playoutFrame - start &&
+					written <= start + numberOfFrames
+				) {
 					this.#delay = target;
 					this.#lateBlocks++;
 				}
-				return 0;
-			}
-			if (target > this.#delay + deadband) {
+			} else if (target > this.#delay + deadband) {
 				// Raise: the gap this opens before the block is silence-filled,
 				// with fades on both sides.
 				this.#expands++;
 				this.#expandedFrames += target - this.#delay;
 				this.#delay = target;
-				return 0;
 			}
-			if (target < this.#delay - deadband) {
-				if (this.#playoutFrame < this.#nextShrinkFrame) return 0;
-				return this.#lower(target, start, numberOfFrames);
-			}
-			this.#shrinkWaitingSince = null;
 			return 0;
 		}
 
 		// Takes one lowering step towards `target` for a block due at `start`,
-		// playing it earlier. When there is no silence gap before it to take the
-		// step from, the step cuts the end of the audio already written: it
-		// waits for that stretch to be quiet, up to the quiet wait. Returns the
-		// number of head frames to crossfade with the ring.
+		// playing it earlier, once the delay has waited the step interval. When
+		// there is no silence gap before the block to take the step from, the
+		// step cuts the end of the audio already written: it waits for that
+		// stretch to be quiet, up to the quiet wait. Returns the number of head
+		// frames to crossfade with the ring.
 		#lower(target: number, start: number, numberOfFrames: number): number {
+			const waitingSince = this.#shrinkWaitingSince ?? this.#playoutFrame;
+			this.#shrinkWaitingSince = waitingSince;
+			const waited = this.#playoutFrame - waitingSince;
+			if (waited < this.#frames(SHRINK_INTERVAL_S * 1000)) return 0;
+
+			// The moved block must still reach the end of the written audio, so no
+			// audio from before the step is left playing after it.
 			const floor = Math.max(this.#nextWriteFrame ?? start, this.#playoutFrame);
 			const step = Math.min(
 				this.#delay - target,
 				this.#frames(SHRINK_STEP_MS),
 				start - this.#playoutFrame,
-				Math.max(0, start - floor) + numberOfFrames,
+				start + numberOfFrames - floor,
 			);
 			if (step <= 0) return 0;
 
 			const newStart = start - step;
 			const cut = Math.max(0, floor - newStart);
-			const waitingSince = this.#shrinkWaitingSince ?? this.#playoutFrame;
-			this.#shrinkWaitingSince = waitingSince;
-			const waited = this.#playoutFrame - waitingSince >=
-				this.#frames(SHRINK_QUIET_WAIT_S * 1000);
-			if (cut > 0 && !waited && !this.#isQuiet(newStart, floor)) return 0;
+			const forced = waited >= this.#frames(SHRINK_QUIET_WAIT_S * 1000);
+			if (cut > 0 && !forced && !this.#isQuiet(newStart, floor)) return 0;
 
 			this.#delay -= step;
 			this.#accelerates++;
 			this.#acceleratedFrames += step;
-			this.#nextShrinkFrame = this.#playoutFrame + this.#frames(SHRINK_INTERVAL_S * 1000);
-			this.#shrinkWaitingSince = null;
+			this.#shrinkWaitingSince = this.#playoutFrame;
 			return Math.min(cut, this.#fadeFrames);
+		}
+
+		// Adds what is left of the resync fade-out to the start of a quantum.
+		#mixResyncTail(channel: number, dst: Float32Array): void {
+			const tail = this.#resyncTail[channel];
+			if (this.#resyncTailFrames === 0 || !tail) return;
+			const from = tail.length - this.#resyncTailFrames;
+			const frames = Math.min(this.#resyncTailFrames, dst.length);
+			for (let i = 0; i < frames; i++) {
+				dst[i] = (dst[i] ?? 0) + (tail[from + i] ?? 0);
+			}
 		}
 
 		process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
@@ -550,6 +599,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 					if (!dst) continue;
 					if (!src || realFrames <= 0) {
 						dst.fill(0);
+						this.#mixResyncTail(channel, dst);
 						continue;
 					}
 
@@ -579,8 +629,10 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 					if (dstOffset < dst.length) {
 						dst.fill(0, dstOffset);
 					}
+					this.#mixResyncTail(channel, dst);
 				}
 			}
+			this.#resyncTailFrames = Math.max(0, this.#resyncTailFrames - outputLength);
 
 			if (realFrames < outputLength) {
 				if (!this.#starved && this.#baseTsUs !== null) {

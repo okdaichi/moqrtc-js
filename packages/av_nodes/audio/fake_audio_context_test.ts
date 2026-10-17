@@ -3,7 +3,8 @@
  *
  * Implements the minimal API required by AudioEncodeNode.
  */
-export class FakeAudioContext {
+export class FakeAudioContext extends EventTarget {
+	state?: AudioContextState;
 	sampleRate = 44100;
 	currentTime = 0;
 	destination = {

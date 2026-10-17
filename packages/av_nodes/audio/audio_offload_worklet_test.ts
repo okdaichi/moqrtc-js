@@ -545,27 +545,120 @@ Deno.test("audio_offload_worklet", async (t) => {
 		assertEquals(drain(processor, 1), new Float32Array(QUANTUM).fill(9));
 	});
 
-	await t.step("resyncs to the live edge when a block overflows the buffer", () => {
-		// A block whose timestamp jumps more than one cushion ahead of the
-		// cushion means playback is behind the media (catch-up burst). Rather
-		// than queue the stale backlog, resync: advance the read pointer so the
-		// far block plays at the live edge.
+	// A processor playing a long block of 1 when a block of 42, three
+	// cushions ahead, makes it resync; then a block of 5 right after it.
+	function playResync() {
 		const processor = createProcessor();
-		processor.append(block(1), 0);
-		// 3*LAG samples ahead → due 4*LAG, beyond twice the cushion.
+		processor.append(block(1, 8 * QUANTUM), 0);
+		const before = drain(processor, LAG_SAMPLES / QUANTUM + 2);
 		const farFrame = 3 * LAG_SAMPLES;
-		processor.append(block(42), ts(farFrame));
-		// A block contiguous with the far one must play too.
-		processor.append(block(5), ts(farFrame + QUANTUM));
-		appendTail(processor, farFrame + 2 * QUANTUM);
+		processor.append(block(42, 4 * QUANTUM), ts(farFrame));
+		processor.append(block(5), ts(farFrame + 4 * QUANTUM));
+		appendTail(processor, farFrame + 5 * QUANTUM);
+		const after = drain(processor, LAG_SAMPLES / QUANTUM + 6);
+		return { processor, before, after };
+	}
 
-		const out = drain(processor, LAG_SAMPLES / QUANTUM + 3);
+	await t.step("resyncs to the live edge when a block runs a cushion ahead", () => {
+		const { processor, after } = playResync();
 
+		// The far block (all but its fade-in) and the one after it play; the
+		// rest of the long block does not.
 		assertEquals(
-			[countOf(out, 1), countOf(out, 42), countOf(out, 5)],
-			[0, QUANTUM, QUANTUM],
+			[countOf(after, 1), countOf(after, 42), countOf(after, 5)],
+			[0, 4 * QUANTUM - FADE_FRAMES, QUANTUM],
 		);
 		assertEquals(processor.stats().resyncs, 1);
+	});
+
+	await t.step("fades out the audio it was playing when it resyncs", () => {
+		const { before, after } = playResync();
+
+		assertEquals(sampleAt(before, before.length - 1), 1);
+		assertAlmostEquals(sampleAt(after, 0), FADE_FRAMES / (FADE_FRAMES + 1), 1e-6);
+		assertEquals(after.subarray(FADE_FRAMES, 2 * FADE_FRAMES), new Float32Array(FADE_FRAMES));
+	});
+
+	await t.step("fades in the block it resyncs to", () => {
+		const { after } = playResync();
+
+		// The block's first full-level sample follows its fade-in.
+		const blockStart = after.indexOf(42) - FADE_FRAMES;
+		assertAlmostEquals(sampleAt(after, blockStart), 42 / (FADE_FRAMES + 1), 1e-4);
+	});
+
+	await t.step("resyncs when a block would land beyond the ring", () => {
+		// A fixed 80 ms delay (a 160 ms ring) and 100 ms of backlog delivered
+		// with the first block, then the stream live: every live block is due
+		// beyond the ring.
+		const processor = createFixedProcessor();
+		const backlog = Math.ceil(SAMPLE_RATE * 0.1 / QUANTUM);
+		for (let i = 0; i <= backlog; i++) processor.append(block(1), i * BLOCK_US);
+		const out = new Float32Array(SAMPLE_RATE);
+		const left = new Float32Array(QUANTUM);
+		const buffers = [[left, new Float32Array(QUANTUM)]];
+		for (let q = 0; q < out.length / QUANTUM - 1; q++) {
+			processor.append(block(1), (backlog + 1 + q) * BLOCK_US);
+			processor.process([], buffers);
+			out.set(left, q * QUANTUM);
+		}
+
+		assertGreater(countOf(out.subarray(out.length / 2), 1), 0);
+		assertGreaterOrEqual(processor.stats().resyncs, 1);
+	});
+
+	await t.step("drops a late block that arrived after a later one", () => {
+		const processor = createProcessor();
+		processor.append(block(1), 0);
+		// The block after next arrives early, with the first.
+		processor.append(block(2, 4 * QUANTUM), ts(2 * QUANTUM));
+		// The reader passes the slot of the missing block...
+		drain(processor, (LAG_SAMPLES + 2 * QUANTUM) / QUANTUM);
+
+		// ...which then arrives.
+		processor.append(block(9), ts(QUANTUM));
+		const out = drain(processor, 20);
+
+		assertEquals(countOf(out, 9), 0);
+		assertEquals(
+			[processor.stats().lateBlocks, processor.stats().droppedBlocks],
+			[0, 1],
+		);
+	});
+
+	await t.step("waits afresh to lower the delay once the target rose in between", () => {
+		// A 2 s maximum makes room for seconds of audio written ahead.
+		const processor = createProcessor({ maxLatency: 2000 });
+		processor.append(block(1, 480), 0);
+		// 2.5 s of sound arriving 10 ms early: the target falls below the
+		// delay, and the delay starts waiting to be lowered.
+		processor.append(block(1, 120_000), ts(480));
+		drain(processor, SAMPLE_RATE / QUANTUM);
+		// A block 73 ms late: the target rises above the delay.
+		processor.append(block(1), ts(SAMPLE_RATE - 3500));
+		drain(processor, 1.2 * SAMPLE_RATE / QUANTUM);
+
+		// More than two seconds after the first wait began, a block 42 ms early
+		// makes the target fall again, inside continuous sound.
+		processor.append(block(1, 20_000), ts(2.2 * SAMPLE_RATE + 2000));
+
+		assertEquals(processor.stats().accelerates, 0);
+	});
+
+	await t.step("does not lower the delay for a block inside the written audio", () => {
+		// A 2 s maximum makes room for 1.5 s of audio written ahead.
+		const processor = createProcessor({ maxLatency: 2000 });
+		processor.append(block(0), 0);
+		// 1.5 s of silence due 40 ms earlier than the first block's timing
+		// implies: the target falls below the delay.
+		processor.append(block(0, 72_000), ts(1920));
+		drain(processor, Math.ceil(1.1 * SAMPLE_RATE / QUANTUM));
+
+		// A block whose slot lies inside that written audio, with the delay
+		// waiting to be lowered for over a second.
+		processor.append(block(0), ts(59_000));
+
+		assertEquals(processor.stats().accelerates, 0);
 	});
 
 	// A stream whose clock stopped for two seconds (a sender's suspended
@@ -747,6 +840,8 @@ interface Scenario {
 	readonly maxLatency?: number;
 	// Underruns are also counted from this frame on.
 	readonly countUnderrunsFrom?: number;
+	// Called with the stats after each quantum's arrivals.
+	readonly observe?: (frame: number, stats: AudioPlaybackStats) => void;
 }
 
 interface ScenarioResult {
@@ -782,6 +877,7 @@ function play(scenario: Scenario): ScenarioResult {
 			next++;
 		}
 		if (frame === mark) underrunsAtMark = processor.stats().underruns;
+		scenario.observe?.(frame, processor.stats());
 		processor.process([], buffers);
 		out.set(left, frame);
 	}
@@ -877,6 +973,24 @@ function largestStep(out: Float32Array): number {
 		if (previous !== null || sample !== 0) previous = sample;
 	}
 	return max;
+}
+
+// Frames of the quanta at which a lowering step was taken.
+function loweringSteps(scenario: Scenario): number[] {
+	const steps: number[] = [];
+	let accelerates = 0;
+	play({
+		...scenario,
+		observe: (frame, stats) => {
+			if (stats.accelerates > accelerates) steps.push(frame);
+			accelerates = stats.accelerates;
+		},
+	});
+	return steps;
+}
+
+function spacings(frames: readonly number[]): number[] {
+	return frames.slice(1).map((frame, i) => frame - (frames[i] ?? frame));
 }
 
 // The step of one fade frame: no edge may be steeper.
@@ -990,6 +1104,26 @@ Deno.test("audio_offload_worklet adaptive delay", async (t) => {
 		const edges = 2 * stats.underruns + 2 * stats.expands + stats.accelerates +
 			2 * stats.lateBlocks;
 		assertLessOrEqual(lost, edges * (FADE_FRAMES + 1));
+	});
+
+	await t.step("lowers by one step per two seconds through continuous sound", () => {
+		const steps = loweringSteps({ arrivals: burstsThenClean(120), seconds: 121 });
+
+		const gaps = spacings(steps);
+		assertGreaterOrEqual(Math.min(...gaps), 2 * SECOND - QUANTUM);
+		assertGreaterOrEqual(gaps.filter((gap) => gap <= 2.1 * SECOND).length, 3);
+	});
+
+	await t.step("lowers by one step per second at quiet stretches", () => {
+		const steps = loweringSteps({
+			arrivals: burstsThenClean(120),
+			seconds: 121,
+			value: (i) => i % 5 === 4 ? 0 : 1,
+		});
+
+		const gaps = spacings(steps);
+		assertGreaterOrEqual(Math.min(...gaps), SECOND - QUANTUM);
+		assertGreaterOrEqual(gaps.filter((gap) => gap <= 1.1 * SECOND).length, 3);
 	});
 
 	await t.step("follows a sender clock running slow without gaps", () => {

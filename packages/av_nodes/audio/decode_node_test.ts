@@ -49,6 +49,7 @@ const {
 	AudioDecodeNode,
 	AudioDecodeNodeDisposedError,
 	AudioDecodeNodeOptionError,
+	AudioPlaybackStatsTimeoutError,
 	AudioPlaybackUnavailableError,
 } = await import("./decode_node.ts");
 
@@ -575,6 +576,65 @@ Deno.test("AudioDecodeNode", async (t) => {
 
 		assertEquals(error.cause, loadError);
 		node.dispose();
+	});
+
+	await t.step("getStats() rejects when the worklet does not reply in time", async () => {
+		const worklet = installPlaybackWorklet();
+		try {
+			const node = createNode();
+
+			const error = await assertRejects(
+				() => node.getStats({ timeoutMs: 1 }),
+				AudioPlaybackStatsTimeoutError,
+			);
+
+			assertEquals(error.timeoutMs, 1);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("getStats() rejects a timeout that is not positive", async () => {
+		const node = createNode();
+
+		await assertRejects(() => node.getStats({ timeoutMs: 0 }), RangeError);
+
+		node.dispose();
+	});
+
+	await t.step("getStats() rejects waiting requests when the context closes", async () => {
+		const worklet = installPlaybackWorklet();
+		try {
+			const context = createContext();
+			const node = createNode({}, context);
+			const pending = node.getStats();
+			await worklet.posted;
+
+			context.state = "closed";
+			context.dispatchEvent(new Event("statechange"));
+
+			await assertRejects(() => pending, AudioPlaybackUnavailableError);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("getStats() rejects at once on a closed context", async () => {
+		const worklet = installPlaybackWorklet((port) => (port.respond = echo));
+		try {
+			const context = createContext();
+			const node = createNode({}, context);
+			context.state = "closed";
+
+			await assertRejects(() => node.getStats(), AudioPlaybackUnavailableError);
+
+			assertEquals(worklet.created.flatMap((created) => created.port.sent), []);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
 	});
 
 	await t.step("cleanup", () => {
