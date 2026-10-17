@@ -1,4 +1,8 @@
-import { DEFAULT_MAX_LATENCY_MS, isAudioOffloadMessage } from "./audio_offload_protocol.ts";
+import {
+	DEFAULT_MAX_LATENCY_MS,
+	isAudioOffloadMessage,
+	type StatsReply,
+} from "./audio_offload_protocol.ts";
 import type { AudioPlayoutStats } from "./audio_playback_stats.ts";
 import { OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import { DelayEstimator } from "./delay_estimator.ts";
@@ -32,6 +36,26 @@ const FADE_MS = 3;
 // A positive, finite number.
 function isPositive(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+// The processor options a node can get wrong.
+type ProcessorOption =
+	| "processorOptions"
+	| "channelCount"
+	| "sampleRate"
+	| "latency"
+	| "maxLatency";
+
+// A processor option missing or out of range. The node sees it as a
+// processorerror event.
+class ProcessorOptionError extends RangeError {
+	readonly option: ProcessorOption;
+
+	constructor(option: ProcessorOption) {
+		super(`invalid ${option}`);
+		this.name = "ProcessorOptionError";
+		this.option = option;
+	}
 }
 
 if (typeof AudioWorkletProcessor !== "undefined") {
@@ -142,28 +166,28 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		constructor(options: AudioWorkletNodeOptions) {
 			super();
 			if (!options.processorOptions) {
-				throw new Error("processorOptions is required");
+				throw new ProcessorOptionError("processorOptions");
 			}
 
 			const channelCount = options.channelCount;
 			if (!channelCount || channelCount <= 0) {
-				throw new Error("invalid channelCount");
+				throw new ProcessorOptionError("channelCount");
 			}
 
 			const sampleRate: unknown = options.processorOptions.sampleRate;
 			if (!isPositive(sampleRate)) {
-				throw new Error("invalid sampleRate");
+				throw new ProcessorOptionError("sampleRate");
 			}
 
 			const latency: unknown = options.processorOptions.latency;
 			if (!isPositive(latency)) {
-				throw new Error("invalid latency");
+				throw new ProcessorOptionError("latency");
 			}
 
 			const maxLatency: unknown = options.processorOptions.maxLatency ??
 				Math.max(DEFAULT_MAX_LATENCY_MS, latency);
 			if (!isPositive(maxLatency) || maxLatency < latency) {
-				throw new Error("invalid maxLatency");
+				throw new ProcessorOptionError("maxLatency");
 			}
 
 			this.#sampleRate = sampleRate;
@@ -192,9 +216,15 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 					case "append":
 						this.append(message.channels, message.timestamp);
 						return;
-					case "stats":
-						this.port.postMessage({ type: "stats", id: message.id, stats: this.stats() });
+					case "stats": {
+						const reply: StatsReply = {
+							type: "stats",
+							id: message.id,
+							stats: this.stats(),
+						};
+						this.port.postMessage(reply);
 						return;
+					}
 					case "stop":
 						this.#stopped = true;
 						this.port.close();
@@ -336,11 +366,8 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			// The first block establishes the media-clock origin and anchors the
 			// delay to the playback frame at its arrival. Playback starting from
 			// it, after silence, is not faded in.
-			let restart = false;
-			if (this.#baseTsUs === null) {
-				this.#anchor(tsUs);
-				restart = true;
-			}
+			const restart = this.#baseTsUs === null;
+			if (restart) this.#anchor(tsUs);
 
 			let start = this.#playoutFrameForTs(tsUs);
 
@@ -376,11 +403,8 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			// Frames at the head of this block to crossfade with the audio
 			// already in the ring, where a lowering step cut into it.
-			let crossfade = 0;
-			if (this.#adaptive) {
-				crossfade = this.#adjust(start, numberOfFrames);
-				start = this.#playoutFrameForTs(tsUs);
-			}
+			const crossfade = this.#adaptive ? this.#adjust(start, numberOfFrames) : 0;
+			start = this.#playoutFrameForTs(tsUs);
 
 			// Stale (late) block: its whole range is already in the playback past
 			// and raising the delay could not save it. Drop it rather than clobber
@@ -405,11 +429,8 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			// Partially-late block (start < #playoutFrame < end): discard the
 			// already-played prefix, so the ring write never targets past slots
 			// (which would alias future reads on wrap).
-			let srcOffset0 = 0;
-			if (start < this.#playoutFrame) {
-				srcOffset0 = this.#playoutFrame - start;
-				start = this.#playoutFrame;
-			}
+			const srcOffset0 = Math.max(0, this.#playoutFrame - start);
+			start = Math.max(start, this.#playoutFrame);
 
 			// Never write more than one ring ahead of the read pointer, or the
 			// ring would wrap over not-yet-played data.

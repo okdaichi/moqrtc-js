@@ -73,8 +73,8 @@ export function isAudioOffloadMessage(value: unknown): value is AudioOffloadMess
 	}
 }
 
-/** Whether `value` is a well-formed stats snapshot. */
-export function isAudioPlayoutStats(value: unknown): value is AudioPlayoutStats {
+// Whether `value` is a well-formed stats snapshot.
+function isAudioPlayoutStats(value: unknown): value is AudioPlayoutStats {
 	if (!isRecord(value)) return false;
 	return Object.keys(STATS_FIELDS).every((field) => {
 		const n = value[field];

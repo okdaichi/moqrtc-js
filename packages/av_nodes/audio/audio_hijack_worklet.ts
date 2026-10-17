@@ -26,14 +26,17 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			// Get target number of channels from processorOptions
 			this.#targetChannels = options.processorOptions?.targetChannels || 1;
 			// The node changes the channel count when its encoder is configured.
-			this.port.onmessage = ({ data }: MessageEvent) => {
+			this.port.onmessage = ({ data }: MessageEvent<unknown>) => {
 				if (isStopMessage(data)) {
 					this.#stopped = true;
 					this.port.close();
 					return;
 				}
-				const channels = data?.targetChannels;
-				if (Number.isInteger(channels) && channels > 0) {
+				const channels = typeof data === "object" && data !== null &&
+						"targetChannels" in data
+					? data.targetChannels
+					: undefined;
+				if (typeof channels === "number" && Number.isInteger(channels) && channels > 0) {
 					this.#targetChannels = channels;
 				}
 			};

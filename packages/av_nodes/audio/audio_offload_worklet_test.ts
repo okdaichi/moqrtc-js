@@ -283,7 +283,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 		await t.step(`rejects ${c.name}`, () => {
 			assertThrows(
 				() => createProcessor({ latency: c.latency, maxLatency: c.maxLatency }),
-				Error,
+				RangeError,
 				c.message,
 			);
 		});
@@ -522,25 +522,31 @@ Deno.test("audio_offload_worklet", async (t) => {
 		assertEquals(out, new Float32Array(QUANTUM).fill(7));
 	});
 
-	// A block stamped 100 ms before the first: with a fixed 80 ms delay its
-	// start is in the playback past and its end is not.
-	const preBase = new Float32Array(2400).fill(9);
+	// A block of 9 stamped 100 ms before the first: with a fixed 80 ms delay
+	// its start is in the playback past and its end is not.
+	const preBaseBlock = () => block(9, 2400);
+	const PRE_BASE_TS = -100_000;
 
-	await t.step("accepts a pre-base (non-monotonic) timestamp", () => {
-		for (const processor of [createProcessor(), createFixedProcessor()]) {
+	const preBaseProcessors = [
+		{ name: "an adaptive delay", create: createProcessor },
+		{ name: "a fixed delay", create: createFixedProcessor },
+	] as const;
+	for (const c of preBaseProcessors) {
+		await t.step(`with ${c.name}, accepts a pre-base (non-monotonic) timestamp`, () => {
+			const processor = c.create();
 			processor.append(block(1), 0);
 
-			processor.append([preBase, preBase], -100_000);
+			processor.append(preBaseBlock(), PRE_BASE_TS);
 
 			assertEquals(processor.stats().receivedBlocks, 2);
-		}
-	});
+		});
+	}
 
 	await t.step("with a fixed delay, plays the unplayed part of a partially late block", () => {
 		const processor = createFixedProcessor();
 		processor.append(block(1), 0);
 
-		processor.append([preBase, preBase], -100_000);
+		processor.append(preBaseBlock(), PRE_BASE_TS);
 
 		assertEquals(drain(processor, 1), new Float32Array(QUANTUM).fill(9));
 	});
@@ -677,8 +683,9 @@ Deno.test("audio_offload_worklet", async (t) => {
 		for (let i = 1; i <= 3; i++) processor.append(block(7), i * BLOCK_US);
 		appendTail(processor, 4 * QUANTUM);
 
-		// Played one cushion from now, not dropped.
 		const out = drain(processor, LAG_SAMPLES / QUANTUM + 1);
+
+		// Played one cushion from now, not dropped.
 		assertEquals(out.findIndex((sample) => sample !== 0), LAG_SAMPLES);
 		assertEquals(processor.stats().reanchors, 1);
 	});
@@ -712,6 +719,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 		appendTail(processor, 4 * QUANTUM);
 
 		const out = drain(processor, LAG_SAMPLES / QUANTUM + 1);
+
 		assertEquals(out.findIndex((sample) => sample !== 0), LAG_SAMPLES);
 	});
 
@@ -752,11 +760,12 @@ Deno.test("audio_offload_worklet", async (t) => {
 		for (let i = 1; i <= 3; i++) processor.append(block(7), i * BLOCK_US);
 		appendTail(processor, 4 * QUANTUM);
 
+		const margin = SAMPLE_RATE * 20 / 1000;
+		const out = drain(processor, Math.ceil(margin / QUANTUM) + 4);
+
 		// The first late block plays after the margin the raised delay keeps,
 		// fading in over all of its 128 frames, and the two after it follow at
 		// full level.
-		const margin = SAMPLE_RATE * 20 / 1000;
-		const out = drain(processor, Math.ceil(margin / QUANTUM) + 4);
 		assertEquals(countOf(out, 7), 2 * QUANTUM);
 		const stats = processor.stats();
 		assertEquals(
