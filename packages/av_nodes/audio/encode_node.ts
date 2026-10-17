@@ -25,10 +25,8 @@ interface AudioContextLike {
 // the encoder has stalled.
 const MAX_QUEUED_US = 200_000;
 
-// A gap in the captured audio longer than this (in microseconds) is kept in
-// the encoded timestamps; shorter ones are taken for jitter in the timestamps
-// of process()'s input. A dropped frame is always kept.
-const CAPTURE_GAP_US = 100_000;
+// The frame durations Opus encodes (µs).
+const OPUS_FRAME_DURATIONS_US: readonly number[] = [2_500, 5_000, 10_000, 20_000, 40_000, 60_000];
 
 // Dropped frames are reported in one warning at most this often (ms).
 const DROP_WARNING_INTERVAL_MS = 5_000;
@@ -36,6 +34,19 @@ const DROP_WARNING_INTERVAL_MS = 5_000;
 // Queued in place of a frame when the capture worklet's input stops.
 const INPUT_ENDED = Symbol("input ended");
 type Captured = AudioData | typeof INPUT_ENDED;
+
+/** An {@link AudioEncoderConfig} value {@link AudioEncodeNode.configure} does not accept. */
+export class AudioEncodeNodeOptionError extends RangeError {
+	readonly option: "opus.frameDuration";
+	readonly value: number;
+
+	constructor(option: "opus.frameDuration", value: number, requirement: string) {
+		super(`AudioEncodeNode: ${option} must be ${requirement}, got ${value}`);
+		this.name = "AudioEncodeNodeOptionError";
+		this.option = option;
+		this.value = value;
+	}
+}
 
 /**
  * AudioEncodeNode extends GainNode to capture audio from the Web Audio graph
@@ -147,16 +158,35 @@ export class AudioEncodeNode extends GainNode {
 	 * channels from then on, mixing its input up or down as Web Audio does, so
 	 * the frames match the encoder whatever the source and the output device
 	 * have. It hands the encoder one frame per `config.opus.frameDuration`
-	 * (20 ms if not given).
+	 * (20 ms if not given). A refused config leaves the capture format as it was.
+	 *
+	 * @throws {AudioEncodeNodeOptionError} if `opus.frameDuration` is not a
+	 * positive finite number, or, for Opus, not a duration Opus encodes.
 	 */
 	configure(config: AudioEncoderConfig): void {
 		const channels = config.numberOfChannels;
 		const duration = config.opus?.frameDuration ?? DEFAULT_FRAME_DURATION_US;
+		if (config.codec === "opus" && !OPUS_FRAME_DURATIONS_US.includes(duration)) {
+			throw new AudioEncodeNodeOptionError(
+				"opus.frameDuration",
+				duration,
+				`one of ${OPUS_FRAME_DURATIONS_US.join(", ")}`,
+			);
+		}
+		if (!Number.isFinite(duration) || duration <= 0) {
+			throw new AudioEncodeNodeOptionError(
+				"opus.frameDuration",
+				duration,
+				"a positive finite number",
+			);
+		}
+		// Web Audio refuses a channel count it does not support, and the
+		// encoder a config, before the capture format is changed.
+		this.channelCount = channels;
+		this.#encoder.configure(config);
+
 		const frameLength = this.#framesOf(duration);
 		if (channels !== this.#channels || frameLength !== this.#frameLength) {
-			// Web Audio refuses a count it does not support, before anything
-			// is committed.
-			this.channelCount = channels;
 			if (this.#worklet) {
 				this.#worklet.channelCount = channels;
 				const format: FormatMessage = { type: "format", channels, frameLength };
@@ -166,8 +196,6 @@ export class AudioEncodeNode extends GainNode {
 			this.#frameLength = frameLength;
 		}
 		this.#maxQueuedFrames = Math.ceil(MAX_QUEUED_US / duration);
-
-		this.#encoder.configure(config);
 	}
 
 	// Context frames lasting `durationUs`, at least one.
@@ -275,14 +303,16 @@ export class AudioEncodeNode extends GainNode {
 	 * given, so a gap (a source that was disconnected, or a dropped frame)
 	 * would vanish, and the receiver would play the audio on either side of it
 	 * back to back; a flush makes the encoder start again from the next frame's
-	 * timestamp, so the receiver sees the gap. Called just before frame is
+	 * timestamp, so the receiver sees the gap. Frames are stamped by the
+	 * context's clock, so any jump of a sample or more is a gap; less is the
+	 * rounding of the timestamps to microseconds. Called just before frame is
 	 * encoded.
 	 */
 	#followTimeline(frame: AudioData): void {
 		if (
 			this.#dropped ||
 			(this.#nextTimestamp !== null &&
-				frame.timestamp - this.#nextTimestamp > CAPTURE_GAP_US)
+				Math.abs(frame.timestamp - this.#nextTimestamp) >= 1_000_000 / frame.sampleRate)
 		) {
 			this.#flushHeld();
 		}
@@ -382,7 +412,7 @@ export class AudioEncodeNode extends GainNode {
 	// Counts a dropped frame, and warns of the drops at most once per interval.
 	#countDrop(): void {
 		this.#droppedSinceWarning++;
-		const now = Date.now();
+		const now = performance.now();
 		if (now - this.#lastDropWarning < DROP_WARNING_INTERVAL_MS) return;
 		console.warn(
 			`[AudioEncodeNode] Encoder stalled: dropped ${this.#droppedSinceWarning} frame(s) since the last warning.`,

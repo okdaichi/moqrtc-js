@@ -1,6 +1,5 @@
-import { assert, assertEquals, assertExists } from "@std/assert";
+import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
 import { stub } from "@std/testing/mock";
-import { FakeTime } from "@std/testing/time";
 import type { FrameMessage } from "./audio_hijack_protocol.ts";
 import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import type {
@@ -57,7 +56,7 @@ function overrideGainNode(value: unknown): () => void {
 
 const restoreGlobalGainNode = overrideGainNode(FakeGainNode);
 
-const { AudioEncodeNode } = await import("./encode_node.ts");
+const { AudioEncodeNode, AudioEncodeNodeOptionError } = await import("./encode_node.ts");
 
 Deno.test("AudioEncodeNode", async (t) => {
 	let restoreAudioEncoder: () => void;
@@ -933,6 +932,61 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 		await node.dispose();
 	});
 
+	const refusedFrameDurationCases = [
+		{ codec: "opus", frameDuration: 0 },
+		{ codec: "opus", frameDuration: -20_000 },
+		{ codec: "opus", frameDuration: Number.NaN },
+		{ codec: "opus", frameDuration: Number.POSITIVE_INFINITY },
+		{ codec: "opus", frameDuration: 15_000 },
+		{ codec: "mp4a.40.2", frameDuration: 0 },
+	] as const;
+	for (const c of refusedFrameDurationCases) {
+		await t.step(
+			`refuses a frame duration of ${c.frameDuration} µs for ${c.codec}, keeping the capture format`,
+			async () => {
+				worklets = [];
+				const node = new AudioEncodeNode(new FakeAudioContext());
+				await workletReady();
+
+				assertThrows(
+					() =>
+						node.configure({
+							codec: c.codec,
+							sampleRate: 48000,
+							numberOfChannels: 1,
+							opus: { frameDuration: c.frameDuration },
+						}),
+					AudioEncodeNodeOptionError,
+				);
+
+				assertEquals(
+					{ posted: worklets[0]?.posted, configured: node.encoderState },
+					{ posted: [], configured: "unconfigured" },
+				);
+
+				await node.dispose();
+			},
+		);
+	}
+
+	await t.step("keeps the capture format when the encoder refuses the config", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		await workletReady();
+		const encoder = FakeAudioEncoder.lastCreated;
+		assertExists(encoder);
+		encoder.configureError = new TypeError("invalid config");
+
+		assertThrows(
+			() => node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 1 }),
+			TypeError,
+		);
+
+		assertEquals(worklets[0]?.posted, []);
+
+		await node.dispose();
+	});
+
 	await t.step("encodes after a late configure, dropping the frames before it", async () => {
 		worklets = [];
 		const node = new AudioEncodeNode(new FakeAudioContext());
@@ -978,9 +1032,9 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 				encode(data);
 			};
 
-			// 128 frames at 48 kHz last 2667 µs; then nothing is captured for half a
-			// second, then capture goes on; a 5 ms gap is not one.
-			for (const ts of [0, 2667, 500_000, 502_667, 507_667]) {
+			// 128 frames at 48 kHz last 2666.67 µs, so the third frame starts at
+			// 5333 µs, not 5334; then nothing is captured for 50 ms.
+			for (const ts of [0, 2667, 5333, 58_000]) {
 				postFrame(worklets[0]!, 1, ts);
 				await settle();
 			}
@@ -988,10 +1042,9 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 			assertEquals(events, [
 				"encode 0",
 				"encode 2667",
+				"encode 5333",
 				"flush",
-				"encode 500000",
-				"encode 502667",
-				"encode 507667",
+				"encode 58000",
 			]);
 
 			await node.dispose();
@@ -1324,13 +1377,15 @@ Deno.test("AudioEncodeNode - captured frames under backpressure", async (t) => {
 		async () => {
 			const { node, encoder } = await startNode();
 			encoder.encodeQueueSize = 10;
-			const time = new FakeTime();
+			// performance.now(), the monotonic clock, in ms.
+			let now = 1_000;
+			const clock = stub(performance, "now", () => now);
 			const warn = stub(console, "warn");
 			try {
 				for (let i = 0; i < 5; i++) {
 					node.process(new FakeAudioData(960, 1, 48000, i * 20_000));
 				}
-				time.tick(5_000);
+				now += 5_000;
 				node.process(new FakeAudioData(960, 1, 48000, 100_000));
 
 				assertEquals(warn.calls.map((call) => call.args[0]), [
@@ -1339,7 +1394,7 @@ Deno.test("AudioEncodeNode - captured frames under backpressure", async (t) => {
 				]);
 			} finally {
 				warn.restore();
-				time.restore();
+				clock.restore();
 			}
 
 			encoder.encodeQueueSize = 0;
