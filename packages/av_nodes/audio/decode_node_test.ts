@@ -1,4 +1,6 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
+import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
+import type { AudioDecodeNodeInit } from "./decode_node.ts";
 import { FakeAudioContext } from "./fake_audio_context_test.ts";
 import { FakeAudioWorkletNode } from "./fake_audio_workletnode_test.ts";
 import { FakeAudioDecoder } from "./fake_audiodecoder_test.ts";
@@ -43,7 +45,13 @@ function overrideAudioDecoder(value: unknown): () => void {
 const restoreGainNode = overrideGainNode(FakeGainNode);
 const restoreAudioWorkletNode = overrideAudioWorkletNode(FakeAudioWorkletNode);
 
-const { AudioDecodeNode } = await import("./decode_node.ts");
+const {
+	AudioDecodeNode,
+	AudioDecodeNodeDisposedError,
+	AudioDecodeNodeOptionError,
+	AudioPlaybackStatsTimeoutError,
+	AudioPlaybackUnavailableError,
+} = await import("./decode_node.ts");
 
 type AudioDecodeNodeType = InstanceType<typeof AudioDecodeNode>;
 
@@ -58,11 +66,14 @@ function createContext(): FakeAudioContext {
 function createNodeWithDecoder(
 	context: FakeAudioContext,
 	decoderCtor: new (config: AudioDecoderInit) => unknown,
+	init?: AudioDecodeNodeInit,
 ): AudioDecodeNodeType {
 	const restore = overrideAudioDecoder(decoderCtor);
-	const node = new AudioDecodeNode(context as unknown as AudioContext);
-	restore();
-	return node;
+	try {
+		return new AudioDecodeNode(context as unknown as AudioContext, init);
+	} finally {
+		restore();
+	}
 }
 
 /** Helper: create AudioDecodeNode using a pre-built decoder instance */
@@ -314,6 +325,317 @@ Deno.test("AudioDecodeNode", async (t) => {
 			await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 		},
 	);
+
+	const statsWith = (targetDelayMs: number): AudioPlaybackStats => ({
+		targetDelayMs,
+		delayMs: 0,
+		bufferLevelMs: 0,
+		receivedBlocks: 0,
+		lateBlocks: 0,
+		droppedBlocks: 0,
+		underruns: 0,
+		expands: 0,
+		expandedMs: 0,
+		accelerates: 0,
+		acceleratedMs: 0,
+		resyncs: 0,
+		reanchors: 0,
+	});
+
+	// The id of a stats request the node posted.
+	const requestId = (message: unknown): number => {
+		if (
+			typeof message === "object" && message !== null && "id" in message &&
+			typeof message.id === "number"
+		) {
+			return message.id;
+		}
+		throw new TypeError("not a stats request");
+	};
+
+	// Replies with a snapshot whose targetDelayMs is the request id.
+	const echo = (message: unknown): readonly unknown[] => {
+		const id = requestId(message);
+		return [{ type: "stats", id, stats: statsWith(id) }];
+	};
+
+	// The playback worklet's port: records what the node posts, answers each
+	// message with `respond(message)`, and throws `postError` when set.
+	class FakePlaybackPort {
+		readonly sent: unknown[] = [];
+		onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+		respond: (message: unknown) => readonly unknown[] = () => [];
+		postError: Error | null = null;
+
+		constructor(private readonly onPost: () => void) {}
+
+		postMessage(message: unknown): void {
+			if (this.postError !== null) throw this.postError;
+			this.sent.push(message);
+			this.onPost();
+			for (const data of this.respond(message)) {
+				queueMicrotask(() => this.onmessage?.(new MessageEvent("message", { data })));
+			}
+		}
+	}
+
+	// Installs a fake AudioWorkletNode for one test. `configure` sets up each
+	// node's port; `posted` resolves when the node first posts to a worklet.
+	function installPlaybackWorklet(configure: (port: FakePlaybackPort) => void = () => {}) {
+		const created: FakePlaybackWorkletNode[] = [];
+		const posted = Promise.withResolvers<void>();
+		class FakePlaybackWorkletNode {
+			readonly port = new FakePlaybackPort(() => posted.resolve());
+			onprocessorerror: ((event: Event) => void) | null = null;
+			readonly options: AudioWorkletNodeOptions | undefined;
+
+			constructor(_context: unknown, _name: string, options?: AudioWorkletNodeOptions) {
+				this.options = options;
+				configure(this.port);
+				created.push(this);
+			}
+
+			connect(): void {}
+			disconnect(): void {}
+		}
+		const restore = overrideAudioWorkletNode(FakePlaybackWorkletNode);
+		return { created, posted: posted.promise, restore };
+	}
+
+	const createNode = (init?: AudioDecodeNodeInit, context = createContext()) =>
+		createNodeWithDecoder(context, FakeAudioDecoder, init);
+
+	const workletOptions = [
+		{
+			name: "latency and maxLatency",
+			init: { latency: 80, maxLatency: 300 },
+			expected: { latency: 80, maxLatency: 300 },
+		},
+		{ name: "the defaults", init: {}, expected: { latency: 100, maxLatency: 400 } },
+		{
+			name: "a latency above the default maxLatency",
+			init: { latency: 500 },
+			expected: { latency: 500, maxLatency: 500 },
+		},
+		{
+			name: "maxLatency equal to latency",
+			init: { latency: 80, maxLatency: 80 },
+			expected: { latency: 80, maxLatency: 80 },
+		},
+	] as const;
+	for (const c of workletOptions) {
+		await t.step(`passes ${c.name} to the playback worklet`, async () => {
+			const worklet = installPlaybackWorklet((port) => (port.respond = echo));
+			try {
+				const node = createNode(c.init);
+
+				await node.getStats();
+
+				const [created] = worklet.created;
+				assertExists(created);
+				assertEquals(created.options?.processorOptions, {
+					sampleRate: 44100,
+					...c.expected,
+				});
+				node.dispose();
+			} finally {
+				worklet.restore();
+			}
+		});
+	}
+
+	const invalidInits = [
+		{ name: "latency 0", init: { latency: 0 }, option: "latency" },
+		{ name: "latency -1", init: { latency: -1 }, option: "latency" },
+		{ name: "latency NaN", init: { latency: NaN }, option: "latency" },
+		{ name: "latency Infinity", init: { latency: Infinity }, option: "latency" },
+		{ name: "maxLatency 0", init: { maxLatency: 0 }, option: "maxLatency" },
+		{ name: "maxLatency NaN", init: { maxLatency: NaN }, option: "maxLatency" },
+		{ name: "maxLatency Infinity", init: { maxLatency: Infinity }, option: "maxLatency" },
+		{
+			name: "maxLatency below latency",
+			init: { latency: 100, maxLatency: 99 },
+			option: "maxLatency",
+		},
+	] as const;
+	for (const c of invalidInits) {
+		await t.step(`rejects ${c.name}`, () => {
+			const error = assertThrows(() => createNode(c.init), AudioDecodeNodeOptionError);
+
+			assertEquals(error.option, c.option);
+		});
+	}
+
+	await t.step("getStats() resolves each request with its own reply", async () => {
+		const worklet = installPlaybackWorklet((port) => (port.respond = echo));
+		try {
+			const node = createNode();
+
+			const replies = await Promise.all([node.getStats(), node.getStats()]);
+
+			assertEquals(replies.map((stats) => stats.targetDelayMs), [0, 1]);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("getStats() ignores malformed replies and replies to other requests", async () => {
+		const worklet = installPlaybackWorklet((port) => {
+			port.respond = (message) => {
+				const id = requestId(message);
+				return [
+					{ type: "stats", id: id + 100, stats: statsWith(1) },
+					{ type: "stats", id, stats: { targetDelayMs: 2 } },
+					{ type: "flush", id },
+					null,
+					{ type: "stats", id, stats: statsWith(3) },
+				];
+			};
+		});
+		try {
+			const node = createNode();
+
+			const stats = await node.getStats();
+
+			assertEquals(stats.targetDelayMs, 3);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("getStats() rejects once the node is disposed", async () => {
+		const worklet = installPlaybackWorklet();
+		try {
+			const node = createNode();
+
+			node.dispose();
+
+			await assertRejects(() => node.getStats(), AudioDecodeNodeDisposedError);
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("getStats() rejects when the node is disposed while waiting", async () => {
+		const worklet = installPlaybackWorklet();
+		try {
+			const node = createNode();
+			const pending = node.getStats();
+			await worklet.posted;
+
+			node.dispose();
+
+			await assertRejects(() => pending, AudioDecodeNodeDisposedError);
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("getStats() rejects when posting to the worklet fails", async () => {
+		const postError = new DOMException("port closed", "InvalidStateError");
+		const worklet = installPlaybackWorklet((port) => (port.postError = postError));
+		try {
+			const node = createNode();
+
+			const error = await assertRejects(() => node.getStats(), AudioPlaybackUnavailableError);
+
+			assertEquals(error.cause, postError);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("getStats() rejects when the worklet's processor fails", async () => {
+		const worklet = installPlaybackWorklet();
+		try {
+			const node = createNode();
+			const pending = node.getStats();
+			await worklet.posted;
+			const [created] = worklet.created;
+			assertExists(created);
+
+			created.onprocessorerror?.(new Event("processorerror"));
+
+			await assertRejects(() => pending, AudioPlaybackUnavailableError);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("getStats() rejects when the worklet fails to load", async () => {
+		const loadError = new Error("module failed to load");
+		const context = createContext();
+		context.audioWorklet.addModule = () => Promise.reject(loadError);
+		const node = createNode({}, context);
+
+		const error = await assertRejects(() => node.getStats(), AudioPlaybackUnavailableError);
+
+		assertEquals(error.cause, loadError);
+		node.dispose();
+	});
+
+	await t.step("getStats() rejects when the worklet does not reply in time", async () => {
+		const worklet = installPlaybackWorklet();
+		try {
+			const node = createNode();
+
+			const error = await assertRejects(
+				() => node.getStats({ timeoutMs: 1 }),
+				AudioPlaybackStatsTimeoutError,
+			);
+
+			assertEquals(error.timeoutMs, 1);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("getStats() rejects a timeout that is not positive", async () => {
+		const node = createNode();
+
+		await assertRejects(() => node.getStats({ timeoutMs: 0 }), RangeError);
+
+		node.dispose();
+	});
+
+	await t.step("getStats() rejects waiting requests when the context closes", async () => {
+		const worklet = installPlaybackWorklet();
+		try {
+			const context = createContext();
+			const node = createNode({}, context);
+			const pending = node.getStats();
+			await worklet.posted;
+
+			context.state = "closed";
+			context.dispatchEvent(new Event("statechange"));
+
+			await assertRejects(() => pending, AudioPlaybackUnavailableError);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("getStats() rejects at once on a closed context", async () => {
+		const worklet = installPlaybackWorklet((port) => (port.respond = echo));
+		try {
+			const context = createContext();
+			const node = createNode({}, context);
+			context.state = "closed";
+
+			await assertRejects(() => node.getStats(), AudioPlaybackUnavailableError);
+
+			assertEquals(worklet.created.flatMap((created) => created.port.sent), []);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
+	});
 
 	await t.step("cleanup", () => {
 		restoreGainNode();

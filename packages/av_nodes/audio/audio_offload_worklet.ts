@@ -1,3 +1,7 @@
+import { DEFAULT_MAX_LATENCY_MS, isAudioOffloadMessage } from "./audio_offload_protocol.ts";
+import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
+import { DelayEstimator } from "./delay_estimator.ts";
+
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
 	return new URL("./audio_offload_worklet.js", import.meta.url).href;
@@ -5,68 +9,132 @@ export function importWorkletUrl(): string {
 
 export const workletName: string = "audio-offloader";
 
-// Check if we're in a worklet context
-// Blocks in a row, each wholly in the playback past, after which playback
-// starts over from the stream as it now arrives. One late block is only dropped.
+// Blocks in a row, each wholly in the playback past and too late to absorb by
+// raising the delay, after which playback starts over from the stream as it now
+// arrives. One such block is only dropped.
 const REANCHOR_AFTER_BEHIND_BLOCKS = 3;
 
+// Target changes smaller than this (ms) are ignored.
+const ADJUST_DEADBAND_MS = 5;
+
+// Lowering the delay: a step of at most this much (ms) is taken once the delay
+// has waited to be lowered for the step interval (s), at a silence gap or a
+// quiet stretch. With neither, it cuts with a crossfade once the wait reaches
+// the quiet wait (s). So the delay falls by 10 ms per second where there are
+// pauses, and by 10 ms per two seconds through continuous sound.
+const SHRINK_STEP_MS = 10;
+const SHRINK_INTERVAL_S = 1;
+const SHRINK_QUIET_WAIT_S = 2;
+const QUIET_LEVEL = 0.001; // -60 dBFS
+
+// Length (ms) of the fades at every edge between audio and silence.
+const FADE_MS = 3;
+
+// A positive, finite number.
+function isPositive(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 if (typeof AudioWorkletProcessor !== "undefined") {
-	// AudioWorkletProcessor for AudioEmitter
+	// Adaptive, timestamp-scheduled jitter buffer.
 	//
-	// Timestamp-scheduled jitter buffer. Each decoded block carries a
-	// presentation timestamp (µs). Instead of writing blocks contiguously at
-	// arrival (which makes the buffer level a function of arrival cadence and
-	// clicks on bursty/jittery delivery), every block is written at the audio
-	// frame it should be presented at, derived from its timestamp. `process()`
-	// drains by playback frame. Gaps are silence-filled; late/overlapping
-	// blocks are dropped/overwritten; bursts are absorbed up to one buffer of
-	// look-ahead. See issue #18.
+	// Each decoded block carries a presentation timestamp (µs) and is written
+	// into a ring at the audio frame it is due, so the buffer level does not
+	// depend on arrival cadence. `process()` reads by playback frame. Gaps are
+	// silence; overlapping blocks overwrite (last writer wins, right for one
+	// live source).
 	//
-	// Overlap policy is last-writer-wins: two blocks scheduled into the same
-	// frame range simply overwrite (no keep-earliest, no mix). That's correct
-	// for a single-source live stream; if this buffer is ever reused for
-	// splicing / dual sources, that assumption needs revisiting.
+	// The playout delay adapts to the observed arrival jitter, after WebRTC's
+	// NetEQ: a DelayEstimator turns each block's arrival delay into a target
+	// cushion over the fastest recent arrival (the delay floor), raising it at
+	// once for a late block and lowering it slowly. `latency` is the starting
+	// and minimum cushion, `maxLatency` the maximum; equal, they fix the delay.
 	//
-	// TODO(long-term drift): the playback clock (sound card, advanced once per
-	// `process()` quantum) and the media clock (PTS) are independent oscillators
-	// and will drift. The lag cushion absorbs ±lag; beyond that the buffer pins
-	// one edge (persistent underrun or overflow). Fine for short/medium
-	// sessions; a long-running stream wants a slow leaky correction (nudge
-	// #playoutFrame ±1 sample when the level sits at an edge for N seconds).
+	// The applied delay follows the target by moving the playout mapping:
+	// - A block that arrives after its playout frame raises the delay so it
+	//   plays instead of being dropped; the reader has already run dry, and
+	//   playback resumes with a fade-in.
+	// - A higher target otherwise inserts silence at the write head, with a
+	//   fade-out before it and a fade-in after it.
+	// - A lower target removes audio in small steps, preferring a silence gap
+	//   or a quiet stretch, and crossfades the cut.
+	// - A block more than one cushion ahead of the cushion, or beyond the ring,
+	//   moves the reader to the live edge; the audio it was playing fades out.
+	// Because the floor tracks the fastest recent arrival, a drift between the
+	// sender's and the receiver's audio clocks shows up as a rising or falling
+	// floor and is absorbed the same way.
+	//
+	// When the reader runs out of audio it fades out over a few ms ahead of the
+	// end and fades back in when audio resumes, so an underrun is a soft gap.
+	//
+	// Messages are an AudioOffloadMessage: `append` plays a block, `stats`
+	// asks for a snapshot, answered with a StatsReply of the same id. Anything
+	// else is ignored.
 	class AudioOffloadProcessor extends AudioWorkletProcessor {
-		#channelsBuffer: Float32Array[] = [];
+		readonly #channelsBuffer: Float32Array[] = [];
 
 		// Absolute playback frame counter. Drives the read side; advanced by the
 		// output length each `process()` quantum. This is the audio clock.
 		#playoutFrame: number = 0;
 
-		// Media-clock origin: the timestamp (µs) of the first block, captured once.
+		// Media-clock origin: the timestamp (µs) of the anchoring block.
 		#baseTsUs: number | null = null;
 
-		// Playback frame at the moment the first block arrived. The lag cushion is
-		// measured from HERE (not from frame 0), so a first block that arrives
-		// after playback has already been idling still gets a full cushion —
-		// otherwise it would map into the playback past and be dropped forever.
+		// Playback frame at which the anchoring block arrived. A block's
+		// scheduled frame is this plus its media time since #baseTsUs; its
+		// playout frame is that plus #delay.
 		#playoutOriginFrame: number = 0;
 
 		// Absolute frame up to which the ring has been written (gaps silence-filled).
 		// `null` until the first block establishes #baseTsUs.
 		#nextWriteFrame: number | null = null;
 
-		// Presentation lag (cushion) in frames. The first block plays this many
-		// frames after playback start, giving the buffer room to absorb jitter.
-		#lagSamples: number = 0;
+		// Applied playout delay (frames) from a block's scheduled frame to its
+		// playout frame: the delay floor plus the cushion.
+		#delay: number = 0;
 
-		// Ring size in frames. Twice the lag: one lag for the cushion, one for
-		// burst/jitter headroom. Slot for absolute frame P is at P % #bufferLength.
-		#bufferLength: number = 0;
+		readonly #minCushion: number;
+		readonly #adaptive: boolean;
+		readonly #estimator: DelayEstimator;
 
-		readonly #sampleRate: number = 0;
+		// Ring size in frames: twice the maximum cushion, allocated once. Slot
+		// for absolute frame P is at P % #bufferLength.
+		readonly #bufferLength: number;
 
-		// Blocks in a row that arrived wholly in the playback past. A run of them
-		// means the stream itself fell behind (the sender's audio clock stopped,
-		// or delivery stalled), not that one block was late.
+		readonly #sampleRate: number;
+		readonly #fadeFrames: number;
+
+		// Playback frame since which the delay has waited to be lowered: when the
+		// target fell below it, or the last lowering step. Null while the target
+		// does not ask for a lower delay.
+		#shrinkWaitingSince: number | null = null;
+
+		// Fade-out of the audio that was playing when the reader jumped to the
+		// live edge (per channel, allocated once), and how many of its frames are
+		// still to be mixed into the output.
+		readonly #resyncTail: Float32Array[] = [];
+		#resyncTailFrames: number = 0;
+
+		// Output gain envelope for underrun fades, carried across quanta.
+		#gain: number = 1;
+		#starved: boolean = false;
+
+		// Blocks in a row that arrived wholly in the playback past and could not
+		// be absorbed. A run of them means the stream itself fell behind (the
+		// sender's audio clock stopped, or delivery stalled).
 		#behindBlocks: number = 0;
+
+		// Counters reported in the stats snapshot.
+		#receivedBlocks: number = 0;
+		#lateBlocks: number = 0;
+		#droppedBlocks: number = 0;
+		#underruns: number = 0;
+		#expands: number = 0;
+		#expandedFrames: number = 0;
+		#accelerates: number = 0;
+		#acceleratedFrames: number = 0;
+		#resyncs: number = 0;
+		#reanchors: number = 0;
 
 		constructor(options: AudioWorkletNodeOptions) {
 			super();
@@ -79,39 +147,97 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 				throw new Error("invalid channelCount");
 			}
 
-			const sampleRate = options.processorOptions.sampleRate;
-			if (!sampleRate || sampleRate <= 0) {
+			const sampleRate: unknown = options.processorOptions.sampleRate;
+			if (!isPositive(sampleRate)) {
 				throw new Error("invalid sampleRate");
 			}
 
-			const latency = options.processorOptions.latency;
-			if (!latency || latency <= 0) {
+			const latency: unknown = options.processorOptions.latency;
+			if (!isPositive(latency)) {
 				throw new Error("invalid latency");
 			}
 
+			const maxLatency: unknown = options.processorOptions.maxLatency ??
+				Math.max(DEFAULT_MAX_LATENCY_MS, latency);
+			if (!isPositive(maxLatency) || maxLatency < latency) {
+				throw new Error("invalid maxLatency");
+			}
+
 			this.#sampleRate = sampleRate;
-			this.#lagSamples = Math.ceil(sampleRate * latency / 1000);
-			this.#bufferLength = this.#lagSamples * 2;
+			this.#minCushion = this.#frames(latency);
+			// At least #minCushion, as maxLatency is at least latency.
+			const maxCushion = this.#frames(maxLatency);
+			this.#adaptive = maxCushion > this.#minCushion;
+			this.#estimator = new DelayEstimator({
+				sampleRate,
+				minCushion: this.#minCushion,
+				maxCushion,
+			});
+			this.#bufferLength = maxCushion * 2;
+			this.#delay = this.#minCushion;
+			this.#fadeFrames = Math.max(1, this.#frames(FADE_MS));
 
 			for (let i = 0; i < channelCount; i++) {
 				this.#channelsBuffer[i] = new Float32Array(this.#bufferLength);
+				this.#resyncTail[i] = new Float32Array(this.#fadeFrames);
 			}
 
-			this.port.onmessage = (
-				{ data }: { data: { channels: Float32Array[]; timestamp: number } },
-			) => {
-				this.append(data.channels, data.timestamp);
+			this.port.onmessage = (event: MessageEvent<unknown>) => {
+				const message = event.data;
+				if (!isAudioOffloadMessage(message)) return;
+				switch (message.type) {
+					case "append":
+						this.append(message.channels, message.timestamp);
+						return;
+					case "stats":
+						this.port.postMessage({ type: "stats", id: message.id, stats: this.stats() });
+						return;
+					default: {
+						const unhandled: never = message;
+						return unhandled;
+					}
+				}
 			};
 		}
 
-		// Playout frame for a media timestamp (µs): the first block's frame, plus
-		// the lag cushion measured from first-arrival (#playoutOriginFrame), plus
-		// the media-time delta. #baseTsUs / #playoutOriginFrame are set on the
-		// first block before this is ever called.
-		#playoutFrameForTs(tsUs: number): number {
+		#frames(ms: number): number {
+			return Math.ceil(this.#sampleRate * ms / 1000);
+		}
+
+		#ms(frames: number): number {
+			return frames * 1000 / this.#sampleRate;
+		}
+
+		// Snapshot of the buffer's state.
+		stats(): AudioPlaybackStats {
+			const written = this.#nextWriteFrame ?? this.#playoutFrame;
+			return {
+				targetDelayMs: this.#ms(this.#estimator.targetCushion()),
+				delayMs: this.#ms(this.#delay - this.#estimator.floor()),
+				bufferLevelMs: this.#ms(Math.max(0, written - this.#playoutFrame)),
+				receivedBlocks: this.#receivedBlocks,
+				lateBlocks: this.#lateBlocks,
+				droppedBlocks: this.#droppedBlocks,
+				underruns: this.#underruns,
+				expands: this.#expands,
+				expandedMs: this.#ms(this.#expandedFrames),
+				accelerates: this.#accelerates,
+				acceleratedMs: this.#ms(this.#acceleratedFrames),
+				resyncs: this.#resyncs,
+				reanchors: this.#reanchors,
+			};
+		}
+
+		// Frame a block would play at with no delay: the anchoring block's
+		// arrival frame plus the block's media time since it.
+		#scheduledFrameForTs(tsUs: number): number {
 			const base = this.#baseTsUs ?? 0;
-			return this.#playoutOriginFrame + this.#lagSamples +
+			return this.#playoutOriginFrame +
 				Math.round((tsUs - base) * this.#sampleRate / 1_000_000);
+		}
+
+		#playoutFrameForTs(tsUs: number): number {
+			return this.#scheduledFrameForTs(tsUs) + this.#delay;
 		}
 
 		// Makes tsUs the media-clock origin, played one cushion from now. The
@@ -122,113 +248,181 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#playoutOriginFrame = this.#playoutFrame;
 			this.#nextWriteFrame = this.#playoutFrame;
 			this.#behindBlocks = 0;
+			this.#estimator.reset(0, this.#playoutFrame);
+			this.#delay = this.#estimator.targetCushion();
 		}
 
-		// Zero-fill ring slots [from, to) on every channel (wrap-aware).
-		#silenceFill(from: number, to: number): void {
+		// Zero-fill `count` ring slots of one channel from absolute frame `from`
+		// (wrap-aware).
+		#zero(dst: Float32Array, from: number, count: number): void {
 			const len = this.#bufferLength;
+			let pos = from % len;
+			let remaining = count;
+			while (remaining > 0) {
+				const toFill = Math.min(remaining, len - pos);
+				dst.fill(0, pos, pos + toFill);
+				pos = (pos + toFill) % len;
+				remaining -= toFill;
+			}
+		}
+
+		// Zero-fill ring slots [from, to) on every channel.
+		#silenceFill(from: number, to: number): void {
 			for (const dst of this.#channelsBuffer) {
-				if (!dst) continue;
-				let pos = from % len;
-				let remaining = to - from;
-				while (remaining > 0) {
-					const toCopy = Math.min(remaining, len - pos);
-					dst.fill(0, pos, pos + toCopy);
-					pos = (pos + toCopy) % len;
-					remaining -= toCopy;
+				this.#zero(dst, from, to - from);
+			}
+		}
+
+		// Keeps the next fade of audio the reader would have played, faded out,
+		// to mix into the output after it jumps.
+		#keepResyncTail(): void {
+			const len = this.#bufferLength;
+			const fade = this.#fadeFrames;
+			const written = this.#nextWriteFrame ?? this.#playoutFrame;
+			for (let channel = 0; channel < this.#channelsBuffer.length; channel++) {
+				const src = this.#channelsBuffer[channel];
+				const tail = this.#resyncTail[channel];
+				if (!src || !tail) continue;
+				for (let i = 0; i < fade; i++) {
+					const frame = this.#playoutFrame + i;
+					const sample = frame < written ? (src[frame % len] ?? 0) : 0;
+					tail[i] = sample * this.#gain * ((fade - i) / (fade + 1));
+				}
+			}
+			this.#resyncTailFrames = fade;
+		}
+
+		// Fades out the written frames just before `end`, so the audio ends
+		// softly where silence follows. Only frames not yet played are touched.
+		#fadeOutBefore(end: number): void {
+			const len = this.#bufferLength;
+			const fade = this.#fadeFrames;
+			const from = Math.max(this.#playoutFrame, end - fade);
+			for (const dst of this.#channelsBuffer) {
+				for (let f = from; f < end; f++) {
+					const pos = f % len;
+					dst[pos] = (dst[pos] ?? 0) * ((end - f) / (fade + 1));
 				}
 			}
 		}
 
-		append(channels: Float32Array[], tsUs: number): void {
-			if (!channels.length || !channels[0] || channels[0].length === 0) {
+		// Whether ring frames [from, to) are all below the quiet level.
+		#isQuiet(from: number, to: number): boolean {
+			const len = this.#bufferLength;
+			for (const dst of this.#channelsBuffer) {
+				for (let f = from; f < to; f++) {
+					if (Math.abs(dst[f % len] ?? 0) > QUIET_LEVEL) return false;
+				}
+			}
+			return true;
+		}
+
+		append(channels: readonly Float32Array[], tsUs: number): void {
+			const first = channels[0];
+			if (!first || first.length === 0) {
 				return;
 			}
 
-			// Not initialized yet. Skip
-			if (
-				this.#channelsBuffer === undefined ||
-				this.#channelsBuffer.length === 0 ||
-				this.#channelsBuffer[0] === undefined
-			) return;
+			const numberOfFrames = first.length;
+			this.#receivedBlocks++;
 
-			const numberOfFrames = channels[0].length;
-
-			// First block establishes the media-clock origin and anchors the lag
-			// cushion to the playback frame at arrival. Start the write head at the
-			// current read pointer so the gap-fill below populates the pre-roll
-			// region [#playoutFrame, start) — everything in [#playoutFrame,
-			// #nextWriteFrame) stays validly populated (without relying on the ring
-			// happening to start zeroed, and without touching already-past slots).
+			// The first block establishes the media-clock origin and anchors the
+			// delay to the playback frame at its arrival. Playback starting (or
+			// starting over) from a block, after silence, is not faded in.
+			let restart = false;
 			if (this.#baseTsUs === null) {
 				this.#anchor(tsUs);
+				restart = true;
 			}
 
 			let start = this.#playoutFrameForTs(tsUs);
 
-			// Stale (late) block: its whole range is already in the playback past.
-			// Drop it rather than clobber current playback. A run of them means the
-			// stream fell behind for good, by however much (it carries no time for
-			// a stretch the sender did not capture, such as a suspended
-			// AudioContext): every later block would be dropped too, so start over
-			// from this block, as for the first one. The mirror of the resync to
-			// the live edge below.
+			// Resync to the live edge: a block more than one cushion ahead of the
+			// cushion means playback has fallen behind the media (a catch-up burst
+			// after a slow spell), and a block reaching past the ring cannot be
+			// written at all. The backlog is stale for a live stream: advance the
+			// read pointer so this block lands one cushion ahead, fading out the
+			// audio it was playing, and measure delays from here on.
+			const cushion = Math.max(this.#minCushion, this.#delay - this.#estimator.floor());
+			if (
+				start - this.#playoutFrame >= 2 * cushion ||
+				start + numberOfFrames > this.#playoutFrame + this.#bufferLength
+			) {
+				const target = this.#estimator.targetCushion();
+				this.#keepResyncTail();
+				this.#playoutFrame = Math.max(this.#playoutFrame, start - target);
+				this.#nextWriteFrame = this.#playoutFrame;
+				this.#estimator.reset(
+					this.#playoutFrame - this.#scheduledFrameForTs(tsUs),
+					this.#playoutFrame,
+				);
+				this.#delay = this.#estimator.floor() + target;
+				start = this.#playoutFrameForTs(tsUs);
+				this.#resyncs++;
+			}
+
+			this.#estimator.observe(
+				this.#playoutFrame - this.#scheduledFrameForTs(tsUs),
+				numberOfFrames,
+				this.#playoutFrame,
+			);
+
+			// Frames at the head of this block to crossfade with the audio
+			// already in the ring, where a lowering step cut into it.
+			let crossfade = 0;
+			if (this.#adaptive) {
+				crossfade = this.#adjust(start, numberOfFrames);
+				start = this.#playoutFrameForTs(tsUs);
+			}
+
+			// Stale (late) block: its whole range is already in the playback past
+			// and raising the delay could not save it. Drop it rather than clobber
+			// current playback. A run of them means the stream fell behind for
+			// good: every later block would be dropped too, so start over from
+			// this block, as for the first one.
 			if (start + numberOfFrames <= this.#playoutFrame) {
 				this.#behindBlocks++;
 				if (this.#behindBlocks < REANCHOR_AFTER_BEHIND_BLOCKS) {
+					this.#droppedBlocks++;
 					return;
 				}
 				this.#anchor(tsUs);
 				start = this.#playoutFrameForTs(tsUs);
+				this.#reanchors++;
+				restart = true;
 			}
 			this.#behindBlocks = 0;
 			const end = start + numberOfFrames;
 
 			// Partially-late block (start < #playoutFrame < end): discard the
-			// already-played prefix. This keeps `start >= #playoutFrame`, so the
-			// ring write never targets past slots (which would alias future reads on
-			// wrap) and `start % #bufferLength` is never negative — a pre-base or
-			// out-of-order timestamp can't reach `dst.set(..., negativeOffset)` and
-			// kill the onmessage handler.
+			// already-played prefix, so the ring write never targets past slots
+			// (which would alias future reads on wrap).
 			let srcOffset0 = 0;
 			if (start < this.#playoutFrame) {
 				srcOffset0 = this.#playoutFrame - start;
 				start = this.#playoutFrame;
 			}
 
-			// Burst cap: never write more than one buffer ahead of the read pointer,
-			// or the ring would wrap over not-yet-played data. When an incoming
-			// block schedules beyond the cap the buffer is over-full — playback has
-			// fallen behind the media (catch-up burst after a slow spell, or slight
-			// publisher>sound-card rate drift). For a live stream the backlog is
-			// already stale, so resync to the live edge: advance the read pointer so
-			// this block lands at the cushion, dropping the excess. Without this,
-			// every later block schedules at the (pinned-full) cap and is dropped,
-			// which is the per-frame click. Cost is a skip at each resync — far
-			// better than dropping all new audio.
-			const maxFrame = this.#playoutFrame + this.#bufferLength;
-			let writeEnd = end;
-			if (start >= maxFrame) {
-				this.#playoutFrame = start - this.#lagSamples;
-				this.#nextWriteFrame = this.#playoutFrame;
-				// Recompute the cap against the new read pointer; writeHead below
-				// is now == playoutFrame, so the gap-fill silence-fills the cushion
-				// and this block writes at the live edge.
-			}
-			if (writeEnd > this.#playoutFrame + this.#bufferLength) {
-				writeEnd = this.#playoutFrame + this.#bufferLength;
-			}
+			// Never write more than one ring ahead of the read pointer, or the
+			// ring would wrap over not-yet-played data.
+			const writeEnd = Math.min(end, this.#playoutFrame + this.#bufferLength);
 
-			// If the block is scheduled ahead of what we've written, the gap in
-			// between is underrun media → silence-fill it so the read side sees no
-			// stale data there.
-			const writeHead = this.#nextWriteFrame ?? start;
-			if (start > writeHead) {
-				this.#silenceFill(writeHead, start);
+			// A block scheduled after the write head follows silence: a gap, or
+			// an underrun the reader has already run into. Fade it in, and fade
+			// out the unplayed audio before the gap, so neither edge clicks.
+			const head = this.#nextWriteFrame ?? start;
+			let fadeIn = 0;
+			if (start > head) {
+				if (head > this.#playoutFrame) {
+					this.#fadeOutBefore(head);
+				}
+				this.#silenceFill(Math.max(head, this.#playoutFrame), start);
+				if (!restart) fadeIn = this.#fadeFrames;
 			}
 
 			const len = this.#bufferLength;
-			const writeLen = writeEnd - start;
+			const writeLen = Math.max(0, writeEnd - start);
+			const shaped = Math.min(writeLen, Math.max(crossfade, fadeIn));
 
 			for (let channel = 0; channel < this.#channelsBuffer.length; channel++) {
 				const src = channels[channel];
@@ -237,19 +431,25 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 				// Missing source channel → silence for this block's range.
 				if (!src) {
-					let pos = start % len;
-					let remaining = writeLen;
-					while (remaining > 0) {
-						const toCopy = Math.min(remaining, len - pos);
-						dst.fill(0, pos, pos + toCopy);
-						pos = (pos + toCopy) % len;
-						remaining -= toCopy;
-					}
+					this.#zero(dst, start, writeLen);
 					continue;
 				}
 
-				let writePos = start % len;
-				let srcOffset = 0;
+				// Head frames: crossfaded with the ring's audio, or faded in. A
+				// source channel shorter than the first reads as silence.
+				for (let i = 0; i < shaped; i++) {
+					const pos = (start + i) % len;
+					const sample = src[srcOffset0 + i] ?? 0;
+					if (crossfade > 0) {
+						const g = (i + 1) / (crossfade + 1);
+						dst[pos] = (dst[pos] ?? 0) * (1 - g) + sample * g;
+					} else {
+						dst[pos] = sample * ((i + 1) / (fadeIn + 1));
+					}
+				}
+
+				let writePos = (start + shaped) % len;
+				let srcOffset = shaped;
 				while (srcOffset < writeLen) {
 					const remaining = writeLen - srcOffset;
 					const spaceToEnd = len - writePos;
@@ -265,6 +465,86 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			if (this.#nextWriteFrame === null || writeEnd > this.#nextWriteFrame) {
 				this.#nextWriteFrame = writeEnd;
+			}
+		}
+
+		// Moves the applied delay towards the target for a block due at
+		// `start`. Returns the number of head frames to crossfade with the ring.
+		#adjust(start: number, numberOfFrames: number): number {
+			const target = this.#estimator.floor() + this.#estimator.targetCushion();
+			const deadband = this.#frames(ADJUST_DEADBAND_MS);
+
+			if (target < this.#delay - deadband && start >= this.#playoutFrame) {
+				return this.#lower(target, start, numberOfFrames);
+			}
+			this.#shrinkWaitingSince = null;
+
+			if (start < this.#playoutFrame) {
+				// Late: raise the delay so the block plays rather than being
+				// dropped, if the target covers it and the reader has run dry at
+				// it. With a later block already written it arrived out of order,
+				// and moving the playout would play it after that block.
+				const written = this.#nextWriteFrame ?? start;
+				if (
+					target - this.#delay >= this.#playoutFrame - start &&
+					written <= start + numberOfFrames
+				) {
+					this.#delay = target;
+					this.#lateBlocks++;
+				}
+			} else if (target > this.#delay + deadband) {
+				// Raise: the gap this opens before the block is silence-filled,
+				// with fades on both sides.
+				this.#expands++;
+				this.#expandedFrames += target - this.#delay;
+				this.#delay = target;
+			}
+			return 0;
+		}
+
+		// Takes one lowering step towards `target` for a block due at `start`,
+		// playing it earlier, once the delay has waited the step interval. When
+		// there is no silence gap before the block to take the step from, the
+		// step cuts the end of the audio already written: it waits for that
+		// stretch to be quiet, up to the quiet wait. Returns the number of head
+		// frames to crossfade with the ring.
+		#lower(target: number, start: number, numberOfFrames: number): number {
+			const waitingSince = this.#shrinkWaitingSince ?? this.#playoutFrame;
+			this.#shrinkWaitingSince = waitingSince;
+			const waited = this.#playoutFrame - waitingSince;
+			if (waited < this.#frames(SHRINK_INTERVAL_S * 1000)) return 0;
+
+			// The moved block must still reach the end of the written audio, so no
+			// audio from before the step is left playing after it.
+			const floor = Math.max(this.#nextWriteFrame ?? start, this.#playoutFrame);
+			const step = Math.min(
+				this.#delay - target,
+				this.#frames(SHRINK_STEP_MS),
+				start - this.#playoutFrame,
+				start + numberOfFrames - floor,
+			);
+			if (step <= 0) return 0;
+
+			const newStart = start - step;
+			const cut = Math.max(0, floor - newStart);
+			const forced = waited >= this.#frames(SHRINK_QUIET_WAIT_S * 1000);
+			if (cut > 0 && !forced && !this.#isQuiet(newStart, floor)) return 0;
+
+			this.#delay -= step;
+			this.#accelerates++;
+			this.#acceleratedFrames += step;
+			this.#shrinkWaitingSince = this.#playoutFrame;
+			return Math.min(cut, this.#fadeFrames);
+		}
+
+		// Adds what is left of the resync fade-out to the start of a quantum.
+		#mixResyncTail(channel: number, dst: Float32Array): void {
+			const tail = this.#resyncTail[channel];
+			if (this.#resyncTailFrames === 0 || !tail) return;
+			const from = tail.length - this.#resyncTailFrames;
+			const frames = Math.min(this.#resyncTailFrames, dst.length);
+			for (let i = 0; i < frames; i++) {
+				dst[i] = (dst[i] ?? 0) + (tail[from + i] ?? 0);
 			}
 		}
 
@@ -294,13 +574,23 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			}
 
 			const len = this.#bufferLength;
+			const fade = this.#fadeFrames;
+			const playout = this.#playoutFrame;
 
 			// How much real (written) data is available in this quantum. Slots beyond
 			// #nextWriteFrame haven't been written yet → silence (startup pre-roll or
 			// underrun). No base timestamp yet → nothing written → all silence.
-			const written = this.#nextWriteFrame ?? this.#playoutFrame;
-			const realEnd = Math.min(this.#playoutFrame + outputLength, written);
-			const realFrames = Math.max(0, realEnd - this.#playoutFrame);
+			const written = this.#nextWriteFrame ?? playout;
+			const realEnd = Math.min(playout + outputLength, written);
+			const realFrames = Math.max(0, realEnd - playout);
+
+			// Gain envelope: it falls as the read nears the end of the written
+			// audio (a fade-out ahead of an underrun) and rises by at most 1/fade
+			// per frame (a fade-in after one). At unity with audio well ahead the
+			// output is a plain copy.
+			const gain0 = this.#gain;
+			const shaped = gain0 < 1 || written - playout < outputLength + fade;
+			let gainEnd = gain0;
 
 			for (const output of outputs) {
 				for (let channel = 0; channel < output.length; channel++) {
@@ -309,11 +599,12 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 					if (!dst) continue;
 					if (!src || realFrames <= 0) {
 						dst.fill(0);
+						this.#mixResyncTail(channel, dst);
 						continue;
 					}
 
 					// Read the written region from the ring.
-					let readPos = this.#playoutFrame % len;
+					let readPos = playout % len;
 					let dstOffset = 0;
 					while (dstOffset < realFrames) {
 						const remaining = realFrames - dstOffset;
@@ -324,11 +615,34 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 						readPos = (readPos + toCopy) % len;
 					}
 
+					if (shaped) {
+						let g = gain0;
+						for (let i = 0; i < realFrames; i++) {
+							const ahead = (written - playout - i) / (fade + 1);
+							g = Math.min(ahead, g + 1 / fade, 1);
+							dst[i] = (dst[i] ?? 0) * g;
+						}
+						gainEnd = g;
+					}
+
 					// Fill the rest of the quantum with silence.
 					if (dstOffset < dst.length) {
 						dst.fill(0, dstOffset);
 					}
+					this.#mixResyncTail(channel, dst);
 				}
+			}
+			this.#resyncTailFrames = Math.max(0, this.#resyncTailFrames - outputLength);
+
+			if (realFrames < outputLength) {
+				if (!this.#starved && this.#baseTsUs !== null) {
+					this.#underruns++;
+				}
+				this.#starved = true;
+				this.#gain = 0;
+			} else {
+				this.#starved = false;
+				this.#gain = gainEnd;
 			}
 
 			// Advance the playback clock.

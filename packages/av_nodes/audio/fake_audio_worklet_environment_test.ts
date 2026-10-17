@@ -1,19 +1,21 @@
 export type AudioWorkletRegisterCall = [string, unknown];
 
-export class FakeAudioWorkletProcessor {
-	port: MessagePort;
+// A processor's message port: records what the processor posts in `sent`;
+// tests deliver messages by calling `onmessage`.
+export class FakeProcessorPort {
+	readonly sent: unknown[] = [];
+	onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
 
-	constructor() {
-		this.port = {
-			postMessage: () => {},
-			onmessage: undefined,
-			start: () => {},
-			close: () => {},
-			addEventListener: () => {},
-			removeEventListener: () => {},
-			dispatchEvent: () => false,
-		} as unknown as MessagePort;
+	postMessage(message: unknown): void {
+		this.sent.push(message);
 	}
+
+	start(): void {}
+	close(): void {}
+}
+
+export class FakeAudioWorkletProcessor {
+	readonly port = new FakeProcessorPort();
 }
 
 export function setupFakeAudioWorkletEnvironment() {

@@ -1,10 +1,86 @@
 // Audio node API: AudioDecodeNode
 // Extends GainNode to enable standard connect() pattern while adding decoding capabilities
+import {
+	type AppendMessage,
+	DEFAULT_LATENCY_MS,
+	DEFAULT_MAX_LATENCY_MS,
+	isStatsReply,
+	type StatsRequest,
+} from "./audio_offload_protocol.ts";
 import { createWorkletBlobUrl as createOffloadWorkletBlobUrl } from "./audio_offload_worklet_inline.ts";
+import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
 
 const offloadWorkletName = "audio-offloader";
 
 const MAX_DECODE_QUEUE_SIZE = 3;
+
+export type { AudioPlaybackStats } from "./audio_playback_stats.ts";
+
+/** Options for {@link AudioDecodeNode}. */
+export interface AudioDecodeNodeInit {
+	/** Starting and minimum playout delay in ms (default 100). */
+	readonly latency?: number;
+	/**
+	 * Maximum playout delay in ms (default 400, or `latency` if larger). Equal
+	 * to `latency` fixes the delay.
+	 */
+	readonly maxLatency?: number;
+}
+
+/** An {@link AudioDecodeNodeInit} value out of range. */
+export class AudioDecodeNodeOptionError extends RangeError {
+	readonly option: keyof AudioDecodeNodeInit;
+	readonly value: number;
+
+	constructor(option: keyof AudioDecodeNodeInit, value: number, requirement: string) {
+		super(`AudioDecodeNode: ${option} must be ${requirement}, got ${value}`);
+		this.name = "AudioDecodeNodeOptionError";
+		this.option = option;
+		this.value = value;
+	}
+}
+
+/** The node was disposed before or while the operation ran. */
+export class AudioDecodeNodeDisposedError extends Error {
+	constructor() {
+		super("AudioDecodeNode is disposed");
+		this.name = "AudioDecodeNodeDisposedError";
+	}
+}
+
+/** The playback worklet failed to load, failed while running, or could not be reached. */
+export class AudioPlaybackUnavailableError extends Error {
+	constructor(message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "AudioPlaybackUnavailableError";
+	}
+}
+
+/** The playback worklet did not answer a stats request in time. */
+export class AudioPlaybackStatsTimeoutError extends AudioPlaybackUnavailableError {
+	readonly timeoutMs: number;
+
+	constructor(timeoutMs: number) {
+		super(`AudioDecodeNode: the playback worklet did not reply within ${timeoutMs} ms`);
+		this.name = "AudioPlaybackStatsTimeoutError";
+		this.timeoutMs = timeoutMs;
+	}
+}
+
+/** Options for {@link AudioDecodeNode.getStats}. */
+export interface AudioPlaybackStatsOptions {
+	/** How long to wait for the worklet's reply, in ms (default 1000). */
+	readonly timeoutMs?: number;
+}
+
+// How long getStats() waits for the worklet's reply by default (ms).
+const DEFAULT_STATS_TIMEOUT_MS = 1000;
+
+interface StatsRequestHandlers {
+	readonly resolve: (stats: AudioPlaybackStats) => void;
+	readonly reject: (error: Error) => void;
+	readonly timer: ReturnType<typeof setTimeout>;
+}
 
 /**
  * AudioDecodeNode extends GainNode to decode audio using WebCodecs AudioDecoder
@@ -22,11 +98,15 @@ const MAX_DECODE_QUEUE_SIZE = 3;
  * decodeNode.decodeFrom(encodedAudioStream);
  * ```
  *
- * `init.latency` (ms, default 100) sizes the worklet's jitter-buffer cushion.
- * 100 ms is enough for smooth/trickled delivery, but bursty sources — e.g. RTSP
- * AAC where ffmpeg coalesces several access units per RTP packet into ~80 ms
- * bursts — leave only ~20 ms of headroom and will click on spikes. Size the
- * cushion to the burst interval (a bit over one burst, ~150 ms for that case).
+ * The worklet holds decoded audio in an adaptive jitter buffer. Its playout
+ * delay starts at `init.latency` (ms, default 100) and follows the observed
+ * arrival jitter: it rises at once when audio arrives late and falls back
+ * slowly, over tens of seconds, once arrivals settle, never below `latency`
+ * and never above `init.maxLatency` (ms, default 400). A good link keeps the
+ * minimum delay; a bursty one (Wi-Fi power saving, coalesced RTP packets) gets
+ * as much as it needs to play without gaps. Changes of delay and underruns
+ * are faded over a few ms rather than cut. {@link AudioDecodeNode.getStats}
+ * reports the buffer's state.
  */
 export class AudioDecodeNode extends GainNode {
 	#decoder: AudioDecoder;
@@ -40,14 +120,50 @@ export class AudioDecodeNode extends GainNode {
 	// nobody drains).
 	#activeReader?: ReadableStreamDefaultReader<EncodedAudioChunk>;
 
+	// Stats requests waiting for the worklet's reply, by request id.
+	readonly #statsRequests = new Map<number, StatsRequestHandlers>();
+	#nextStatsRequest = 0;
+	// Set when the worklet's processor fails or the context closes; the
+	// worklet then answers nothing.
+	#playbackError: AudioPlaybackUnavailableError | null = null;
+	readonly #onStateChange: () => void;
+
 	// Callback for decoded output (for metrics)
 	onoutput: (() => void) | null = null;
 
-	constructor(context: AudioContext, init: { latency?: number } = {}) {
+	/**
+	 * @throws {AudioDecodeNodeOptionError} if `latency` or `maxLatency` is not a
+	 * positive finite number, or `maxLatency` is below `latency`.
+	 */
+	constructor(context: AudioContext, init: AudioDecodeNodeInit = {}) {
 		// Initialize as a passthrough GainNode
 		super(context, { gain: 1.0 });
 
+		const latency = init.latency ?? DEFAULT_LATENCY_MS;
+		if (!Number.isFinite(latency) || latency <= 0) {
+			throw new AudioDecodeNodeOptionError("latency", latency, "a positive finite number");
+		}
+		const maxLatency = init.maxLatency ?? Math.max(DEFAULT_MAX_LATENCY_MS, latency);
+		if (!Number.isFinite(maxLatency) || maxLatency < latency) {
+			throw new AudioDecodeNodeOptionError(
+				"maxLatency",
+				maxLatency,
+				`a finite number not below latency (${latency})`,
+			);
+		}
+
 		// Initialize worklet asynchronously
+		this.#onStateChange = () => {
+			if (context.state === "closed") {
+				this.#fail(
+					new AudioPlaybackUnavailableError(
+						"AudioDecodeNode: the audio context is closed",
+					),
+				);
+			}
+		};
+		context.addEventListener("statechange", this.#onStateChange);
+
 		this.#workletReady = context.audioWorklet.addModule(
 			createOffloadWorkletBlobUrl(),
 		).then(
@@ -62,10 +178,25 @@ export class AudioDecodeNode extends GainNode {
 						numberOfOutputs: 1,
 						processorOptions: {
 							sampleRate: context.sampleRate,
-							latency: init.latency || 100, // Default to 100ms if not specified
+							latency,
+							maxLatency,
 						},
 					},
 				);
+
+				worklet.port.onmessage = (event: MessageEvent<unknown>) => {
+					const reply = event.data;
+					if (!isStatsReply(reply)) return;
+					this.#settle(reply.id)?.resolve(reply.stats);
+				};
+
+				worklet.onprocessorerror = () => {
+					this.#fail(
+						new AudioPlaybackUnavailableError(
+							"AudioDecodeNode: the playback worklet failed",
+						),
+					);
+				};
 
 				// Connect worklet to this GainNode (super)
 				// Audio flows: worklet → this GainNode → destination
@@ -236,6 +367,12 @@ export class AudioDecodeNode extends GainNode {
 			transfer[i] = data.buffer;
 		}
 
+		const message: AppendMessage = {
+			type: "append",
+			channels,
+			timestamp: input.timestamp,
+		};
+
 		// Send AudioData to the worklet.
 		// Ownership: Transfer buffer ownership to worklet.
 		// Fast path: once the worklet has resolved (once, at startup) post
@@ -250,10 +387,7 @@ export class AudioDecodeNode extends GainNode {
 			// callback, where it would skip the caller's frame.close().
 			try {
 				worklet.port.postMessage(
-					{
-						channels: channels,
-						timestamp: input.timestamp,
-					},
+					message,
 					transfer, // Transfer ownership of the buffers
 				);
 			} catch (_) {
@@ -265,15 +399,84 @@ export class AudioDecodeNode extends GainNode {
 		this.#workletReady.then((w) => {
 			if (!w) return;
 			w.port.postMessage(
-				{
-					channels: channels,
-					timestamp: input.timestamp,
-				},
+				message,
 				transfer, // Transfer ownership of the buffers
 			);
 		}).catch(() => {
 			/* ignore */
 		});
+	}
+
+	/**
+	 * Asks the playback worklet for a snapshot of its jitter buffer.
+	 *
+	 * @throws {RangeError} if `timeoutMs` is not a positive finite number.
+	 * @throws {AudioDecodeNodeDisposedError} if the node is disposed before the
+	 * worklet replies.
+	 * @throws {AudioPlaybackStatsTimeoutError} if the worklet does not reply
+	 * within `timeoutMs`.
+	 * @throws {AudioPlaybackUnavailableError} if the worklet failed to load,
+	 * fails before replying, cannot be posted to, or the context is closed.
+	 */
+	async getStats(options: AudioPlaybackStatsOptions = {}): Promise<AudioPlaybackStats> {
+		const timeoutMs = options.timeoutMs ?? DEFAULT_STATS_TIMEOUT_MS;
+		if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+			throw new RangeError(`AudioDecodeNode: timeoutMs must be positive, got ${timeoutMs}`);
+		}
+		const worklet = await this.#workletReady.catch((e: unknown) => {
+			throw new AudioPlaybackUnavailableError(
+				"AudioDecodeNode: the playback worklet failed to load",
+				{ cause: e },
+			);
+		});
+		if (this.#disposed) throw new AudioDecodeNodeDisposedError();
+		this.#onStateChange();
+		if (this.#playbackError) throw this.#playbackError;
+		if (!worklet) {
+			throw new AudioPlaybackUnavailableError(
+				"AudioDecodeNode: the playback worklet was not loaded",
+			);
+		}
+
+		const id = this.#nextStatsRequest++;
+		const request: StatsRequest = { type: "stats", id };
+		return new Promise<AudioPlaybackStats>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.#settle(id)?.reject(new AudioPlaybackStatsTimeoutError(timeoutMs));
+			}, timeoutMs);
+			this.#statsRequests.set(id, { resolve, reject, timer });
+			try {
+				worklet.port.postMessage(request);
+			} catch (e) {
+				this.#settle(id)?.reject(
+					new AudioPlaybackUnavailableError(
+						"AudioDecodeNode: could not post to the playback worklet",
+						{ cause: e },
+					),
+				);
+			}
+		});
+	}
+
+	// Removes a pending stats request and stops its timer, returning it.
+	#settle(id: number): StatsRequestHandlers | undefined {
+		const request = this.#statsRequests.get(id);
+		if (request === undefined) return undefined;
+		this.#statsRequests.delete(id);
+		clearTimeout(request.timer);
+		return request;
+	}
+
+	#rejectStatsRequests(error: Error): void {
+		for (const id of [...this.#statsRequests.keys()]) {
+			this.#settle(id)?.reject(error);
+		}
+	}
+
+	// The worklet will answer nothing more: fail every request, now and later.
+	#fail(error: AudioPlaybackUnavailableError): void {
+		this.#playbackError ??= error;
+		this.#rejectStatsRequests(error);
 	}
 
 	async flush(): Promise<void> {
@@ -304,6 +507,9 @@ export class AudioDecodeNode extends GainNode {
 	dispose(): void {
 		if (this.#disposed) return;
 		this.#disposed = true;
+
+		this.context.removeEventListener("statechange", this.#onStateChange);
+		this.#rejectStatsRequests(new AudioDecodeNodeDisposedError());
 
 		// Close decoder directly (skip flush to avoid AbortError)
 		try {
