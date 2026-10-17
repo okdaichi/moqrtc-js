@@ -141,6 +141,14 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 ### Changed
 
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
+- The worklet processors are registered as `audio-offloader-v2` and `audio-hijacker-v2`: the capture worklet's messages changed (a `format` message replaces `{ targetChannels }`, and it posts `frame` and `inputEnded` messages), and the playback worklet starts differently ([#68]).
+- `AudioEncodeNode`: the frames it hands its encoder last one codec frame, `opus.frameDuration` of the encoder config (20 ms if not given), rather than one 128-frame render quantum ([#68]).
+
+### Fixed
+
+- `AudioEncodeNode`: captured audio no longer clicks. The capture worklet posted one 128-frame `AudioData` per render quantum, 375 a second, and the node dropped a frame whenever more than two waited in the encoder queue, which the main thread's jitter caused about twice every ten seconds; the timestamps were then closed up over the 2.67 ms gap, so the receiver played the audio on either side of it back to back. The worklet now gathers a whole codec frame (960 frames at 48 kHz for 20 ms) in a buffer it hands over with the message, one allocation per frame instead of per quantum, and the node lets the encoder queue hold 200 ms of frames. A frame is only dropped when the encoder has stalled, whole, and the encoder is flushed before the next one, which keeps its own timestamp, so the receiver sees the gap and fades over it ([#68]).
+- `AudioEncodeNode`: dropped frames are reported in one `console.warn` with their count at most every five seconds, instead of one warning per frame. A stalled encoder no longer stops capture for good after five seconds ([#71]).
+- `AudioDecodeNode`: playback starts at the live edge. Blocks arriving at once on joining a stream, as a backlog spanning more than the playout delay, all used to be kept, so playback started that much late (about 250 ms instead of 100 ms) and the adaptive delay then cut 10 ms of audio every two seconds for half a minute to come down. Before anything plays, the playback worklet now moves its reader so the newest block plays one delay from now, skipping the older audio and fading in. A lowering step that cuts through sound crossfades over up to 10 ms instead of 3 ms ([#68]).
 
 ## [0.1.0] - TBD
 
@@ -193,6 +201,8 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 [#54]: https://github.com/okdaichi/moqrtc-js/pull/54
 [#56]: https://github.com/okdaichi/moqrtc-js/pull/56
 [#58]: https://github.com/okdaichi/moqrtc-js/pull/58
+[#68]: https://github.com/okdaichi/moqrtc-js/issues/68
+[#71]: https://github.com/okdaichi/moqrtc-js/issues/71
 [#84]: https://github.com/okdaichi/moqrtc-js/pull/84
 [#91]: https://github.com/okdaichi/moqrtc-js/pull/91
 [0.1.0]: https://github.com/okdaichi/moqrtc-js/releases/tag/media-log/v0.1.0

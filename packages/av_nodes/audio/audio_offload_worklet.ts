@@ -33,6 +33,10 @@ const QUIET_LEVEL = 0.001; // -60 dBFS
 // Length (ms) of the fades at every edge between audio and silence.
 const FADE_MS = 3;
 
+// Longest crossfade (ms) where a lowering step cuts into audio. Longer than a
+// fade, as both sides are sound and a short crossfade between them clicks.
+const CUT_CROSSFADE_MS = 10;
+
 // A positive, finite number.
 function isPositive(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value > 0;
@@ -80,9 +84,13 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	// - A higher target otherwise inserts silence at the write head, with a
 	//   fade-out before it and a fade-in after it.
 	// - A lower target removes audio in small steps, preferring a silence gap
-	//   or a quiet stretch, and crossfades the cut.
+	//   or a quiet stretch, and crossfades the cut (longer where it cuts sound).
 	// - A block more than one cushion ahead of the cushion, or beyond the ring,
 	//   moves the reader to the live edge; the audio it was playing fades out.
+	// - Before anything plays, blocks arriving at once whose timestamps span
+	//   more than the cushion (a backlog, such as the start of a stream joined
+	//   mid-way) move the reader so the newest lands one cushion ahead; the
+	//   older audio is skipped, and playback fades in.
 	// Because the floor tracks the fastest recent arrival, a drift between the
 	// sender's and the receiver's audio clocks shows up as a rising or falling
 	// floor and is absorbed the same way.
@@ -126,6 +134,12 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 		readonly #sampleRate: number;
 		readonly #fadeFrames: number;
+		readonly #cutCrossfadeFrames: number;
+
+		// Whether nothing has played since the stream was anchored, and
+		// whether a backlog was skipped since.
+		#prerolling: boolean = false;
+		#skippedBacklog: boolean = false;
 
 		// Playback frame since which the delay has waited to be lowered: when the
 		// target fell below it, or the last lowering step. Null while the target
@@ -203,6 +217,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#bufferLength = maxCushion * 2;
 			this.#delay = this.#minCushion;
 			this.#fadeFrames = Math.max(1, this.#frames(FADE_MS));
+			this.#cutCrossfadeFrames = Math.max(this.#fadeFrames, this.#frames(CUT_CROSSFADE_MS));
 
 			for (let i = 0; i < channelCount; i++) {
 				this.#channelsBuffer[i] = new Float32Array(this.#bufferLength);
@@ -287,6 +302,34 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#behindBlocks = 0;
 			this.#estimator.reset(0, this.#playoutFrame);
 			this.#delay = this.#estimator.targetCushion();
+			this.#prerolling = true;
+			this.#skippedBacklog = false;
+		}
+
+		// Whether a block due `lead` frames from now is part of a backlog to
+		// skip: before anything plays, once blocks span more than the cushion.
+		#isBacklog(lead: number, cushion: number): boolean {
+			if (!this.#prerolling || lead <= cushion) return false;
+			return this.#skippedBacklog || lead > 2 * cushion;
+		}
+
+		// Moves the reader so a block due at `start` lands one cushion ahead,
+		// keeping the audio already written after the new read position and
+		// fading in from it. Nothing has played, so nothing is cut off.
+		#skipBacklog(tsUs: number, start: number, cushion: number): void {
+			this.#playoutFrame = start - cushion;
+			this.#nextWriteFrame = Math.max(
+				this.#nextWriteFrame ?? this.#playoutFrame,
+				this.#playoutFrame,
+			);
+			this.#estimator.reset(
+				this.#playoutFrame - this.#scheduledFrameForTs(tsUs),
+				this.#playoutFrame,
+			);
+			this.#delay = this.#estimator.floor() + cushion;
+			this.#gain = 0;
+			if (!this.#skippedBacklog) this.#resyncs++;
+			this.#skippedBacklog = true;
 		}
 
 		// Zero-fill `count` ring slots of one channel from absolute frame `from`
@@ -371,6 +414,12 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			let start = this.#playoutFrameForTs(tsUs);
 
+			const target = this.#estimator.targetCushion();
+			if (this.#isBacklog(start - this.#playoutFrame, target)) {
+				this.#skipBacklog(tsUs, start, target);
+				start = this.#playoutFrameForTs(tsUs);
+			}
+
 			// Resync to the live edge: a block more than one cushion ahead of the
 			// cushion means playback has fallen behind the media (a catch-up burst
 			// after a slow spell), and a block reaching past the ring cannot be
@@ -382,7 +431,6 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 				start - this.#playoutFrame >= 2 * cushion ||
 				start + numberOfFrames > this.#playoutFrame + this.#bufferLength
 			) {
-				const target = this.#estimator.targetCushion();
 				this.#keepResyncTail();
 				this.#playoutFrame = Math.max(this.#playoutFrame, start - target);
 				this.#nextWriteFrame = this.#playoutFrame;
@@ -556,14 +604,15 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			const newStart = start - step;
 			const cut = Math.max(0, floor - newStart);
+			const quiet = cut === 0 || this.#isQuiet(newStart, floor);
 			const forced = waited >= this.#frames(SHRINK_QUIET_WAIT_S * 1000);
-			if (cut > 0 && !forced && !this.#isQuiet(newStart, floor)) return 0;
+			if (!quiet && !forced) return 0;
 
 			this.#delay -= step;
 			this.#accelerates++;
 			this.#acceleratedFrames += step;
 			this.#shrinkWaitingSince = this.#playoutFrame;
-			return Math.min(cut, this.#fadeFrames);
+			return Math.min(cut, quiet ? this.#fadeFrames : this.#cutCrossfadeFrames);
 		}
 
 		// Adds what is left of the resync fade-out to the start of a quantum.
@@ -665,6 +714,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			}
 			this.#resyncTailFrames = Math.max(0, this.#resyncTailFrames - outputLength);
 
+			if (realFrames > 0) this.#prerolling = false;
 			if (realFrames < outputLength) {
 				if (!this.#starved && this.#baseTsUs !== null) {
 					this.#underruns++;

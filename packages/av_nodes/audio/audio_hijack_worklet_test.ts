@@ -1,356 +1,300 @@
 /// <reference path="../../../src/test_globals.d.ts" />
-import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
+import {
+	type FormatMessage,
+	type FrameMessage,
+	isCaptureMessage,
+} from "./audio_hijack_protocol.ts";
 import { importWorkletUrl } from "./audio_hijack_worklet.ts";
 import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
-import { setupFakeAudioWorkletEnvironment } from "./fake_audio_worklet_environment_test.ts";
+import {
+	type FakeProcessorPort,
+	setupFakeAudioWorkletEnvironment,
+} from "./fake_audio_worklet_environment_test.ts";
 
-// The context's render clock, as the worklet scope exposes it: at() sets it,
-// restore() puts back what the global scope had.
-function workletClock() {
-	const g = globalThis as unknown as Record<string, unknown>;
-	const saved = ["currentFrame", "sampleRate"].map((key) => ({
-		key,
-		had: Object.prototype.hasOwnProperty.call(g, key),
-		value: g[key],
-	}));
-	return {
-		at(frame: number, rate = 48000) {
-			g.currentFrame = frame;
-			g.sampleRate = rate;
-		},
-		restore() {
-			for (const { key, had, value } of saved) {
-				if (had) g[key] = value;
-				else delete g[key];
-			}
-		},
-	};
+interface Processor {
+	readonly port: FakeProcessorPort;
+	process(inputs: Float32Array[][]): boolean;
 }
 
-Deno.test("audio_hijack_worklet", async (t) => {
-	const clock = workletClock();
-	await t.step("provides a URL for the worklet script", () => {
-		const url = importWorkletUrl();
-		assert(url.endsWith("audio_hijack_worklet.js"));
-		// For mocking purposes, we return a simple string, so URL validation is skipped
-		// assert(() => new URL(url));
-	});
+type ProcessorConstructor = new (options: AudioWorkletNodeOptions) => Processor;
 
-	await t.step(
-		"registers the hijack processor when AudioWorkletProcessor is available",
-		async () => {
-			const env = setupFakeAudioWorkletEnvironment();
+function isProcessorConstructor(value: unknown): value is ProcessorConstructor {
+	return typeof value === "function";
+}
 
-			try {
-				await import("./audio_hijack_worklet.ts?register");
+const SAMPLE_RATE = 48000;
+const QUANTUM = 128;
+// A 20 ms codec frame at 48 kHz.
+const FRAME = 960;
 
-				assertEquals(env.registerProcessorCalls.length, 1);
-				const [name, processorCtor] = env.registerProcessorCalls[0]!;
-				assertEquals(name, HIJACK_PROCESSOR_NAME);
-				assertEquals(typeof processorCtor, "function");
-			} finally {
-				env.restore();
-			}
+// The real AudioHijackProcessor: the worklet module evaluated once in a fake
+// worklet scope, so the tests exercise the code that ships.
+const HijackProcessor = await (async () => {
+	const env = setupFakeAudioWorkletEnvironment();
+	try {
+		await import("./audio_hijack_worklet.ts?behaviour");
+		const processor = env.registerProcessorCalls[0]?.[1];
+		if (!isProcessorConstructor(processor)) throw new TypeError("no processor registered");
+		return processor;
+	} finally {
+		env.restore();
+	}
+})();
+
+function createProcessor(
+	options: { channels?: number; frameLength?: number } = {},
+): Processor {
+	return new HijackProcessor({
+		processorOptions: {
+			sampleRate: SAMPLE_RATE,
+			targetChannels: options.channels ?? 1,
+			frameLength: options.frameLength,
 		},
-	);
-
-	await t.step("AudioHijackProcessor", async (t) => {
-		let processor!: {
-			process(inputs: Float32Array[][]): boolean;
-			append?(channels: (Float32Array | undefined)[]): void;
-		};
-		let mockPort: {
-			messages?: AudioDataInit[];
-			postedMessages?: unknown[];
-			onmessage?: (message: unknown) => void;
-			postMessage?: (message: AudioDataInit) => void;
-		};
-
-		await t.step("setup", async () => {
-			mockPort = {
-				postMessage: (message: AudioDataInit) => {
-					mockPort.messages = mockPort.messages || [];
-					mockPort.messages.push(message);
-				},
-			};
-
-			const env = setupFakeAudioWorkletEnvironment();
-			try {
-				await import("./audio_hijack_worklet.ts?processor");
-				const ctor = env.registerProcessorCalls[0]![1] as new (
-					options: AudioWorkletNodeOptions,
-				) => {
-					port: { postMessage: unknown };
-					process(inputs: Float32Array[][]): boolean;
-				};
-				const real = new ctor({
-					processorOptions: {
-						sampleRate: 44100,
-						targetChannels: 2,
-					},
-				});
-				real.port.postMessage = mockPort.postMessage;
-				processor = real;
-			} finally {
-				env.restore();
-			}
-			clock.at(0, 44100);
-		});
-
-		await t.step("initializes with default values", () => {
-			const env = setupFakeAudioWorkletEnvironment();
-
-			try {
-				class InitTestAudioHijackProcessor extends globalThis.AudioWorkletProcessor {
-					constructor(_options: AudioWorkletNodeOptions) {
-						super();
-					}
-				}
-
-				globalThis.registerProcessor(
-					"AudioHijacker",
-					InitTestAudioHijackProcessor,
-				);
-
-				const ProcessorClass = env.registerProcessorCalls[0]![1] as new (
-					options: AudioWorkletNodeOptions,
-				) => unknown;
-				const proc = new ProcessorClass({
-					processorOptions: {},
-				});
-				assertExists(proc);
-			} finally {
-				env.restore();
-			}
-		});
-
-		await t.step("processes mono input correctly", () => {
-			const inputData = new Float32Array([0.1, 0.2, 0.3]);
-			const inputs = [[inputData]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assertExists(mockPort.messages);
-			assertEquals(mockPort.messages.length, 1);
-
-			const message = mockPort.messages[0]!;
-			assertEquals(message.format, "f32-planar");
-			assertEquals(message.sampleRate, 44100);
-			assertEquals(message.numberOfChannels, 2);
-			assertEquals(message.numberOfFrames, 3);
-			assert(message.data instanceof Float32Array);
-			assertEquals(message.data.length, 6); // 2 channels * 3 frames
-			assertEquals(message.timestamp, 0);
-			assertEquals(message.transfer, [message.data.buffer]);
-		});
-
-		await t.step("processes stereo input correctly", () => {
-			mockPort.messages = [];
-			const inputData1 = new Float32Array([0.1, 0.2]);
-			const inputData2 = new Float32Array([0.3, 0.4]);
-			const inputs = [[inputData1, inputData2]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assertExists(mockPort.messages);
-			assertEquals(mockPort.messages.length, 1);
-
-			const message = mockPort.messages[0]!;
-			assertEquals(message.numberOfChannels, 2);
-			assertEquals(message.numberOfFrames, 2);
-			assertEquals(message.data, new Float32Array([0.1, 0.2, 0.3, 0.4]));
-		});
-
-		await t.step("reports once that the input ended", () => {
-			mockPort.messages = [];
-
-			// The previous step had input; these two quanta have none.
-			const first = processor.process([[]]);
-			const second = processor.process([[]]);
-
-			assertEquals([first, second], [true, true]);
-			assertEquals(mockPort.messages as unknown[], [{ inputEnded: true }]);
-		});
-
-		await t.step("handles null input channels", () => {
-			mockPort.messages = [];
-			const inputs = [[null as unknown as Float32Array]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assert(!mockPort.messages || mockPort.messages.length === 0);
-		});
-
-		await t.step("handles empty input channel arrays", () => {
-			mockPort.messages = [];
-			const inputs = [[new Float32Array(0)]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assertExists(mockPort.messages);
-			assertEquals(mockPort.messages.length, 1);
-			const message = mockPort.messages[0]!;
-			assertEquals(message.numberOfFrames, 0);
-		});
-
-		await t.step("duplicates first channel when target channels exceed input", () => {
-			mockPort.messages = [];
-			const inputData = new Float32Array([0.1, 0.2]);
-			const inputs = [[inputData]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assertExists(mockPort.messages);
-			const message = mockPort.messages[0]!;
-			assertEquals(message.data, new Float32Array([0.1, 0.2, 0.1, 0.2]));
-		});
-
-		await t.step("fills with silence for missing channels", () => {
-			mockPort.messages = [];
-			const inputData = new Float32Array([0.1]);
-			const inputs = [[inputData]];
-
-			const result = processor.process(inputs);
-
-			assertEquals(result, true);
-			assertExists(mockPort.messages);
-			const message = mockPort.messages[0]!;
-			assertEquals(message.data, new Float32Array([0.1, 0.1]));
-		});
-
-		await t.step("throws error for multiple inputs", () => {
-			const inputs = [[], []];
-
-			assertThrows(
-				() => processor.process(inputs),
-				Error,
-				"only one input is supported.",
-			);
-		});
-
-		await t.step("stamps frames by the context's clock", () => {
-			mockPort.messages = [];
-			const inputs = [[new Float32Array([0.1, 0.2])]];
-
-			clock.at(44100, 44100);
-			processor.process(inputs);
-			clock.at(44102, 44100);
-			processor.process(inputs);
-
-			assertExists(mockPort.messages);
-			assertEquals(mockPort.messages.map((message) => message.timestamp), [
-				1_000_000,
-				Math.round(44102 * 1_000_000 / 44100),
-			]);
-		});
-
-		await t.step("cleanup", () => {
-			clock.restore();
-		});
 	});
+}
+
+// The context's render clock as the worklet scope exposes it, restored after
+// `fn` runs.
+function withClock(fn: (at: (frame: number) => void) => void): void {
+	const saved = Object.getOwnPropertyDescriptor(globalThis, "currentFrame");
+	try {
+		fn((frame) => {
+			globalThis.currentFrame = frame;
+		});
+	} finally {
+		if (saved) Object.defineProperty(globalThis, "currentFrame", saved);
+		else Reflect.deleteProperty(globalThis, "currentFrame");
+	}
+}
+
+// Renders `count` quanta of continuous input from clock frame `from`, each
+// sample on every channel being its clock frame.
+function capture(
+	processor: Processor,
+	count: number,
+	options: { from?: number; channels?: number } = {},
+): void {
+	const from = options.from ?? 0;
+	withClock((at) => {
+		for (let q = 0; q < count; q++) {
+			const start = from + q * QUANTUM;
+			at(start);
+			const quantum = Array.from(
+				{ length: options.channels ?? 1 },
+				() => Float32Array.from({ length: QUANTUM }, (_, i) => start + i),
+			);
+			processor.process([quantum]);
+		}
+	});
+}
+
+// Renders one quantum with no input.
+function silence(processor: Processor): void {
+	processor.process([[]]);
+}
+
+function deliver(processor: Processor, data: unknown): void {
+	processor.port.onmessage?.(new MessageEvent("message", { data }));
+}
+
+function frames(processor: Processor): FrameMessage[] {
+	return processor.port.sent.filter((message): message is FrameMessage =>
+		isCaptureMessage(message) && message.type === "frame"
+	);
+}
+
+// What each message the processor posted was: a frame's length, or "ended".
+function posted(processor: Processor): (number | "ended")[] {
+	return processor.port.sent.filter(isCaptureMessage).map((message) =>
+		message.type === "frame" ? message.numberOfFrames : "ended"
+	);
+}
+
+Deno.test("provides a URL for the worklet script", () => {
+	const url = importWorkletUrl();
+
+	assert(url.endsWith("audio_hijack_worklet.js"));
 });
 
-Deno.test("audio_hijack_worklet - channel count from the node", async (t) => {
-	type Processor = {
-		port: { onmessage: ((ev: { data: unknown }) => void) | null; postMessage: unknown };
-		process(inputs: Float32Array[][]): boolean;
-	};
+Deno.test("registers the processor under its versioned name", async () => {
+	const env = setupFakeAudioWorkletEnvironment();
+	try {
+		await import("./audio_hijack_worklet.ts?register");
 
-	// Evaluates the worklet module itself in a fake worklet scope and returns a
-	// processor of the class it registers, with the frames it posts.
-	async function realProcessor(
-		targetChannels: number,
-		tag: string,
-	): Promise<{ processor: Processor; posted: AudioDataInit[] }> {
-		const env = setupFakeAudioWorkletEnvironment();
-		try {
-			await import(`./audio_hijack_worklet.ts?${tag}`);
-			const ctor = env.registerProcessorCalls[0]![1] as new (
-				options: AudioWorkletNodeOptions,
-			) => Processor;
-			const processor = new ctor({ processorOptions: { sampleRate: 48000, targetChannels } });
-			const posted: AudioDataInit[] = [];
-			processor.port.postMessage = (init: AudioDataInit) => {
-				posted.push(init);
-			};
-			return { processor, posted };
-		} finally {
-			env.restore();
-		}
+		assertEquals(env.registerProcessorCalls.map(([name]) => name), [HIJACK_PROCESSOR_NAME]);
+	} finally {
+		env.restore();
 	}
+});
 
-	const quantum = (channels: number) =>
-		Array.from({ length: channels }, () => new Float32Array(128));
+const frameCountCases = [
+	{ name: "less than a frame", quanta: 7, frames: 0 },
+	{ name: "exactly two frames", quanta: 15, frames: 2 },
+	{ name: "a frame and a half", quanta: 11, frames: 1 },
+	{ name: "one second", quanta: 375, frames: 50 },
+] as const;
+for (const c of frameCountCases) {
+	Deno.test(`posts one 960-frame frame per 960 frames captured, for ${c.name}`, () => {
+		const processor = createProcessor();
 
-	const clock = workletClock();
-	const at = (frame: number) => clock.at(frame);
+		capture(processor, c.quanta);
 
-	await t.step("posts the channel count a message sets", async () => {
-		const { processor, posted } = await realProcessor(2, "message");
-
-		at(0);
-		processor.process([quantum(2)]);
-		processor.port.onmessage!({ data: { targetChannels: 1 } });
-		at(128);
-		processor.process([quantum(1)]);
-
-		assertEquals(posted.map((init) => init.numberOfChannels), [2, 1]);
+		assertEquals(posted(processor), Array(c.frames).fill(FRAME));
 	});
+}
 
-	await t.step(
-		"stamps frames by the context's clock across a change of channel count",
-		async () => {
-			const { processor, posted } = await realProcessor(2, "timestamps");
+Deno.test("stamps consecutive frames 20 ms apart across quanta", () => {
+	const processor = createProcessor();
 
-			at(0);
-			processor.process([quantum(2)]);
-			processor.port.onmessage!({ data: { targetChannels: 1 } });
-			at(128);
-			processor.process([quantum(1)]);
+	capture(processor, 375, { from: SAMPLE_RATE });
 
-			assertEquals(posted.map((init) => init.timestamp), [
-				0,
-				Math.round(128 * 1_000_000 / 48000),
-			]);
-		},
+	assertEquals(
+		frames(processor).map((frame) => frame.timestamp),
+		Array.from({ length: 50 }, (_, i) => 1_000_000 + i * 20_000),
 	);
+});
 
-	await t.step("ignores a message without a usable channel count", async () => {
-		const { processor, posted } = await realProcessor(2, "ignored");
+Deno.test("carries every captured sample in order across quantum boundaries", () => {
+	const processor = createProcessor();
 
-		for (const data of [undefined, {}, { targetChannels: 0 }, { targetChannels: 1.5 }]) {
-			processor.port.onmessage!({ data });
-		}
+	capture(processor, 15);
+
+	assertEquals(
+		frames(processor).map((frame) => Array.from(frame.data)),
+		[0, 1].map((f) => Array.from({ length: FRAME }, (_, i) => f * FRAME + i)),
+	);
+});
+
+Deno.test("lays out a frame's channels as planes", () => {
+	const processor = createProcessor({ channels: 2 });
+
+	capture(processor, 8, { channels: 2 });
+
+	const [frame] = frames(processor);
+	const plane = Array.from({ length: FRAME }, (_, i) => i);
+	assertEquals(frame?.data, new Float32Array([...plane, ...plane]));
+});
+
+Deno.test("hands each frame's buffer over to the node", () => {
+	const processor = createProcessor();
+
+	capture(processor, 15);
+
+	const [first, second] = frames(processor);
+	assert(first !== undefined && second !== undefined);
+	assert(first.data.buffer !== second.data.buffer);
+});
+
+Deno.test("posts the frame captured so far when the input ends, then says so once", () => {
+	const processor = createProcessor();
+	capture(processor, 9);
+
+	silence(processor);
+	silence(processor);
+
+	assertEquals(posted(processor), [FRAME, 9 * QUANTUM - FRAME, "ended"]);
+});
+
+Deno.test("stamps the first frame after the input comes back by the clock", () => {
+	const processor = createProcessor();
+	capture(processor, 8);
+	silence(processor);
+
+	capture(processor, 8, { from: 5 * SAMPLE_RATE });
+
+	assertEquals(frames(processor).map((frame) => frame.timestamp), [0, 20_000, 5_000_000]);
+});
+
+Deno.test("posts the frame captured so far at a jump in the clock", () => {
+	const processor = createProcessor();
+	capture(processor, 4);
+
+	capture(processor, 8, { from: SAMPLE_RATE });
+
+	assertEquals(
+		frames(processor).map((frame) => [frame.timestamp, frame.numberOfFrames]),
+		[[0, 4 * QUANTUM], [1_000_000, FRAME]],
+	);
+});
+
+Deno.test("repeats the first channel for a missing one", () => {
+	const processor = createProcessor({ channels: 2 });
+
+	capture(processor, 8, { channels: 1 });
+
+	const [frame] = frames(processor);
+	assertEquals(frame?.data.subarray(FRAME), frame?.data.subarray(0, FRAME));
+});
+
+Deno.test("reads a channel shorter than the first as silence", () => {
+	const processor = createProcessor({ channels: 2, frameLength: 4 });
+
+	withClock((at) => {
 		at(0);
-		processor.process([quantum(2)]);
-
-		assertEquals(posted.map((init) => init.numberOfChannels), [2]);
+		processor.process([[new Float32Array([1, 2, 3, 4]), new Float32Array([5, 6])]]);
 	});
 
-	await t.step("shows a stretch with no input as a gap in the timestamps", async () => {
-		const { processor, posted } = await realProcessor(1, "gap");
+	assertEquals(frames(processor)[0]?.data, new Float32Array([1, 2, 3, 4, 5, 6, 0, 0]));
+});
 
-		at(48000);
-		processor.process([quantum(1)]);
-		// No input for five seconds: the processor posts no frame.
-		at(48000 * 6);
-		processor.process([[]]);
-		at(48000 * 6 + 128);
-		processor.process([quantum(1)]);
+Deno.test("takes the frame length from its options", () => {
+	const processor = createProcessor({ frameLength: 480 });
 
-		assertEquals(posted.map((message) => message.timestamp ?? "input ended"), [
-			1_000_000,
-			"input ended",
-			Math.round((48000 * 6 + 128) * 1_000_000 / 48000),
-		]);
+	capture(processor, 15);
+
+	assertEquals(posted(processor), [480, 480, 480, 480]);
+});
+
+Deno.test("posts the frame captured so far, then captures in the format a message sets", () => {
+	const processor = createProcessor({ channels: 2 });
+	capture(processor, 2, { channels: 2 });
+	const format: FormatMessage = { type: "format", channels: 1, frameLength: 480 };
+
+	deliver(processor, format);
+	capture(processor, 4, { from: 2 * QUANTUM });
+
+	assertEquals(
+		frames(processor).map((frame) => [frame.numberOfChannels, frame.numberOfFrames]),
+		[[2, 2 * QUANTUM], [1, 480]],
+	);
+});
+
+Deno.test("continues the timestamps across a change of format", () => {
+	const processor = createProcessor({ channels: 2 });
+	capture(processor, 2, { channels: 2 });
+	const format: FormatMessage = { type: "format", channels: 1, frameLength: 480 };
+
+	deliver(processor, format);
+	capture(processor, 4, { from: 2 * QUANTUM });
+
+	assertEquals(
+		frames(processor).map((frame) => frame.timestamp),
+		[0, Math.round(2 * QUANTUM * 1_000_000 / SAMPLE_RATE)],
+	);
+});
+
+const malformedFormats = [
+	{ name: "no type", data: { channels: 1, frameLength: 480 } },
+	{ name: "zero channels", data: { type: "format", channels: 0, frameLength: 480 } },
+	{ name: "fractional channels", data: { type: "format", channels: 1.5, frameLength: 480 } },
+	{ name: "no frame length", data: { type: "format", channels: 1 } },
+	{ name: "a negative frame length", data: { type: "format", channels: 1, frameLength: -1 } },
+	{ name: "not an object", data: "format" },
+] as const;
+for (const c of malformedFormats) {
+	Deno.test(`ignores a format message with ${c.name}`, () => {
+		const processor = createProcessor();
+
+		deliver(processor, c.data);
+		capture(processor, 8);
+
+		assertEquals(posted(processor), [FRAME]);
 	});
+}
 
-	await t.step("cleanup", () => {
-		clock.restore();
-	});
+Deno.test("throws for more than one input", () => {
+	const processor = createProcessor();
+
+	assertThrows(() => processor.process([[], []]), Error, "only one input is supported.");
 });
