@@ -866,8 +866,8 @@ interface Scenario {
 	// Receiver frame at or after which block i is posted.
 	readonly arrivals: readonly number[];
 	readonly seconds: number;
-	// Sample value of block i (default 1).
-	readonly value?: (i: number) => number;
+	// Sample at media frame f (default 1).
+	readonly sample?: (f: number) => number;
 	readonly maxLatency?: number;
 	// Underruns are also counted from this frame on.
 	readonly countUnderrunsFrom?: number;
@@ -883,11 +883,11 @@ interface ScenarioResult {
 }
 
 // Plays blocks through a processor, one render quantum per step. Block i
-// holds OPUS_FRAMES samples of value(i), is stamped i * 20 ms, and is posted
-// before the first quantum at or after arrivals[i].
+// holds OPUS_FRAMES samples from media frame i * OPUS_FRAMES, is stamped
+// i * 20 ms, and is posted before the first quantum at or after arrivals[i].
 function play(scenario: Scenario): ScenarioResult {
 	const processor = createProcessor({ latency: 100, maxLatency: scenario.maxLatency });
-	const value = scenario.value ?? (() => 1);
+	const sample = scenario.sample ?? (() => 1);
 	const mark = scenario.countUnderrunsFrom ?? 0;
 	const out = new Float32Array(scenario.seconds * SECOND);
 	const left = new Float32Array(QUANTUM);
@@ -900,11 +900,9 @@ function play(scenario: Scenario): ScenarioResult {
 			arrival !== undefined && arrival <= frame;
 			arrival = scenario.arrivals[next]
 		) {
-			const v = value(next);
-			processor.append(
-				[new Float32Array(OPUS_FRAMES).fill(v), new Float32Array(OPUS_FRAMES).fill(v)],
-				next * OPUS_US,
-			);
+			const from = next * OPUS_FRAMES;
+			const data = Float32Array.from({ length: OPUS_FRAMES }, (_, j) => sample(from + j));
+			processor.append([data, data.slice()], next * OPUS_US);
 			next++;
 		}
 		if (frame === mark) underrunsAtMark = processor.stats().underruns;
@@ -985,6 +983,24 @@ function burstsThenClean(seconds: number): number[] {
 	return arrivals;
 }
 
+// Blocks delivered as they are captured, except that delivery stalls for
+// `stallMs` at each of `stalls` (s): the blocks captured during a stall
+// arrive together at its end, as a Wi-Fi link that stops for a moment
+// delivers them.
+function stallingLink(seconds: number, stalls: readonly number[], stallMs: number): number[] {
+	const length = stallMs * SECOND / 1000;
+	return Array.from({ length: seconds * SECOND / OPUS_FRAMES }, (_, i) => {
+		const at = captured(i);
+		const stall = stalls.find((s) => at >= s * SECOND && at < s * SECOND + length);
+		return stall === undefined ? at : stall * SECOND + length;
+	});
+}
+
+// Stalls every 12 s from 6 s on, as measured on a phone on 2.4 GHz Wi-Fi.
+function everyTwelveSeconds(seconds: number): number[] {
+	return Array.from({ length: Math.ceil((seconds - 6) / 12) }, (_, k) => 6 + 12 * k);
+}
+
 // Blocks on time by a sender clock running at `rate` times the receiver's.
 function driftingLink(seconds: number, rate: number): number[] {
 	return Array.from(
@@ -1029,6 +1045,68 @@ function largestStep(out: Float32Array): number {
 	return max;
 }
 
+// A 440 Hz and a 150 Hz tone at half scale, by media frame.
+const TONE_AMPLITUDE = 0.5;
+const tone440 = (f: number) => TONE_AMPLITUDE * Math.sin(2 * Math.PI * 440 * f / SAMPLE_RATE);
+const tone150 = (f: number) => TONE_AMPLITUDE * Math.sin(2 * Math.PI * 150 * f / SAMPLE_RATE);
+
+// Largest second difference |x[n+1] - 2x[n] + x[n-1]| of the output after
+// the stream's onset (a stream start is not faded in): a cut or a seam out
+// of phase in a tone stands out against the tone's own curvature.
+function largestSecondDifference(out: Float32Array): number {
+	const onset = out.findIndex((sample) => sample !== 0);
+	let max = 0;
+	for (let n = onset + 1; n < out.length - 1; n++) {
+		const d = sampleAt(out, n + 1) - 2 * sampleAt(out, n) + sampleAt(out, n - 1);
+		max = Math.max(max, Math.abs(d));
+	}
+	return max;
+}
+
+// The second difference of a sine of the tones' amplitude at `hz`, times a
+// tolerance. Repeated concealment of a 440 Hz tone loops two periods,
+// 218.18 frames, as 218: each seam is a fifth of a frame out of phase, about
+// twice the sine's own curvature. A cut half a period out of phase is
+// hundreds of times it.
+function smoothnessBound(hz: number): number {
+	const curvature = TONE_AMPLITUDE * (2 * Math.sin(Math.PI * hz / SAMPLE_RATE)) ** 2;
+	return 2.5 * curvature;
+}
+
+// Smallest peak level of any window of one period of the output: a dip
+// where two stretches out of phase were crossfaded stands out.
+function smallestPeak(out: Float32Array, periodFrames: number): number {
+	const width = Math.ceil(periodFrames);
+	let min = Infinity;
+	for (let start = 0; start + width <= out.length; start += 16) {
+		let peak = 0;
+		for (let n = start; n < start + width; n++) {
+			peak = Math.max(peak, Math.abs(sampleAt(out, n)));
+		}
+		min = Math.min(min, peak);
+	}
+	return min;
+}
+
+// Lengths of the complete stretches of full-level samples in `out`, and -1
+// for each sample between silence and full level.
+function soundRuns(out: Float32Array): number[] {
+	const runs: number[] = [];
+	let run = 0;
+	let started = false;
+	for (const sample of out) {
+		if (Math.abs(sample - 1) < 1e-6) {
+			run++;
+			continue;
+		}
+		if (Math.abs(sample) >= 1e-6) runs.push(-1);
+		if (started && run > 0) runs.push(run);
+		started = true;
+		run = 0;
+	}
+	return runs;
+}
+
 // Frames of the quanta at which a lowering step was taken.
 function loweringSteps(scenario: Scenario): number[] {
 	const steps: number[] = [];
@@ -1050,22 +1128,34 @@ function spacings(frames: readonly number[]): number[] {
 // The step of one fade frame: no edge may be steeper.
 const FADE_STEP = 1 / FADE_FRAMES + 1e-6;
 
+// The node's minimum delay, and how far above it the delay may settle
+// before a lowering step is taken.
+const MIN_DELAY_MS = 100;
+const LOWER_MARGIN_MS = 10;
+
 Deno.test("audio_offload_worklet adaptive delay", async (t) => {
 	await t.step("keeps the minimum delay on a clean link", () => {
-		const { stats } = play({ arrivals: cleanLink(10), seconds: 11 });
+		const { stats } = play({ arrivals: cleanLink(10), seconds: 10 });
 
-		assertEquals(stats.targetDelayMs, 100);
-		assertGreaterOrEqual(stats.delayMs, 100);
-		assertLessOrEqual(stats.delayMs, 105);
+		assertEquals(stats.targetDelayMs, MIN_DELAY_MS);
+		assertGreaterOrEqual(stats.delayMs, MIN_DELAY_MS);
+		assertLessOrEqual(stats.delayMs, MIN_DELAY_MS + 5);
 	});
 
 	await t.step("makes no adjustment on a clean link", () => {
-		const { stats } = play({ arrivals: cleanLink(10), seconds: 11 });
+		const { stats } = play({ arrivals: cleanLink(10), seconds: 10 });
 
 		assertEquals(
 			[stats.expands, stats.accelerates, stats.lateBlocks, stats.droppedBlocks],
 			[0, 0, 0, 0],
 		);
+	});
+
+	await t.step("conceals the end of a stream, raising the delay by 60 ms", () => {
+		const { stats } = play({ arrivals: cleanLink(10), seconds: 11 });
+
+		assertEquals([stats.expands, stats.underruns], [1, 1]);
+		assertAlmostEquals(stats.expandedMs, 60, 0.1);
 	});
 
 	await t.step("plays 200 ms delivery bursts without gaps once adapted", () => {
@@ -1133,10 +1223,10 @@ Deno.test("audio_offload_worklet adaptive delay", async (t) => {
 	});
 
 	await t.step("falls back to the minimum delay when the link turns clean", () => {
-		const { stats } = play({ arrivals: burstsThenClean(120), seconds: 121 });
+		const { stats } = play({ arrivals: burstsThenClean(120), seconds: 120 });
 
-		assertEquals(stats.targetDelayMs, 100);
-		assertLessOrEqual(stats.delayMs, 105);
+		assertEquals(stats.targetDelayMs, MIN_DELAY_MS);
+		assertLessOrEqual(stats.delayMs, MIN_DELAY_MS + LOWER_MARGIN_MS);
 	});
 
 	await t.step("fades every edge while falling back to the minimum delay", () => {
@@ -1145,39 +1235,57 @@ Deno.test("audio_offload_worklet adaptive delay", async (t) => {
 		assertLessOrEqual(largestStep(out), FADE_STEP);
 	});
 
-	await t.step("lowers the delay at quiet stretches without cutting audio", () => {
-		// Every fifth block is silence, like pauses in speech.
-		const value = (i: number) => i % 5 === 4 ? 0 : 1;
-		const arrivals = burstsThenClean(120);
-		const { stats, out } = play({ arrivals, seconds: 121, value });
-
-		// The audio lost is no more than the fades at each edge (underruns,
-		// inserted silence, crossfaded cuts): every cut took silence.
-		const loud = arrivals.filter((_, i) => value(i) === 1).length;
-		const lost = loud * OPUS_FRAMES - countOf(out, 1);
-		const edges = 2 * stats.underruns + 2 * stats.expands + stats.accelerates +
-			2 * stats.lateBlocks;
-		assertLessOrEqual(lost, edges * (FADE_FRAMES + 1));
-	});
-
-	await t.step("lowers by one step per two seconds through continuous sound", () => {
-		const steps = loweringSteps({ arrivals: burstsThenClean(120), seconds: 121 });
-
-		const gaps = spacings(steps);
-		assertGreaterOrEqual(Math.min(...gaps), 2 * SECOND - QUANTUM);
-		assertGreaterOrEqual(gaps.filter((gap) => gap <= 2.1 * SECOND).length, 3);
-	});
-
-	await t.step("lowers by one step per second at quiet stretches", () => {
-		const steps = loweringSteps({
+	await t.step("lowers the delay at quiet stretches without cutting sound", () => {
+		// Two blocks in every five are silence, like pauses in speech.
+		const loud = 3 * OPUS_FRAMES;
+		const { out, stats } = play({
 			arrivals: burstsThenClean(120),
-			seconds: 121,
-			value: (i) => i % 5 === 4 ? 0 : 1,
+			seconds: 120,
+			sample: (f) => Math.floor(f / OPUS_FRAMES) % 5 >= 3 ? 0 : 1,
 		});
+
+		// Long after the bursts, while the delay falls back, every stretch of
+		// sound keeps its length: each lowering step cut silence.
+		const runs = soundRuns(out.subarray(15 * SECOND));
+		assertGreater(stats.accelerates, 0);
+		assertEquals(runs.filter((run) => run !== loud), []);
+	});
+
+	await t.step("waits four seconds with the target well below the delay to lower it", () => {
+		let since: number | null = null;
+		let first: number | null = null;
+
+		play({
+			arrivals: burstsThenClean(120),
+			seconds: 120,
+			observe: (frame, stats) => {
+				if (stats.targetDelayMs >= stats.delayMs - LOWER_MARGIN_MS) since = null;
+				else since ??= frame;
+				if (first === null && stats.accelerates > 0) first = frame - (since ?? frame);
+			},
+		});
+
+		assertGreaterOrEqual(first ?? 0, 4 * SECOND - QUANTUM);
+	});
+
+	await t.step("lowers by one step per second through continuous sound", () => {
+		const steps = loweringSteps({ arrivals: burstsThenClean(120), seconds: 120 });
 
 		const gaps = spacings(steps);
 		assertGreaterOrEqual(Math.min(...gaps), SECOND - QUANTUM);
 		assertGreaterOrEqual(gaps.filter((gap) => gap <= 1.1 * SECOND).length, 3);
+	});
+
+	await t.step("lowers by one step per half second at quiet stretches", () => {
+		const steps = loweringSteps({
+			arrivals: burstsThenClean(120),
+			seconds: 120,
+			sample: (f) => Math.floor(f / OPUS_FRAMES) % 5 >= 3 ? 0 : 1,
+		});
+
+		const gaps = spacings(steps);
+		assertGreaterOrEqual(Math.min(...gaps), SECOND / 2 - QUANTUM);
+		assertGreaterOrEqual(gaps.filter((gap) => gap <= 0.6 * SECOND).length, 3);
 	});
 
 	await t.step("follows a sender clock running slow without gaps", () => {
@@ -1213,16 +1321,17 @@ Deno.test("audio_offload_worklet adaptive delay", async (t) => {
 		},
 	] as const;
 	for (const c of backlogCases) {
+		// Played for less than the stream lasts, so its end is not concealed.
 		await t.step(`${c.name}, plays at the minimum delay`, () => {
-			const { stats } = play({ arrivals: c.arrivals(), seconds: 10 });
+			const { stats } = play({ arrivals: c.arrivals(), seconds: 9 });
 
-			assertEquals(stats.targetDelayMs, 100);
-			assertGreaterOrEqual(stats.delayMs, 100);
-			assertLessOrEqual(stats.delayMs, 105);
+			assertEquals(stats.targetDelayMs, MIN_DELAY_MS);
+			assertGreaterOrEqual(stats.delayMs, MIN_DELAY_MS);
+			assertLessOrEqual(stats.delayMs, MIN_DELAY_MS + 5);
 		});
 
 		await t.step(`${c.name}, takes no lowering step`, () => {
-			const { stats } = play({ arrivals: c.arrivals(), seconds: 10 });
+			const { stats } = play({ arrivals: c.arrivals(), seconds: 9 });
 
 			assertEquals(stats.accelerates, 0);
 		});
@@ -1245,8 +1354,145 @@ Deno.test("audio_offload_worklet adaptive delay", async (t) => {
 	});
 
 	await t.step("keeps the delay near the minimum with a sender clock running fast", () => {
-		const { stats } = play({ arrivals: driftingLink(60, 1 / 0.997), seconds: 61 });
+		const { stats } = play({ arrivals: driftingLink(60, 1 / 0.997), seconds: 59 });
 
 		assertLessOrEqual(stats.delayMs, 115);
+	});
+});
+
+// The measured link: a phone on 2.4 GHz Wi-Fi whose delivery stalls for
+// about 160 ms every 12 s or so.
+Deno.test("audio_offload_worklet delay spikes", async (t) => {
+	const SECONDS = 90;
+	const STALL_MS = 160;
+	const stalls = everyTwelveSeconds(SECONDS);
+	const firstStall = (stalls[0] ?? 0) * SECOND;
+
+	await t.step("takes no lowering step with a stall every 12 s", () => {
+		const steps = loweringSteps({
+			arrivals: stallingLink(SECONDS, stalls, STALL_MS),
+			seconds: SECONDS,
+		});
+
+		assertEquals(steps, []);
+	});
+
+	await t.step("plays stalls after the first without an underrun or a drop", () => {
+		const { stats, underrunsAfterMark } = play({
+			arrivals: stallingLink(SECONDS, stalls, STALL_MS),
+			seconds: SECONDS,
+			countUnderrunsFrom: firstStall + SECOND,
+		});
+
+		assertEquals([stats.droppedBlocks, underrunsAfterMark], [0, 0]);
+	});
+
+	await t.step("holds the delay at the target between stalls", () => {
+		const delays: number[] = [];
+
+		play({
+			arrivals: stallingLink(SECONDS, stalls, STALL_MS),
+			seconds: SECONDS,
+			observe: (frame, stats) => {
+				if (frame >= firstStall + SECOND) delays.push(stats.delayMs - stats.targetDelayMs);
+			},
+		});
+
+		assertLessOrEqual(Math.max(...delays.map(Math.abs)), 5);
+	});
+
+	await t.step("falls back to the minimum delay when the stalls stop for a minute", () => {
+		const { stats } = play({
+			arrivals: stallingLink(SECONDS, [6], STALL_MS),
+			seconds: SECONDS,
+		});
+
+		assertEquals(stats.targetDelayMs, MIN_DELAY_MS);
+		assertLessOrEqual(stats.delayMs, MIN_DELAY_MS + LOWER_MARGIN_MS);
+	});
+});
+
+Deno.test("audio_offload_worklet time-scale modification", async (t) => {
+	const tones = [
+		{ name: "a 440 Hz tone", sample: tone440, hz: 440 },
+		{ name: "a 150 Hz tone", sample: tone150, hz: 150 },
+	] as const;
+
+	for (const c of tones) {
+		await t.step(`conceals a short delivery stall in ${c.name} without a discontinuity`, () => {
+			// A 130 ms stall: the reader would run dry for about 30 ms.
+			const { out, stats } = play({
+				arrivals: stallingLink(10, [3], 130),
+				seconds: 10,
+				sample: c.sample,
+			});
+
+			assertEquals([stats.underruns, stats.droppedBlocks], [0, 0]);
+			assertGreaterOrEqual(stats.expands, 1);
+			assertLessOrEqual(largestSecondDifference(out), smoothnessBound(c.hz));
+		});
+
+		await t.step(`raises the delay in ${c.name} without a discontinuity`, () => {
+			// A 90 ms stall: no underrun, but the target rises above 100 ms.
+			const { out, stats } = play({
+				arrivals: stallingLink(10, [3], 90),
+				seconds: 10,
+				sample: c.sample,
+			});
+
+			assertEquals(stats.underruns, 0);
+			assertGreater(stats.expandedMs, 0);
+			assertLessOrEqual(largestSecondDifference(out), smoothnessBound(c.hz));
+		});
+
+		await t.step(`lowers the delay in ${c.name} without a discontinuity`, () => {
+			const { out, stats } = play({
+				arrivals: stallingLink(90, [2], 140),
+				seconds: 90,
+				sample: c.sample,
+			});
+
+			assertGreater(stats.accelerates, 0);
+			assertLessOrEqual(largestSecondDifference(out), smoothnessBound(c.hz));
+		});
+
+		await t.step(`keeps the level of ${c.name} while lowering the delay`, () => {
+			const { out, stats } = play({
+				arrivals: stallingLink(90, [2], 140),
+				seconds: 90,
+				sample: c.sample,
+			});
+
+			// From after the stall, when only lowering steps change the delay.
+			assertGreater(stats.accelerates, 0);
+			assertGreaterOrEqual(
+				smallestPeak(out.subarray(10 * SECOND, 89 * SECOND), SAMPLE_RATE / c.hz),
+				0.97 * TONE_AMPLITUDE,
+			);
+		});
+	}
+
+	await t.step("lowers the delay by the length it reports removed", () => {
+		// Stats at 4 s, after the stall, and at 89 s, once the delay is back.
+		const snapshots: AudioPlayoutStats[] = [];
+
+		play({
+			arrivals: stallingLink(90, [2], 140),
+			seconds: 90,
+			sample: tone440,
+			observe: (frame, stats) => {
+				if (frame === 4 * SECOND || frame === 89 * SECOND) snapshots.push(stats);
+			},
+		});
+
+		const [after, back] = snapshots;
+		assertExists(after);
+		assertExists(back);
+		assertGreater(back.acceleratedMs, after.acceleratedMs);
+		assertAlmostEquals(
+			after.delayMs - back.delayMs,
+			back.acceleratedMs - after.acceleratedMs,
+			1e-9,
+		);
 	});
 });

@@ -139,13 +139,16 @@ interface StatsRequestHandlers {
  *
  * The worklet holds decoded audio in an adaptive jitter buffer. Its playout
  * delay starts at `init.latency` (ms, default 100) and follows the observed
- * arrival jitter: it rises at once when audio arrives late and falls back
- * slowly, over tens of seconds, once arrivals settle, never below `latency`
- * and never above `init.maxLatency` (ms, default 400). A good link keeps the
- * minimum delay; a bursty one (Wi-Fi power saving, coalesced RTP packets) gets
- * as much as it needs to play without gaps. Changes of delay and underruns
- * are faded over a few ms rather than cut. {@link AudioDecodeNode.getStats}
- * reports the buffer's state.
+ * arrival jitter: it rises at once when audio arrives late, holds while late
+ * arrivals recur within 20 to 40 s, and falls back slowly once they stop,
+ * never below `latency` and never above `init.maxLatency` (ms, default 400).
+ * A good link keeps the minimum delay; a bursty one (Wi-Fi power saving,
+ * coalesced RTP packets) gets as much as it needs to play without gaps.
+ * Inside sound, the delay changes by repeating or removing a pitch period
+ * with an overlap-add, and audio that has not arrived in time is concealed
+ * the same way for up to 60 ms, so neither clicks; silence and underruns are
+ * faded over a few ms. {@link AudioDecodeNode.getStats} reports the buffer's
+ * state.
  */
 export class AudioDecodeNode extends GainNode {
 	#decoder: AudioDecoder;
