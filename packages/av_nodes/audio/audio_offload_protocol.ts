@@ -1,5 +1,6 @@
 // Messages between AudioDecodeNode and its playback worklet.
 import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
+import type { StopMessage } from "./audio_worklet_protocol.ts";
 
 /** Starting and minimum playout delay when none is given (ms). */
 export const DEFAULT_LATENCY_MS = 100;
@@ -21,7 +22,7 @@ export interface StatsRequest {
 }
 
 /** Messages the node posts to the worklet. */
-export type AudioOffloadMessage = AppendMessage | StatsRequest;
+export type AudioOffloadMessage = AppendMessage | StatsRequest | StopMessage;
 
 /** The worklet's answer to a {@link StatsRequest}. */
 export interface StatsReply {
@@ -65,6 +66,8 @@ export function isAudioOffloadMessage(value: unknown): value is AudioOffloadMess
 				typeof value.timestamp === "number" && Number.isFinite(value.timestamp);
 		case "stats":
 			return Number.isSafeInteger(value.id);
+		case "stop":
+			return true;
 		default:
 			return false;
 	}

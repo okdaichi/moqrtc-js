@@ -136,6 +136,10 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		#resyncs: number = 0;
 		#reanchors: number = 0;
 
+		// Set by a stop message: process() then returns false, so the
+		// processor can be collected.
+		#stopped = false;
+
 		constructor(options: AudioWorkletNodeOptions) {
 			super();
 			if (!options.processorOptions) {
@@ -191,6 +195,10 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 						return;
 					case "stats":
 						this.port.postMessage({ type: "stats", id: message.id, stats: this.stats() });
+						return;
+					case "stop":
+						this.#stopped = true;
+						this.port.close();
 						return;
 					default: {
 						const unhandled: never = message;
@@ -549,6 +557,8 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		}
 
 		process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+			if (this.#stopped) return false;
+
 			// process() is invoked once per render quantum, so the playback clock
 			// advances by one quantum on every call — including the guard paths
 			// below. Skipping the advance on an empty-outputs / not-initialized
@@ -652,5 +662,11 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		}
 	}
 
-	registerProcessor(workletName, AudioOffloadProcessor);
+	try {
+		registerProcessor(workletName, AudioOffloadProcessor);
+	} catch (e) {
+		// reason: the module was evaluated again in this scope (another copy of
+		// the library loaded it); the processor registered first stays in use.
+		if (!(e instanceof DOMException && e.name === "NotSupportedError")) throw e;
+	}
 }

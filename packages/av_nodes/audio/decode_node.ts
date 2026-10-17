@@ -7,10 +7,12 @@ import {
 	isStatsReply,
 	type StatsRequest,
 } from "./audio_offload_protocol.ts";
-import { createWorkletBlobUrl as createOffloadWorkletBlobUrl } from "./audio_offload_worklet_inline.ts";
+import { OffloadCode } from "./audio_offload_worklet_inline.ts";
 import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
+import { AudioWorkletModule, stopProcessor } from "./audio_worklet_module.ts";
 
 const offloadWorkletName = "audio-offloader";
+const offloadWorklet = new AudioWorkletModule(OffloadCode);
 
 const MAX_DECODE_QUEUE_SIZE = 3;
 
@@ -164,10 +166,11 @@ export class AudioDecodeNode extends GainNode {
 		};
 		context.addEventListener("statechange", this.#onStateChange);
 
-		this.#workletReady = context.audioWorklet.addModule(
-			createOffloadWorkletBlobUrl(),
-		).then(
+		this.#workletReady = offloadWorklet.load(context).then(
 			() => {
+				// Disposed while the module was loading: play nothing.
+				if (this.#disposed) return undefined;
+
 				// Create AudioWorkletNode
 				const worklet = new AudioWorkletNode(
 					context,
@@ -257,6 +260,15 @@ export class AudioDecodeNode extends GainNode {
 		}
 	}
 
+	/**
+	 * Reads `stream` and decodes its chunks for playback. A chunk read while the
+	 * context is not running (not yet resumed, suspended or interrupted) would
+	 * play late, so it is dropped and reading goes on: playback picks up with
+	 * the stream as it arrives once the context runs again. Reading ends at the
+	 * end of the stream, on {@link AudioDecodeNode.dispose}, when the context
+	 * closes, or on an error; ending any way but the end of the stream cancels
+	 * the stream.
+	 */
 	decodeFrom(
 		stream: ReadableStream<EncodedAudioChunk>,
 	): { done: Promise<void> } {
@@ -264,14 +276,14 @@ export class AudioDecodeNode extends GainNode {
 			let reader:
 				| ReadableStreamDefaultReader<EncodedAudioChunk>
 				| undefined;
+			let ended = false;
 			try {
 				reader = stream.getReader();
 				this.#activeReader = reader;
-				while (this.context.state === "running" && !this.#disposed) {
+				while (!this.#disposed && this.context.state !== "closed") {
 					// Backpressure: Wait for decoder queue to drain before reading
 					// from upstream so the stream can naturally slow down.
 					while (
-						this.context.state === "running" &&
 						!this.#disposed &&
 						this.decodeQueueSize > MAX_DECODE_QUEUE_SIZE
 					) {
@@ -290,10 +302,13 @@ export class AudioDecodeNode extends GainNode {
 
 					const { done, value: chunk } = await reader.read();
 					if (done) {
-						break;
+						ended = true;
+						return;
 					}
 
-					this.#decoder.decode(chunk);
+					if (this.context.state === "running") {
+						this.#decoder.decode(chunk);
+					}
 				}
 			} catch (e) {
 				// AbortError during close is expected, don't log it
@@ -305,6 +320,12 @@ export class AudioDecodeNode extends GainNode {
 				}
 			} finally {
 				this.#activeReader = undefined;
+				if (reader !== undefined && !ended) {
+					reader.cancel().catch(() => {
+						// reason: the stream is abandoned either way; a source
+						// that fails to cancel leaves nothing to do.
+					});
+				}
 				reader?.releaseLock();
 			}
 		})();
@@ -533,15 +554,6 @@ export class AudioDecodeNode extends GainNode {
 			/* ignore */
 		}
 
-		// Disconnect worklet
-		this.#workletReady.then((worklet) => {
-			try {
-				worklet?.disconnect();
-			} catch (_) {
-				/* ignore */
-			}
-		}).catch(() => {
-			/* ignore */
-		});
+		if (this.#worklet) stopProcessor(this.#worklet);
 	}
 }

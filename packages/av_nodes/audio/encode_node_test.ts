@@ -1118,6 +1118,34 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 		assertEquals(worklets.length, 0);
 	});
 
+	await t.step("adds its worklet module to a context once for many nodes", async () => {
+		worklets = [];
+		const ctx = new FakeAudioContext();
+		const modules: string[] = [];
+		ctx.audioWorklet.addModule = async (moduleUrl: string) => {
+			modules.push(moduleUrl);
+		};
+
+		const nodes = Array.from({ length: 5 }, () => new AudioEncodeNode(ctx));
+		await workletReady();
+
+		assertEquals(
+			{ modules: modules.length, worklets: worklets.length },
+			{ modules: 1, worklets: 5 },
+		);
+		await Promise.all(nodes.map((node) => node.dispose()));
+	});
+
+	await t.step("dispose() tells the capture worklet's processor to stop", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		await workletReady();
+
+		await node.dispose();
+
+		assertEquals(worklets[0]?.posted, [{ type: "stop" }]);
+	});
+
 	await t.step("drops a frame whose channel count is not the configured one", async () => {
 		worklets = [];
 		const node = new AudioEncodeNode(new FakeAudioContext());
