@@ -1,8 +1,9 @@
 /**
- * Snapshot of an `AudioDecodeNode`'s playout buffer. Delays are the cushion
- * over the fastest recent arrival, in ms.
+ * The playout buffer's part of {@link AudioPlaybackStats}, as the playback
+ * worklet reports it. Delays are the cushion over the fastest recent arrival,
+ * in ms.
  */
-export interface AudioPlaybackStats {
+export interface AudioPlayoutStats {
 	/** Delay the arrival statistics ask for. */
 	readonly targetDelayMs: number;
 	/** Delay applied now; it follows the target in steps. */
@@ -29,4 +30,13 @@ export interface AudioPlaybackStats {
 	readonly resyncs: number;
 	/** Restarts from a stream that fell too far behind. */
 	readonly reanchors: number;
+}
+
+/** Snapshot of an `AudioDecodeNode`'s playback. */
+export interface AudioPlaybackStats extends AudioPlayoutStats {
+	/**
+	 * Encoded chunks `decodeFrom()` dropped because the audio context was not
+	 * running (not yet resumed, suspended or interrupted).
+	 */
+	readonly droppedWhileSuspended: number;
 }

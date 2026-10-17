@@ -1,4 +1,5 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
+import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import type {
 	AudioEncodeDestination,
 	AudioEncodeNode as AudioEncodeNodeType,
@@ -838,6 +839,7 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 	// Records every capture worklet: its options, its channel count as the
 	// node sets it, and the messages posted to its processor.
 	class RecordingWorklet extends FakeAudioWorkletNode {
+		name: string | undefined;
 		options: AudioWorkletNodeOptions | undefined;
 		channelCount: number | undefined;
 		posted: unknown[] = [];
@@ -847,6 +849,7 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 			opts?: AudioWorkletNodeOptions,
 		) {
 			super(ctx, name, opts);
+			this.name = name;
 			this.options = opts;
 			this.channelCount = opts?.channelCount;
 			this.port.postMessage = (message: unknown) => {
@@ -1116,6 +1119,65 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 		await workletReady();
 
 		assertEquals(worklets.length, 0);
+	});
+
+	await t.step("adds its worklet module to a context once for many nodes", async () => {
+		worklets = [];
+		const ctx = new FakeAudioContext();
+		const modules: string[] = [];
+		ctx.audioWorklet.addModule = async (moduleUrl: string) => {
+			modules.push(moduleUrl);
+		};
+
+		const nodes = Array.from({ length: 5 }, () => new AudioEncodeNode(ctx));
+		await workletReady();
+
+		assertEquals(
+			{ modules: modules.length, worklets: worklets.length },
+			{ modules: 1, worklets: 5 },
+		);
+		await Promise.all(nodes.map((node) => node.dispose()));
+	});
+
+	await t.step("dispose() tells the capture worklet's processor to stop", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		await workletReady();
+
+		await node.dispose();
+
+		assertEquals(worklets[0]?.posted, [{ type: "stop" }]);
+	});
+
+	await t.step("dispose() stops the capture worklet's processor before flushing", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+		node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 2 });
+		await workletReady();
+		const encoder = FakeAudioEncoder.lastCreated;
+		const [worklet] = worklets;
+		assertExists(encoder);
+		assertExists(worklet);
+		let postedAtFlush: unknown[] = [];
+		const flush = encoder.flush.bind(encoder);
+		encoder.flush = () => {
+			postedAtFlush = worklet.posted.slice();
+			return flush();
+		};
+
+		await node.dispose();
+
+		assertEquals(postedAtFlush, [{ type: "stop" }]);
+	});
+
+	await t.step("creates the capture worklet under the processor's versioned name", async () => {
+		worklets = [];
+		const node = new AudioEncodeNode(new FakeAudioContext());
+
+		await workletReady();
+
+		assertEquals(worklets.map((worklet) => worklet.name), [HIJACK_PROCESSOR_NAME]);
+		await node.dispose();
 	});
 
 	await t.step("drops a frame whose channel count is not the configured one", async () => {

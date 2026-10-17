@@ -1,13 +1,12 @@
 import { DEFAULT_MAX_LATENCY_MS, isAudioOffloadMessage } from "./audio_offload_protocol.ts";
-import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
+import type { AudioPlayoutStats } from "./audio_playback_stats.ts";
+import { OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import { DelayEstimator } from "./delay_estimator.ts";
 
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
 	return new URL("./audio_offload_worklet.js", import.meta.url).href;
 }
-
-export const workletName: string = "audio-offloader";
 
 // Blocks in a row, each wholly in the playback past and too late to absorb by
 // raising the delay, after which playback starts over from the stream as it now
@@ -136,6 +135,10 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		#resyncs: number = 0;
 		#reanchors: number = 0;
 
+		// Set by a stop message: process() then returns false, so the
+		// processor can be collected.
+		#stopped = false;
+
 		constructor(options: AudioWorkletNodeOptions) {
 			super();
 			if (!options.processorOptions) {
@@ -192,6 +195,10 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 					case "stats":
 						this.port.postMessage({ type: "stats", id: message.id, stats: this.stats() });
 						return;
+					case "stop":
+						this.#stopped = true;
+						this.port.close();
+						return;
 					default: {
 						const unhandled: never = message;
 						return unhandled;
@@ -209,7 +216,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		}
 
 		// Snapshot of the buffer's state.
-		stats(): AudioPlaybackStats {
+		stats(): AudioPlayoutStats {
 			const written = this.#nextWriteFrame ?? this.#playoutFrame;
 			return {
 				targetDelayMs: this.#ms(this.#estimator.targetCushion()),
@@ -327,8 +334,8 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#receivedBlocks++;
 
 			// The first block establishes the media-clock origin and anchors the
-			// delay to the playback frame at its arrival. Playback starting (or
-			// starting over) from a block, after silence, is not faded in.
+			// delay to the playback frame at its arrival. Playback starting from
+			// it, after silence, is not faded in.
 			let restart = false;
 			if (this.#baseTsUs === null) {
 				this.#anchor(tsUs);
@@ -379,17 +386,18 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			// and raising the delay could not save it. Drop it rather than clobber
 			// current playback. A run of them means the stream fell behind for
 			// good: every later block would be dropped too, so start over from
-			// this block, as for the first one.
+			// this block, as for the first one, fading out the audio it was
+			// playing and fading this block in, as for a resync.
 			if (start + numberOfFrames <= this.#playoutFrame) {
 				this.#behindBlocks++;
 				if (this.#behindBlocks < REANCHOR_AFTER_BEHIND_BLOCKS) {
 					this.#droppedBlocks++;
 					return;
 				}
+				this.#keepResyncTail();
 				this.#anchor(tsUs);
 				start = this.#playoutFrameForTs(tsUs);
 				this.#reanchors++;
-				restart = true;
 			}
 			this.#behindBlocks = 0;
 			const end = start + numberOfFrames;
@@ -549,6 +557,8 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		}
 
 		process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+			if (this.#stopped) return false;
+
 			// process() is invoked once per render quantum, so the playback clock
 			// advances by one quantum on every call — including the guard paths
 			// below. Skipping the advance on an empty-outputs / not-initialized
@@ -652,5 +662,12 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		}
 	}
 
-	registerProcessor(workletName, AudioOffloadProcessor);
+	try {
+		registerProcessor(OFFLOAD_PROCESSOR_NAME, AudioOffloadProcessor);
+	} catch (e) {
+		// reason: the module was evaluated again in this scope (another copy of
+		// the same version loaded it); the identical processor registered first
+		// stays in use.
+		if (!(e instanceof DOMException && e.name === "NotSupportedError")) throw e;
+	}
 }

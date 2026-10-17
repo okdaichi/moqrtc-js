@@ -1,9 +1,10 @@
 export type AudioWorkletRegisterCall = [string, unknown];
 
-// A processor's message port: records what the processor posts in `sent`;
-// tests deliver messages by calling `onmessage`.
+// A processor's message port: records what the processor posts in `sent` and
+// whether it closed the port; tests deliver messages by calling `onmessage`.
 export class FakeProcessorPort {
 	readonly sent: unknown[] = [];
+	closed = false;
 	onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
 
 	postMessage(message: unknown): void {
@@ -11,7 +12,9 @@ export class FakeProcessorPort {
 	}
 
 	start(): void {}
-	close(): void {}
+	close(): void {
+		this.closed = true;
+	}
 }
 
 export class FakeAudioWorkletProcessor {
@@ -31,7 +34,11 @@ export function setupFakeAudioWorkletEnvironment() {
 	const registerProcessorCalls: AudioWorkletRegisterCall[] = [];
 
 	g.AudioWorkletProcessor = FakeAudioWorkletProcessor as unknown;
+	// Like the real scope, a name registers once.
 	g.registerProcessor = (name: string, processor: unknown) => {
+		if (registerProcessorCalls.some(([registered]) => registered === name)) {
+			throw new DOMException(`"${name}" is already registered`, "NotSupportedError");
+		}
 		registerProcessorCalls.push([name, processor]);
 	};
 

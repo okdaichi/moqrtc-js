@@ -1,10 +1,10 @@
 /// <reference path="../../../src/test_globals.d.ts" />
+import { HIJACK_PROCESSOR_NAME, isStopMessage } from "./audio_worklet_protocol.ts";
+
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
 	return new URL("./audio_hijack_worklet.js", import.meta.url).href;
 }
-
-export const workletName: string = "audio-hijacker";
 
 // Check if we're in a worklet context
 if (typeof AudioWorkletProcessor !== "undefined") {
@@ -14,6 +14,9 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		// Whether the last render quantum had input.
 		#capturing = false;
 		#targetChannels: number;
+		// Set by a stop message: process() then returns false, so the
+		// processor can be collected.
+		#stopped = false;
 
 		constructor(options: AudioWorkletNodeOptions) {
 			super();
@@ -24,6 +27,11 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#targetChannels = options.processorOptions?.targetChannels || 1;
 			// The node changes the channel count when its encoder is configured.
 			this.port.onmessage = ({ data }: MessageEvent) => {
+				if (isStopMessage(data)) {
+					this.#stopped = true;
+					this.port.close();
+					return;
+				}
 				const channels = data?.targetChannels;
 				if (Number.isInteger(channels) && channels > 0) {
 					this.#targetChannels = channels;
@@ -32,6 +40,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		}
 
 		process(inputs: Float32Array[][]) {
+			if (this.#stopped) return false;
 			if (inputs.length > 1) throw new Error("only one input is supported.");
 
 			// Just take one input channel, the first one.
@@ -101,5 +110,12 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		}
 	}
 
-	registerProcessor(workletName, AudioHijackProcessor);
+	try {
+		registerProcessor(HIJACK_PROCESSOR_NAME, AudioHijackProcessor);
+	} catch (e) {
+		// reason: the module was evaluated again in this scope (another copy of
+		// the same version loaded it); the identical processor registered first
+		// stays in use.
+		if (!(e instanceof DOMException && e.name === "NotSupportedError")) throw e;
+	}
 }

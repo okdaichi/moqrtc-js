@@ -1,6 +1,7 @@
 /// <reference path="../../../src/test_globals.d.ts" />
 import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
-import { importWorkletUrl, workletName } from "./audio_hijack_worklet.ts";
+import { importWorkletUrl } from "./audio_hijack_worklet.ts";
+import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import { setupFakeAudioWorkletEnvironment } from "./fake_audio_worklet_environment_test.ts";
 
 // The context's render clock, as the worklet scope exposes it: at() sets it,
@@ -45,7 +46,7 @@ Deno.test("audio_hijack_worklet", async (t) => {
 
 				assertEquals(env.registerProcessorCalls.length, 1);
 				const [name, processorCtor] = env.registerProcessorCalls[0]!;
-				assertEquals(name, workletName);
+				assertEquals(name, HIJACK_PROCESSOR_NAME);
 				assertEquals(typeof processorCtor, "function");
 			} finally {
 				env.restore();
