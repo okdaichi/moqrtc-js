@@ -125,6 +125,12 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 - `AudioDecodeNode`: playback no longer cuts hard between audio and silence. An underrun fades out over 3 ms ahead of the end of the buffered audio and fades back in; a gap in the stream, a raised delay, a lowered delay and a jump to the live edge are faded or crossfaded the same way ([#84]).
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
 
+### Fixed
+
+- `AudioDecodeNode` / `AudioEncodeNode`: each worklet module is added to an audio context once, however many nodes use it there. Every node used to add it again from a new Blob URL that was never revoked, so an app creating a node per subscription or per mic-on leaked a Blob per node, compiled the module again on the audio rendering thread, and logged a `NotSupportedError` from the repeated `registerProcessor`. The load is shared per context (a failed one is retried by the next node), each worklet has one Blob URL for the process, and both worklets ignore a repeated registration of their processor ([#91]).
+- `AudioDecodeNode` / `AudioEncodeNode`: `dispose()` tells the worklet's processor to stop. Processors kept running after their node was disposed and piled up for the context's lifetime; a stop message (`{ type: "stop" }`) now makes the processor close its port and return `false` from `process()`, and the node closes its port and disconnects. A decode node disposed while its worklet module loads creates no worklet ([#91]).
+- `AudioDecodeNode.decodeFrom()`: reading no longer ends when the audio context is not running. It used to return at once when called before `resume()`, and to end for good on a suspension or an iOS interruption, leaving the stream uncancelled. Chunks read while the context is not running are now dropped, as they would play late, and decoding resumes once it runs. Reading ends on `dispose()`, at the end of the stream, when the context closes, or on an error, and ending any way but the end of the stream cancels the stream ([#91]).
+
 ## [0.1.0] - TBD
 
 ### Added
@@ -176,6 +182,7 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 [#56]: https://github.com/okdaichi/moqrtc-js/pull/56
 [#58]: https://github.com/okdaichi/moqrtc-js/pull/58
 [#84]: https://github.com/okdaichi/moqrtc-js/pull/84
+[#91]: https://github.com/okdaichi/moqrtc-js/pull/91
 [0.1.0]: https://github.com/okdaichi/moqrtc-js/releases/tag/media-log/v0.1.0
 [0.10.1]: https://github.com/okdaichi/moqrtc-js/releases/tag/av-nodes/v0.10.1
 [0.10.2]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.1...av-nodes/v0.10.2
