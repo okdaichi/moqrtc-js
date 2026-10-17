@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-10-18
+
+Minor release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioEncodeNode` hands its encoder whole codec frames and keeps every capture gap in the timestamps, so captured audio no longer clicks; `AudioDecodeNode` starts playback at the live edge. `AudioEncodeNode.configure()` now validates `opus.frameDuration`, and the worklet processor names move to `-v2`.
+
+### Changed
+
+- The worklet processors are registered as `audio-offloader-v2` and `audio-hijacker-v2`: the capture worklet's messages changed (a `format` message replaces `{ targetChannels }`, and it posts `frame` and `inputEnded` messages), and the playback worklet starts differently ([#68]).
+- `AudioEncodeNode`: the frames it hands its encoder last one codec frame, `opus.frameDuration` of the encoder config (20 ms if not given), rather than one 128-frame render quantum ([#68]).
+
+### Fixed
+
+- `AudioEncodeNode`: captured audio no longer clicks. The capture worklet posted one 128-frame `AudioData` per render quantum, 375 a second, and the node dropped a frame whenever more than two waited in the encoder queue, which the main thread's jitter caused about twice every ten seconds; the timestamps were then closed up over the 2.67 ms gap, so the receiver played the audio on either side of it back to back. The worklet now gathers a whole codec frame (960 frames at 48 kHz for 20 ms) in a buffer it hands over with the message, one allocation per frame instead of per quantum, and the node lets the encoder queue hold 200 ms of frames. A frame is only dropped when the encoder has stalled, whole, and the encoder is flushed before the next one, which keeps its own timestamp, so the receiver sees the gap and fades over it ([#68]).
+- `AudioEncodeNode`: dropped frames are reported in one `console.warn` with their count at most every five seconds, instead of one warning per frame. A stalled encoder no longer stops capture for good after five seconds ([#71]).
+- `AudioEncodeNode`: every gap in the captured audio is kept in the encoded timestamps. Gaps under 100 ms were closed up, taken for jitter, but the capture worklet stamps each frame by the audio context's clock, so a jump of a sample or more is audio that is missing; the encoder now flushes before the frame after it, which keeps its own timestamp, instead of joining the audio on either side ([#97]).
+- `AudioEncodeNode.configure()`: `opus.frameDuration` is validated, and a refused config leaves the capture format as it was. A duration of `0` made one-sample frames and an unbounded encoder queue, and a duration the encoder refused still changed the frames the worklet captured. It must now be a positive finite number, and for Opus one of 2.5, 5, 10, 20, 40 or 60 ms, or `configure()` throws the new `AudioEncodeNodeOptionError`; the encoder is configured before the frame length, the worklet's format and the queue bound change ([#97]).
+- `AudioEncodeNode`: the dropped-frame warning is rate-limited by `performance.now()` instead of the wall clock, so a clock set back no longer silences it ([#97]).
+- `AudioDecodeNode`: playback starts at the live edge. Blocks arriving at once on joining a stream, as a backlog spanning more than the playout delay, all used to be kept, so playback started that much late (about 250 ms instead of 100 ms) and the adaptive delay then cut 10 ms of audio every two seconds for half a minute to come down. Until the reader reaches the stream's first block, the playback worklet now moves its reader so the newest block plays one delay from now, skipping the older audio and fading in, and goes on skipping the rest of the backlog until the reader reaches that block, however the decoder spreads the backlog over render quanta. A lowering step that cuts through sound crossfades over up to 10 ms instead of 3 ms ([#68]).
+
 ## [0.12.0] - 2026-10-17
 
 Minor release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioDecodeNode` gets an adaptive jitter buffer with fades instead of hard cuts and a `getStats()` snapshot; worklet modules and processors no longer leak; `decodeFrom()` survives a suspended audio context. `latency` / `maxLatency` are now validated, so `latency: 0` throws instead of meaning 100 ms.
@@ -141,17 +159,6 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 ### Changed
 
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
-- The worklet processors are registered as `audio-offloader-v2` and `audio-hijacker-v2`: the capture worklet's messages changed (a `format` message replaces `{ targetChannels }`, and it posts `frame` and `inputEnded` messages), and the playback worklet starts differently ([#68]).
-- `AudioEncodeNode`: the frames it hands its encoder last one codec frame, `opus.frameDuration` of the encoder config (20 ms if not given), rather than one 128-frame render quantum ([#68]).
-
-### Fixed
-
-- `AudioEncodeNode`: captured audio no longer clicks. The capture worklet posted one 128-frame `AudioData` per render quantum, 375 a second, and the node dropped a frame whenever more than two waited in the encoder queue, which the main thread's jitter caused about twice every ten seconds; the timestamps were then closed up over the 2.67 ms gap, so the receiver played the audio on either side of it back to back. The worklet now gathers a whole codec frame (960 frames at 48 kHz for 20 ms) in a buffer it hands over with the message, one allocation per frame instead of per quantum, and the node lets the encoder queue hold 200 ms of frames. A frame is only dropped when the encoder has stalled, whole, and the encoder is flushed before the next one, which keeps its own timestamp, so the receiver sees the gap and fades over it ([#68]).
-- `AudioEncodeNode`: dropped frames are reported in one `console.warn` with their count at most every five seconds, instead of one warning per frame. A stalled encoder no longer stops capture for good after five seconds ([#71]).
-- `AudioEncodeNode`: every gap in the captured audio is kept in the encoded timestamps. Gaps under 100 ms were closed up, taken for jitter, but the capture worklet stamps each frame by the audio context's clock, so a jump of a sample or more is audio that is missing; the encoder now flushes before the frame after it, which keeps its own timestamp, instead of joining the audio on either side ([#97]).
-- `AudioEncodeNode.configure()`: `opus.frameDuration` is validated, and a refused config leaves the capture format as it was. A duration of `0` made one-sample frames and an unbounded encoder queue, and a duration the encoder refused still changed the frames the worklet captured. It must now be a positive finite number, and for Opus one of 2.5, 5, 10, 20, 40 or 60 ms, or `configure()` throws the new `AudioEncodeNodeOptionError`; the encoder is configured before the frame length, the worklet's format and the queue bound change ([#97]).
-- `AudioEncodeNode`: the dropped-frame warning is rate-limited by `performance.now()` instead of the wall clock, so a clock set back no longer silences it ([#97]).
-- `AudioDecodeNode`: playback starts at the live edge. Blocks arriving at once on joining a stream, as a backlog spanning more than the playout delay, all used to be kept, so playback started that much late (about 250 ms instead of 100 ms) and the adaptive delay then cut 10 ms of audio every two seconds for half a minute to come down. Until the reader reaches the stream's first block, the playback worklet now moves its reader so the newest block plays one delay from now, skipping the older audio and fading in, and goes on skipping the rest of the backlog until the reader reaches that block, however the decoder spreads the backlog over render quanta. A lowering step that cuts through sound crossfades over up to 10 ms instead of 3 ms ([#68]).
 
 ## [0.1.0] - TBD
 
@@ -176,7 +183,8 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 - **Minor version (0.X.0)**: Add functionality in a backward compatible manner
 - **Patch version (0.0.X)**: Backward compatible bug fixes
 
-[Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.12.0...HEAD
+[Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.13.0...HEAD
+[0.13.0]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.12.0...av-nodes/v0.13.0
 [0.12.0]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.2...av-nodes/v0.12.0
 [0.11.2]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.1...av-nodes/v0.11.2
 [0.11.1]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.0...av-nodes/v0.11.1
