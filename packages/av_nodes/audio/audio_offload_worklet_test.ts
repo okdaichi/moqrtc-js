@@ -10,7 +10,7 @@ import {
 	assertLessOrEqual,
 	assertThrows,
 } from "@std/assert";
-import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
+import type { AudioPlayoutStats } from "./audio_playback_stats.ts";
 import { importWorkletUrl } from "./audio_offload_worklet.ts";
 import {
 	type FakeProcessorPort,
@@ -19,7 +19,7 @@ import {
 
 type AudioOffloadProcessorInstance = {
 	append(channels: readonly Float32Array[], tsUs: number): void;
-	stats(): AudioPlaybackStats;
+	stats(): AudioPlayoutStats;
 	process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean;
 	port: FakeProcessorPort;
 };
@@ -679,10 +679,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 
 		// Played one cushion from now, not dropped.
 		const out = drain(processor, LAG_SAMPLES / QUANTUM + 1);
-		assertEquals(
-			out.subarray(LAG_SAMPLES, LAG_SAMPLES + QUANTUM),
-			new Float32Array(QUANTUM).fill(7),
-		);
+		assertEquals(out.findIndex((sample) => sample !== 0), LAG_SAMPLES);
 		assertEquals(processor.stats().reanchors, 1);
 	});
 
@@ -715,10 +712,35 @@ Deno.test("audio_offload_worklet", async (t) => {
 		appendTail(processor, 4 * QUANTUM);
 
 		const out = drain(processor, LAG_SAMPLES / QUANTUM + 1);
-		assertEquals(
-			out.subarray(LAG_SAMPLES, LAG_SAMPLES + QUANTUM),
-			new Float32Array(QUANTUM).fill(7),
-		);
+		assertEquals(out.findIndex((sample) => sample !== 0), LAG_SAMPLES);
+	});
+
+	// A processor playing a long block of 1 when three blocks of 7 arrive two
+	// seconds behind it, so it starts over from the third.
+	function playReanchor() {
+		const processor = createProcessor();
+		processor.append(block(1, 16 * QUANTUM), 0);
+		const before = drain(processor, LAG_SAMPLES / QUANTUM + 2);
+		const behind = -2 * SAMPLE_RATE;
+		for (let i = 0; i < 3; i++) processor.append(block(7), ts(behind + i * QUANTUM));
+		appendTail(processor, behind + 3 * QUANTUM);
+		const after = drain(processor, LAG_SAMPLES / QUANTUM + 2);
+		return { processor, before, after };
+	}
+
+	await t.step("fades out the audio it was playing when it starts over", () => {
+		const { processor, before, after } = playReanchor();
+
+		assertEquals(processor.stats().reanchors, 1);
+		assertEquals(sampleAt(before, before.length - 1), 1);
+		assertAlmostEquals(sampleAt(after, 0), FADE_FRAMES / (FADE_FRAMES + 1), 1e-6);
+		assertEquals(after.subarray(FADE_FRAMES, 2 * FADE_FRAMES), new Float32Array(FADE_FRAMES));
+	});
+
+	await t.step("fades in the block it starts over from", () => {
+		const { after } = playReanchor();
+
+		assertAlmostEquals(sampleAt(after, LAG_SAMPLES), 7 / (FADE_FRAMES + 1), 1e-4);
 	});
 
 	await t.step("absorbs a stream that fell behind by less than the maximum delay", () => {
@@ -841,11 +863,11 @@ interface Scenario {
 	// Underruns are also counted from this frame on.
 	readonly countUnderrunsFrom?: number;
 	// Called with the stats after each quantum's arrivals.
-	readonly observe?: (frame: number, stats: AudioPlaybackStats) => void;
+	readonly observe?: (frame: number, stats: AudioPlayoutStats) => void;
 }
 
 interface ScenarioResult {
-	readonly stats: AudioPlaybackStats;
+	readonly stats: AudioPlayoutStats;
 	// Channel 0 of the output.
 	readonly out: Float32Array;
 	readonly underrunsAfterMark: number;

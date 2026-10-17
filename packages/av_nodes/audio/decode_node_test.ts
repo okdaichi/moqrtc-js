@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
-import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
-import { isStopMessage } from "./audio_worklet_protocol.ts";
+import type { AudioPlayoutStats } from "./audio_playback_stats.ts";
+import { isStopMessage, OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import type { AudioDecodeNodeInit } from "./decode_node.ts";
 import { FakeAudioContext } from "./fake_audio_context_test.ts";
 import { FakeAudioWorkletNode } from "./fake_audio_workletnode_test.ts";
@@ -327,7 +327,7 @@ Deno.test("AudioDecodeNode", async (t) => {
 		},
 	);
 
-	const statsWith = (targetDelayMs: number): AudioPlaybackStats => ({
+	const statsWith = (targetDelayMs: number): AudioPlayoutStats => ({
 		targetDelayMs,
 		delayMs: 0,
 		bufferLevelMs: 0,
@@ -394,9 +394,11 @@ Deno.test("AudioDecodeNode", async (t) => {
 		class FakePlaybackWorkletNode {
 			readonly port = new FakePlaybackPort(() => posted.resolve());
 			onprocessorerror: ((event: Event) => void) | null = null;
+			readonly name: string;
 			readonly options: AudioWorkletNodeOptions | undefined;
 
-			constructor(_context: unknown, _name: string, options?: AudioWorkletNodeOptions) {
+			constructor(_context: unknown, name: string, options?: AudioWorkletNodeOptions) {
+				this.name = name;
 				this.options = options;
 				configure(this.port);
 				created.push(this);
@@ -775,6 +777,118 @@ Deno.test("AudioDecodeNode", async (t) => {
 			node.dispose();
 		});
 	}
+
+	await t.step("creates the playback worklet under the processor's versioned name", async () => {
+		const worklet = installPlaybackWorklet((port) => (port.respond = echo));
+		try {
+			const node = createNode();
+
+			await node.getStats();
+
+			assertEquals(worklet.created.map((created) => created.name), [OFFLOAD_PROCESSOR_NAME]);
+			node.dispose();
+		} finally {
+			worklet.restore();
+		}
+	});
+
+	await t.step("a failed worklet load leaves no unhandled rejection", async () => {
+		const rejections: unknown[] = [];
+		const onRejection = (event: PromiseRejectionEvent) => {
+			event.preventDefault();
+			rejections.push(event.reason);
+		};
+		globalThis.addEventListener("unhandledrejection", onRejection);
+		try {
+			const context = createContext();
+			context.audioWorklet.addModule = () =>
+				Promise.reject(new Error("module failed to load"));
+
+			const node = createNode({}, context);
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+			assertEquals(rejections, []);
+			node.dispose();
+		} finally {
+			globalThis.removeEventListener("unhandledrejection", onRejection);
+		}
+	});
+
+	await t.step(
+		"getStats() counts the chunks dropped while the context was not running",
+		async () => {
+			const worklet = installPlaybackWorklet((port) => (port.respond = echo));
+			try {
+				const context = createContext();
+				const node = createNode({}, context);
+				node.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 2 });
+				const source = scriptedStream(context, [
+					{ state: "suspended", timestamp: 0 },
+					{ state: "suspended", timestamp: 1 },
+					{ state: "running", timestamp: 2 },
+				]);
+				await node.decodeFrom(source.stream).done;
+
+				const stats = await node.getStats();
+
+				assertEquals(stats.droppedWhileSuspended, 2);
+				node.dispose();
+			} finally {
+				worklet.restore();
+			}
+		},
+	);
+
+	await t.step("decodeFrom() cancels a pending read when the context closes", async () => {
+		const context = createContext();
+		const node = createNode({}, context);
+		let cancelled = false;
+		// A stream that never yields a chunk: reading waits on it.
+		const { done } = node.decodeFrom(
+			new ReadableStream<EncodedAudioChunk>({
+				cancel() {
+					cancelled = true;
+				},
+			}),
+		);
+
+		context.state = "closed";
+		context.dispatchEvent(new Event("statechange"));
+
+		assertEquals(cancelled, true);
+		await done;
+		node.dispose();
+	});
+
+	await t.step(
+		"dispose() cancels the latest decodeFrom stream after an earlier one ended",
+		async () => {
+			const node = createNode();
+			let endFirst = (): void => {};
+			const first = node.decodeFrom(
+				new ReadableStream<EncodedAudioChunk>({
+					start(controller) {
+						endFirst = () => controller.close();
+					},
+				}),
+			);
+			let cancelled = false;
+			const second = node.decodeFrom(
+				new ReadableStream<EncodedAudioChunk>({
+					cancel() {
+						cancelled = true;
+					},
+				}),
+			);
+			endFirst();
+			await first.done;
+
+			node.dispose();
+
+			assertEquals(cancelled, true);
+			await second.done;
+		},
+	);
 
 	await t.step("decodeFrom() cancels the stream when the node is disposed", async () => {
 		const node = createNode();

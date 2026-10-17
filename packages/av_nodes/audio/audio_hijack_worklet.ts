@@ -1,12 +1,10 @@
 /// <reference path="../../../src/test_globals.d.ts" />
-import { isStopMessage } from "./audio_worklet_protocol.ts";
+import { HIJACK_PROCESSOR_NAME, isStopMessage } from "./audio_worklet_protocol.ts";
 
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
 	return new URL("./audio_hijack_worklet.js", import.meta.url).href;
 }
-
-export const workletName: string = "audio-hijacker";
 
 // Check if we're in a worklet context
 if (typeof AudioWorkletProcessor !== "undefined") {
@@ -113,10 +111,11 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	}
 
 	try {
-		registerProcessor(workletName, AudioHijackProcessor);
+		registerProcessor(HIJACK_PROCESSOR_NAME, AudioHijackProcessor);
 	} catch (e) {
 		// reason: the module was evaluated again in this scope (another copy of
-		// the library loaded it); the processor registered first stays in use.
+		// the same version loaded it); the identical processor registered first
+		// stays in use.
 		if (!(e instanceof DOMException && e.name === "NotSupportedError")) throw e;
 	}
 }

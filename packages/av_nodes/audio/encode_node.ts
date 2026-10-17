@@ -3,8 +3,8 @@
 import type { CancelFunc } from "@okdaichi/golikejs/context";
 import { HijackCode } from "./audio_hijack_worklet_inline.ts";
 import { AudioWorkletModule, stopProcessor } from "./audio_worklet_module.ts";
+import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 
-const hijackWorkletName = "audio-hijacker";
 const hijackWorklet = new AudioWorkletModule(HijackCode);
 
 interface AudioContextLike {
@@ -149,7 +149,7 @@ export class AudioEncodeNode extends GainNode {
 	#attachWorklet(): void {
 		const worklet = new AudioWorkletNode(
 			this.#context as unknown as BaseAudioContext,
-			hijackWorkletName,
+			HIJACK_PROCESSOR_NAME,
 			{
 				numberOfInputs: 1,
 				numberOfOutputs: 1,
@@ -426,6 +426,17 @@ export class AudioEncodeNode extends GainNode {
 		if (this.#disposed) return;
 		this.#disposed = true;
 
+		// Close the internal worklet→encoder stream so #next's pending read()
+		// unblocks (it only re-checks #disposed after read returns), and stop the
+		// worklet's processor; closing its port detaches the onmessage handler so
+		// late worklet messages don't enqueue into a dead stream.
+		try {
+			this.#readableController?.close();
+		} catch (_) {
+			/* ignore */
+		}
+		if (this.#worklet) stopProcessor(this.#worklet);
+
 		// Flush encoder before closing
 		try {
 			await this.flush();
@@ -446,17 +457,6 @@ export class AudioEncodeNode extends GainNode {
 		} catch (_) {
 			/* ignore */
 		}
-
-		// Close the internal worklet→encoder stream so #next's pending read()
-		// unblocks (it only re-checks #disposed after read returns), and stop the
-		// worklet's processor; closing its port detaches the onmessage handler so
-		// late worklet messages don't enqueue into a dead stream.
-		try {
-			this.#readableController?.close();
-		} catch (_) {
-			/* ignore */
-		}
-		if (this.#worklet) stopProcessor(this.#worklet);
 
 		// Cleanup all destinations
 		for (const [_, cancel] of this.#dests) {

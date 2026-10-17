@@ -1,5 +1,5 @@
 // Messages between AudioDecodeNode and its playback worklet.
-import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
+import type { AudioPlayoutStats } from "./audio_playback_stats.ts";
 import type { StopMessage } from "./audio_worklet_protocol.ts";
 
 /** Starting and minimum playout delay when none is given (ms). */
@@ -28,12 +28,12 @@ export type AudioOffloadMessage = AppendMessage | StatsRequest | StopMessage;
 export interface StatsReply {
 	readonly type: "stats";
 	readonly id: number;
-	readonly stats: AudioPlaybackStats;
+	readonly stats: AudioPlayoutStats;
 }
 
 // Every stats field, so a snapshot can be checked field by field. The mapped
 // type makes the compiler reject a missing or unknown field.
-const STATS_FIELDS: { readonly [K in keyof AudioPlaybackStats]: true } = {
+const STATS_FIELDS: { readonly [K in keyof AudioPlayoutStats]: true } = {
 	targetDelayMs: true,
 	delayMs: true,
 	bufferLevelMs: true,
@@ -74,7 +74,7 @@ export function isAudioOffloadMessage(value: unknown): value is AudioOffloadMess
 }
 
 /** Whether `value` is a well-formed stats snapshot. */
-export function isAudioPlaybackStats(value: unknown): value is AudioPlaybackStats {
+export function isAudioPlayoutStats(value: unknown): value is AudioPlayoutStats {
 	if (!isRecord(value)) return false;
 	return Object.keys(STATS_FIELDS).every((field) => {
 		const n = value[field];
@@ -85,5 +85,5 @@ export function isAudioPlaybackStats(value: unknown): value is AudioPlaybackStat
 /** Whether `value` is a well-formed reply to a stats request. */
 export function isStatsReply(value: unknown): value is StatsReply {
 	return isRecord(value) && value.type === "stats" && Number.isSafeInteger(value.id) &&
-		isAudioPlaybackStats(value.stats);
+		isAudioPlayoutStats(value.stats);
 }

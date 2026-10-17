@@ -8,10 +8,10 @@ import {
 	type StatsRequest,
 } from "./audio_offload_protocol.ts";
 import { OffloadCode } from "./audio_offload_worklet_inline.ts";
-import type { AudioPlaybackStats } from "./audio_playback_stats.ts";
+import type { AudioPlaybackStats, AudioPlayoutStats } from "./audio_playback_stats.ts";
 import { AudioWorkletModule, stopProcessor } from "./audio_worklet_module.ts";
+import { OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 
-const offloadWorkletName = "audio-offloader";
 const offloadWorklet = new AudioWorkletModule(OffloadCode);
 
 const MAX_DECODE_QUEUE_SIZE = 3;
@@ -78,8 +78,16 @@ export interface AudioPlaybackStatsOptions {
 // How long getStats() waits for the worklet's reply by default (ms).
 const DEFAULT_STATS_TIMEOUT_MS = 1000;
 
+// Cancels a stream that is no longer read.
+function abandon(reader: ReadableStreamDefaultReader<unknown>): void {
+	reader.cancel().catch(() => {
+		// reason: the stream is abandoned either way; a source that fails to
+		// cancel leaves nothing to do.
+	});
+}
+
 interface StatsRequestHandlers {
-	readonly resolve: (stats: AudioPlaybackStats) => void;
+	readonly resolve: (stats: AudioPlayoutStats) => void;
 	readonly reject: (error: Error) => void;
 	readonly timer: ReturnType<typeof setTimeout>;
 }
@@ -112,6 +120,8 @@ interface StatsRequestHandlers {
  */
 export class AudioDecodeNode extends GainNode {
 	#decoder: AudioDecoder;
+	// Resolves to the worklet, or to undefined if it was not created; never
+	// rejects (a failed load is kept in #playbackError).
 	#workletReady: Promise<AudioWorkletNode | undefined>;
 	// Cached once the worklet resolves, so #process can post directly without
 	// allocating a `.then()` continuation on every decoded frame.
@@ -121,12 +131,14 @@ export class AudioDecodeNode extends GainNode {
 	// read() instead of leaving it pending (and upstream buffering into a pipe
 	// nobody drains).
 	#activeReader?: ReadableStreamDefaultReader<EncodedAudioChunk>;
+	// Chunks decodeFrom dropped because the context was not running.
+	#droppedWhileSuspended = 0;
 
 	// Stats requests waiting for the worklet's reply, by request id.
 	readonly #statsRequests = new Map<number, StatsRequestHandlers>();
 	#nextStatsRequest = 0;
-	// Set when the worklet's processor fails or the context closes; the
-	// worklet then answers nothing.
+	// Set when the worklet fails to load, its processor fails or the context
+	// closes; the worklet then answers nothing.
 	#playbackError: AudioPlaybackUnavailableError | null = null;
 	readonly #onStateChange: () => void;
 
@@ -162,6 +174,8 @@ export class AudioDecodeNode extends GainNode {
 						"AudioDecodeNode: the audio context is closed",
 					),
 				);
+				// A pending read() would otherwise wait for the next chunk.
+				if (this.#activeReader) abandon(this.#activeReader);
 			}
 		};
 		context.addEventListener("statechange", this.#onStateChange);
@@ -174,7 +188,7 @@ export class AudioDecodeNode extends GainNode {
 				// Create AudioWorkletNode
 				const worklet = new AudioWorkletNode(
 					context,
-					offloadWorkletName,
+					OFFLOAD_PROCESSOR_NAME,
 					{
 						channelCount: context.destination.channelCount,
 						numberOfInputs: 0,
@@ -220,7 +234,13 @@ export class AudioDecodeNode extends GainNode {
 				"[AudioDecodeNode] failed to load AudioWorklet module:",
 				error,
 			);
-			throw error;
+			this.#fail(
+				new AudioPlaybackUnavailableError(
+					"AudioDecodeNode: the playback worklet failed to load",
+					{ cause: error },
+				),
+			);
+			return undefined;
 		});
 
 		this.#decoder = new AudioDecoder({
@@ -308,6 +328,8 @@ export class AudioDecodeNode extends GainNode {
 
 					if (this.context.state === "running") {
 						this.#decoder.decode(chunk);
+					} else {
+						this.#droppedWhileSuspended++;
 					}
 				}
 			} catch (e) {
@@ -319,13 +341,8 @@ export class AudioDecodeNode extends GainNode {
 					console.error("[AudioDecodeNode] decodeFrom error:", e);
 				}
 			} finally {
-				this.#activeReader = undefined;
-				if (reader !== undefined && !ended) {
-					reader.cancel().catch(() => {
-						// reason: the stream is abandoned either way; a source
-						// that fails to cancel leaves nothing to do.
-					});
-				}
+				if (this.#activeReader === reader) this.#activeReader = undefined;
+				if (reader !== undefined && !ended) abandon(reader);
 				reader?.releaseLock();
 			}
 		})();
@@ -444,12 +461,7 @@ export class AudioDecodeNode extends GainNode {
 		if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
 			throw new RangeError(`AudioDecodeNode: timeoutMs must be positive, got ${timeoutMs}`);
 		}
-		const worklet = await this.#workletReady.catch((e: unknown) => {
-			throw new AudioPlaybackUnavailableError(
-				"AudioDecodeNode: the playback worklet failed to load",
-				{ cause: e },
-			);
-		});
+		const worklet = await this.#workletReady;
 		if (this.#disposed) throw new AudioDecodeNodeDisposedError();
 		this.#onStateChange();
 		if (this.#playbackError) throw this.#playbackError;
@@ -461,7 +473,7 @@ export class AudioDecodeNode extends GainNode {
 
 		const id = this.#nextStatsRequest++;
 		const request: StatsRequest = { type: "stats", id };
-		return new Promise<AudioPlaybackStats>((resolve, reject) => {
+		const playout = await new Promise<AudioPlayoutStats>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.#settle(id)?.reject(new AudioPlaybackStatsTimeoutError(timeoutMs));
 			}, timeoutMs);
@@ -477,6 +489,7 @@ export class AudioDecodeNode extends GainNode {
 				);
 			}
 		});
+		return { ...playout, droppedWhileSuspended: this.#droppedWhileSuspended };
 	}
 
 	// Removes a pending stats request and stops its timer, returning it.
@@ -541,11 +554,7 @@ export class AudioDecodeNode extends GainNode {
 
 		// Cancel any in-flight decodeFrom read() so its loop unblocks instead
 		// of staying pending on a stream we no longer drain.
-		try {
-			void this.#activeReader?.cancel();
-		} catch (_) {
-			/* ignore */
-		}
+		if (this.#activeReader) abandon(this.#activeReader);
 
 		// Disconnect this GainNode
 		try {

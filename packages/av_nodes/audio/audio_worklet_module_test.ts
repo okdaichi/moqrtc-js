@@ -8,7 +8,11 @@ import {
 	type ProcessorNode,
 	stopProcessor,
 } from "./audio_worklet_module.ts";
-import type { StopMessage } from "./audio_worklet_protocol.ts";
+import {
+	HIJACK_PROCESSOR_NAME,
+	OFFLOAD_PROCESSOR_NAME,
+	type StopMessage,
+} from "./audio_worklet_protocol.ts";
 import {
 	type FakeProcessorPort,
 	setupFakeAudioWorkletEnvironment,
@@ -122,27 +126,32 @@ Deno.test("stopProcessor closes the port and disconnects when posting fails", ()
 });
 
 // Each worklet, as its TypeScript source and as the inline code that ships.
-// `evaluate(n)` evaluates a fresh copy of the module in the current scope.
+// `evaluate(n)` evaluates a fresh copy of the module in the current scope;
+// `unversioned` is the name releases before versioned names registered.
 const worklets = [
 	{
 		name: "the offload worklet source",
-		processor: "audio-offloader",
+		processor: OFFLOAD_PROCESSOR_NAME,
+		unversioned: "audio-offloader",
 		evaluate: (n: number) => import(`./audio_offload_worklet.ts?evaluation=${n}`),
 	},
 	{
 		name: "the inline offload worklet",
-		processor: "audio-offloader",
+		processor: OFFLOAD_PROCESSOR_NAME,
+		unversioned: "audio-offloader",
 		evaluate: (n: number) =>
 			import(`data:text/javascript,${encodeURIComponent(`${OffloadCode}//${n}`)}`),
 	},
 	{
 		name: "the hijack worklet source",
-		processor: "audio-hijacker",
+		processor: HIJACK_PROCESSOR_NAME,
+		unversioned: "audio-hijacker",
 		evaluate: (n: number) => import(`./audio_hijack_worklet.ts?evaluation=${n}`),
 	},
 	{
 		name: "the inline hijack worklet",
-		processor: "audio-hijacker",
+		processor: HIJACK_PROCESSOR_NAME,
+		unversioned: "audio-hijacker",
 		evaluate: (n: number) =>
 			import(`data:text/javascript,${encodeURIComponent(`${HijackCode}//${n}`)}`),
 	},
@@ -157,6 +166,22 @@ for (const w of worklets) {
 			await w.evaluate(2);
 
 			assertEquals(env.registerProcessorCalls.map(([name]) => name), [w.processor]);
+		} finally {
+			env.restore();
+		}
+	});
+
+	Deno.test(`${w.name} registers its processor beside another version's`, async () => {
+		const env = setupFakeAudioWorkletEnvironment();
+		try {
+			globalThis.registerProcessor(w.unversioned, class extends AudioWorkletProcessor {});
+
+			await w.evaluate(3);
+
+			assertEquals(env.registerProcessorCalls.map(([name]) => name), [
+				w.unversioned,
+				w.processor,
+			]);
 		} finally {
 			env.restore();
 		}

@@ -75,10 +75,6 @@ async function buildWorklet(info: WorkletInfo): Promise<void> {
 
 	let code = new TextDecoder().decode(outputFile.contents);
 
-	// Extract worklet name before modifications
-	const workletNameMatch = code.match(/var\s+(\w+)="([\w-]+)"/);
-	const workletName = workletNameMatch ? workletNameMatch[2] : "audio-worklet";
-
 	// Remove export statements - worklet doesn't need them
 	code = code.replace(/export\s*\{[^}]*\}\s*;?\s*$/gm, "");
 	code = code.replace(/export\s+(const|function|class)\s+/g, "$1 ");
@@ -88,18 +84,6 @@ async function buildWorklet(info: WorkletInfo): Promise<void> {
 		/function\s+\w+\(\)\{return new URL\([^)]+\)\.href\}/g,
 		"",
 	);
-
-	// Replace workletName variable with string literal in registerProcessor
-	// Before: var h="audio-hijacker";...registerProcessor(h,l)
-	// After: registerProcessor("audio-hijacker",l)
-	if (workletNameMatch) {
-		const varName = workletNameMatch[1];
-		code = code.replace(new RegExp(`var\\s+${varName}="[^"]+";`, "g"), "");
-		code = code.replace(
-			new RegExp(`registerProcessor\\(${varName},`, "g"),
-			`registerProcessor("${workletName}",`,
-		);
-	}
 
 	// Generate TypeScript file with inline code
 	const tsContent = `// Auto-generated file - do not edit manually
