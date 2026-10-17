@@ -2,7 +2,7 @@
  * FakeAudioEncoder for Deno test environments.
  *
  * Behaves like the real AudioEncoder:
- * - configure() sets state to "configured"
+ * - configure() sets state to "configured", or throws configureError when set
  * - encode(data) queues a microtask that calls init.output() with a fake EncodedAudioChunk,
  *   or, with holdOutput set, keeps it queued until release()
  * - close() sets state to "closed"
@@ -59,6 +59,9 @@ export class FakeAudioEncoder extends EventTarget {
 	/** For each flush() call, how many frames had been passed to encode() before it. */
 	flushedAfter: number[] = [];
 
+	/** Thrown by configure() instead of configuring, when set. */
+	configureError: Error | null = null;
+
 	/** When true, encode() keeps each frame queued until release() lets it out. */
 	holdOutput = false;
 	#held: AudioData[] = [];
@@ -85,6 +88,7 @@ export class FakeAudioEncoder extends EventTarget {
 
 	configure(config: AudioEncoderConfig): void {
 		this.configureCalls.push(config);
+		if (this.configureError !== null) throw this.configureError;
 		this.state = "configured";
 	}
 
