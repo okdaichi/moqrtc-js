@@ -87,10 +87,13 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	//   or a quiet stretch, and crossfades the cut (longer where it cuts sound).
 	// - A block more than one cushion ahead of the cushion, or beyond the ring,
 	//   moves the reader to the live edge; the audio it was playing fades out.
-	// - Before anything plays, blocks arriving at once whose timestamps span
-	//   more than the cushion (a backlog, such as the start of a stream joined
-	//   mid-way) move the reader so the newest lands one cushion ahead; the
-	//   older audio is skipped, and playback fades in.
+	// - Until the reader reaches the stream's first block, blocks whose
+	//   timestamps span more than the cushion (a backlog, such as the start of
+	//   a stream joined mid-way, however the decoder spreads it over render
+	//   quanta) move the reader so the newest lands one cushion ahead; the
+	//   older audio is skipped, and playback fades in from the audio kept. Until
+	//   the reader reaches that newest block, the rest of the backlog is
+	//   skipped the same way, fading out the audio it was playing.
 	// Because the floor tracks the fastest recent arrival, a drift between the
 	// sender's and the receiver's audio clocks shows up as a rising or falling
 	// floor and is absorbed the same way.
@@ -136,9 +139,11 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		readonly #fadeFrames: number;
 		readonly #cutCrossfadeFrames: number;
 
-		// Whether nothing has played since the stream was anchored, and
-		// whether a backlog was skipped since.
-		#prerolling: boolean = false;
+		// Ring frame up to which a backlog may still be skipped: the start of
+		// the anchoring block, or of the newest block a skip placed; null once
+		// the reader has reached it. And whether a backlog was skipped since
+		// the stream was anchored.
+		#prerollEnd: number | null = null;
 		#skippedBacklog: boolean = false;
 
 		// Playback frame since which the delay has waited to be lowered: when the
@@ -302,26 +307,30 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#behindBlocks = 0;
 			this.#estimator.reset(0, this.#playoutFrame);
 			this.#delay = this.#estimator.targetCushion();
-			this.#prerolling = true;
+			// The anchoring block plays one delay from now.
+			this.#prerollEnd = this.#playoutFrame + this.#delay;
 			this.#skippedBacklog = false;
 		}
 
 		// Whether a block due `lead` frames from now is part of a backlog to
-		// skip: before anything plays, once blocks span more than the cushion.
+		// skip: before the reader reaches the stream's first block, once blocks
+		// span more than the cushion (the span at which a resync would move the
+		// reader anyway), and then until it reaches the newest block skipped to.
 		#isBacklog(lead: number, cushion: number): boolean {
-			if (!this.#prerolling || lead <= cushion) return false;
-			return this.#skippedBacklog || lead > 2 * cushion;
+			if (this.#prerollEnd === null || lead <= cushion) return false;
+			return this.#skippedBacklog || lead >= 2 * cushion;
 		}
 
 		// Moves the reader so a block due at `start` lands one cushion ahead,
 		// keeping the audio already written after the new read position and
-		// fading in from it. Nothing has played, so nothing is cut off.
+		// fading in from it. Audio of an earlier skip the reader was playing
+		// fades out, unless a resync's fade-out is still under way.
 		#skipBacklog(tsUs: number, start: number, cushion: number): void {
+			const written = this.#nextWriteFrame ?? this.#playoutFrame;
+			if (this.#resyncTailFrames === 0) this.#keepResyncTail();
 			this.#playoutFrame = start - cushion;
-			this.#nextWriteFrame = Math.max(
-				this.#nextWriteFrame ?? this.#playoutFrame,
-				this.#playoutFrame,
-			);
+			this.#nextWriteFrame = Math.max(written, this.#playoutFrame);
+			this.#prerollEnd = start;
 			this.#estimator.reset(
 				this.#playoutFrame - this.#scheduledFrameForTs(tsUs),
 				this.#playoutFrame,
@@ -714,7 +723,9 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			}
 			this.#resyncTailFrames = Math.max(0, this.#resyncTailFrames - outputLength);
 
-			if (realFrames > 0) this.#prerolling = false;
+			if (this.#prerollEnd !== null && playout + realFrames > this.#prerollEnd) {
+				this.#prerollEnd = null;
+			}
 			if (realFrames < outputLength) {
 				if (!this.#starved && this.#baseTsUs !== null) {
 					this.#underruns++;
