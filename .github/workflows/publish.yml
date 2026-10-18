@@ -58,6 +58,13 @@ jobs:
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
           echo "Publishing '$prefix' from $dir"
 
+      - name: Verify worklet code is current (av-nodes)
+        if: steps.pkg.outputs.dir == 'packages/av_nodes'
+        working-directory: packages/av_nodes
+        run: |
+          deno task build:worklets
+          git diff --exit-code
+
       - name: Test (publish gate)
         working-directory: ${{ steps.pkg.outputs.dir }}
         run: deno task test

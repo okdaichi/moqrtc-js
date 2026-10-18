@@ -44,6 +44,12 @@ jobs:
       # deno.json lint/check/test config. The root steps above only cover
       # src/ (root lint/fmt/test include), so lint, type-check, and test each
       # package here too.
+      - name: Verify worklets are current (av-nodes)
+        working-directory: packages/av_nodes
+        run: |
+          deno task build:worklets
+          git diff --exit-code
+
       - name: Lint av-nodes
         working-directory: packages/av_nodes
         run: deno lint

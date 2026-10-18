@@ -166,7 +166,8 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 
 ### Changed
 
-- The worklet processors are registered as `audio-offloader-v3` and `audio-hijacker-v3`: the playback processor's jitter buffer behaves differently (time-scale modification, concealment and a slower release), so a copy of av-nodes of an earlier version in the same scope keeps its own processors ([#60]).
+- The worklet processors are registered under versioned names derived automatically from the package version in `deno.json` (`audio-offloader@<version>` and `audio-hijacker@<version>`), replacing the hand-maintained `WORKLET_PROTOCOL_VERSION` constant. Copies of av-nodes of different versions in one audio context each use their own processors without manual version bumps ([#92]).
+- Worklet build verification added to the CI and publish workflows (`deno task build:worklets && git diff --exit-code`), guaranteeing that stale inline worklet code cannot pass CI or be published ([#81]).
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
 
 ## [0.1.0] - TBD
@@ -224,8 +225,10 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 [#60]: https://github.com/okdaichi/moqrtc-js/issues/60
 [#68]: https://github.com/okdaichi/moqrtc-js/issues/68
 [#71]: https://github.com/okdaichi/moqrtc-js/issues/71
+[#81]: https://github.com/okdaichi/moqrtc-js/issues/81
 [#84]: https://github.com/okdaichi/moqrtc-js/pull/84
 [#91]: https://github.com/okdaichi/moqrtc-js/pull/91
+[#92]: https://github.com/okdaichi/moqrtc-js/issues/92
 [#97]: https://github.com/okdaichi/moqrtc-js/pull/97
 [0.1.0]: https://github.com/okdaichi/moqrtc-js/releases/tag/media-log/v0.1.0
 [0.10.1]: https://github.com/okdaichi/moqrtc-js/releases/tag/av-nodes/v0.10.1

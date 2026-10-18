@@ -6,7 +6,7 @@ import {
 	isAudioHijackMessage,
 	isCount,
 } from "./audio_hijack_protocol.ts";
-import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
+import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_names.ts";
 
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
