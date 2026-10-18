@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
 import { stub } from "@std/testing/mock";
-import type { FrameMessage } from "./audio_hijack_protocol.ts";
-import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
+import type { FrameMessage } from "./capture_protocol.ts";
+import { CAPTURE_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import type {
 	AudioEncodeDestination,
 	AudioEncodeNode as AudioEncodeNodeType,
@@ -1202,7 +1202,7 @@ Deno.test("AudioEncodeNode - captured channel count", async (t) => {
 
 		await workletReady();
 
-		assertEquals(worklets.map((worklet) => worklet.name), [HIJACK_PROCESSOR_NAME]);
+		assertEquals(worklets.map((worklet) => worklet.name), [CAPTURE_PROCESSOR_NAME]);
 		await node.dispose();
 	});
 

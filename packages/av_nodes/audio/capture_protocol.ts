@@ -12,7 +12,7 @@ export interface FormatMessage {
 }
 
 /** Messages the node posts to the capture worklet. */
-export type AudioHijackMessage = FormatMessage | StopMessage;
+export type AudioCaptureMessage = FormatMessage | StopMessage;
 
 /**
  * A captured frame: `numberOfChannels` planes of `numberOfFrames` samples in
@@ -50,7 +50,7 @@ export function isCount(value: unknown): value is number {
 }
 
 /** Whether `value` is a well-formed message for the capture worklet. */
-export function isAudioHijackMessage(value: unknown): value is AudioHijackMessage {
+export function isAudioCaptureMessage(value: unknown): value is AudioCaptureMessage {
 	if (!isRecord(value)) return false;
 	switch (value.type) {
 		case "format":

@@ -1,12 +1,8 @@
 /// <reference path="../../../src/test_globals.d.ts" />
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import {
-	type FormatMessage,
-	type FrameMessage,
-	isCaptureMessage,
-} from "./audio_hijack_protocol.ts";
-import { importWorkletUrl } from "./audio_hijack_worklet.ts";
-import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
+import { type FormatMessage, type FrameMessage, isCaptureMessage } from "./capture_protocol.ts";
+import { importWorkletUrl } from "./capture_worklet.ts";
+import { CAPTURE_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import {
 	type FakeProcessorPort,
 	setupFakeAudioWorkletEnvironment,
@@ -28,12 +24,12 @@ const QUANTUM = 128;
 // A 20 ms codec frame at 48 kHz.
 const FRAME = 960;
 
-// The real AudioHijackProcessor: the worklet module evaluated once in a fake
+// The real CaptureProcessor: the worklet module evaluated once in a fake
 // worklet scope, so the tests exercise the code that ships.
-const HijackProcessor = await (async () => {
+const CaptureProcessor = await (async () => {
 	const env = setupFakeAudioWorkletEnvironment();
 	try {
-		await import("./audio_hijack_worklet.ts?behaviour");
+		await import("./capture_worklet.ts?behaviour");
 		const processor = env.registerProcessorCalls[0]?.[1];
 		if (!isProcessorConstructor(processor)) throw new TypeError("no processor registered");
 		return processor;
@@ -45,7 +41,7 @@ const HijackProcessor = await (async () => {
 function createProcessor(
 	options: { channels?: number; frameLength?: number } = {},
 ): Processor {
-	return new HijackProcessor({
+	return new CaptureProcessor({
 		processorOptions: {
 			sampleRate: SAMPLE_RATE,
 			targetChannels: options.channels ?? 1,
@@ -114,15 +110,15 @@ function posted(processor: Processor): (number | "ended")[] {
 Deno.test("provides a URL for the worklet script", () => {
 	const url = importWorkletUrl();
 
-	assert(url.endsWith("audio_hijack_worklet.js"));
+	assert(url.endsWith("capture_worklet.js"));
 });
 
 Deno.test("registers the processor under its versioned name", async () => {
 	const env = setupFakeAudioWorkletEnvironment();
 	try {
-		await import("./audio_hijack_worklet.ts?register");
+		await import("./capture_worklet.ts?register");
 
-		assertEquals(env.registerProcessorCalls.map(([name]) => name), [HIJACK_PROCESSOR_NAME]);
+		assertEquals(env.registerProcessorCalls.map(([name]) => name), [CAPTURE_PROCESSOR_NAME]);
 	} finally {
 		env.restore();
 	}

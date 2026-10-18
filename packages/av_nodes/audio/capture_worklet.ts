@@ -1,16 +1,15 @@
-/// <reference path="../../../src/test_globals.d.ts" />
 import {
 	DEFAULT_FRAME_DURATION_US,
 	type FrameMessage,
 	type InputEndedMessage,
-	isAudioHijackMessage,
+	isAudioCaptureMessage,
 	isCount,
-} from "./audio_hijack_protocol.ts";
-import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_names.ts";
+} from "./capture_protocol.ts";
+import { CAPTURE_PROCESSOR_NAME } from "./audio_worklet_names.ts";
 
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
-	return new URL("./audio_hijack_worklet.js", import.meta.url).href;
+	return new URL("./capture_worklet.js", import.meta.url).href;
 }
 
 const INPUT_ENDED: InputEndedMessage = { type: "inputEnded" };
@@ -32,7 +31,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	// input (a disconnected source) shows as a gap in them. A frame cut short,
 	// by the input ending, a jump in the clock or a new format, is posted as it
 	// is, so no captured audio is lost.
-	class AudioHijackProcessor extends AudioWorkletProcessor {
+	class CaptureProcessor extends AudioWorkletProcessor {
 		readonly #sampleRate: number;
 		#channels: number;
 		#frameLength: number;
@@ -63,7 +62,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 			this.#buffer = new Float32Array(this.#channels * this.#frameLength);
 
 			this.port.onmessage = ({ data }: MessageEvent<unknown>) => {
-				if (!isAudioHijackMessage(data)) return;
+				if (!isAudioCaptureMessage(data)) return;
 				switch (data.type) {
 					case "format":
 						this.#setFormat(data.channels, data.frameLength);
@@ -168,7 +167,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	}
 
 	try {
-		registerProcessor(HIJACK_PROCESSOR_NAME, AudioHijackProcessor);
+		registerProcessor(CAPTURE_PROCESSOR_NAME, CaptureProcessor);
 	} catch (e) {
 		// reason: the module was evaluated again in this scope (another copy of
 		// the same version loaded it); the identical processor registered first

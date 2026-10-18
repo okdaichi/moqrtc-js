@@ -166,7 +166,7 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 
 ### Changed
 
-- The worklet processors are registered under versioned names derived automatically from the package version in `deno.json` (`audio-offloader@<version>` and `audio-hijacker@<version>`), replacing the hand-maintained `WORKLET_PROTOCOL_VERSION` constant. Copies of av-nodes of different versions in one audio context each use their own processors without manual version bumps ([#92]).
+- The worklet processors and their source files are renamed to reflect their roles: `CaptureProcessor` (`capture_worklet.ts`) and `PlayoutProcessor` (`playout_worklet.ts`). Processors are registered under versioned names derived automatically from the package version in `deno.json` (`@okdaichi/av-nodes/capture@<version>` and `@okdaichi/av-nodes/playout@<version>`), replacing the hand-maintained `WORKLET_PROTOCOL_VERSION` constant. Copies of av-nodes of different versions in one audio context each use their own processors without manual version bumps ([#92]).
 - Worklet build verification added to the CI and publish workflows (`deno task build:worklets && git diff --exit-code`), guaranteeing that stale inline worklet code cannot pass CI or be published ([#81]).
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
 

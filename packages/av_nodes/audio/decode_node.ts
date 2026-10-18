@@ -6,13 +6,13 @@ import {
 	DEFAULT_MAX_LATENCY_MS,
 	isStatsReply,
 	type StatsRequest,
-} from "./audio_offload_protocol.ts";
-import { OffloadCode } from "./audio_offload_worklet_inline.ts";
+} from "./playout_protocol.ts";
+import { PlayoutCode } from "./playout_worklet_inline.ts";
 import type { AudioPlaybackStats, AudioPlayoutStats } from "./audio_playback_stats.ts";
 import { AudioWorkletModule, stopProcessor } from "./audio_worklet_module.ts";
-import { OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
+import { PLAYOUT_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 
-const offloadWorklet = new AudioWorkletModule(OffloadCode);
+const playoutWorklet = new AudioWorkletModule(PlayoutCode);
 
 const MAX_DECODE_QUEUE_SIZE = 3;
 
@@ -208,7 +208,7 @@ export class AudioDecodeNode extends GainNode {
 		};
 		context.addEventListener("statechange", this.#onStateChange);
 
-		this.#workletReady = offloadWorklet.load(context).then(
+		this.#workletReady = playoutWorklet.load(context).then(
 			() => {
 				// Disposed while the module was loading: play nothing.
 				if (this.#disposed) return undefined;
@@ -216,7 +216,7 @@ export class AudioDecodeNode extends GainNode {
 				// Create AudioWorkletNode
 				const worklet = new AudioWorkletNode(
 					context,
-					OFFLOAD_PROCESSOR_NAME,
+					PLAYOUT_PROCESSOR_NAME,
 					{
 						channelCount: context.destination.channelCount,
 						numberOfInputs: 0,

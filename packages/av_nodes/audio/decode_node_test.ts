@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
 import type { AudioPlayoutStats } from "./audio_playback_stats.ts";
-import { isStopMessage, OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
+import { isStopMessage, PLAYOUT_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import type { AudioDecodeNodeInit } from "./decode_node.ts";
 import { FakeAudioContext } from "./fake_audio_context_test.ts";
 import { FakeAudioWorkletNode } from "./fake_audio_workletnode_test.ts";
@@ -799,7 +799,7 @@ Deno.test("AudioDecodeNode", async (t) => {
 
 			await node.getStats();
 
-			assertEquals(worklet.created.map((created) => created.name), [OFFLOAD_PROCESSOR_NAME]);
+			assertEquals(worklet.created.map((created) => created.name), [PLAYOUT_PROCESSOR_NAME]);
 			node.dispose();
 		} finally {
 			worklet.restore();

@@ -16,7 +16,7 @@ import { FakeAudioWorkletNode } from "./fake_audio_workletnode_test.ts";
 import { FakeAudioEncoder } from "./fake_audioencoder_test.ts";
 import { FakeAudioData } from "./fake_audiodata_test.ts";
 import { FakeGainNode } from "./fake_gainnode_test.ts";
-import type { FrameMessage } from "./audio_hijack_protocol.ts";
+import type { FrameMessage } from "./capture_protocol.ts";
 
 function overrideGlobal(name: string, value: unknown): () => void {
 	const g = globalThis as unknown as Record<string, unknown>;

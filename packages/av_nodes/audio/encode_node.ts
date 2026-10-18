@@ -6,12 +6,12 @@ import {
 	type FormatMessage,
 	type FrameMessage,
 	isCaptureMessage,
-} from "./audio_hijack_protocol.ts";
-import { HijackCode } from "./audio_hijack_worklet_inline.ts";
+} from "./capture_protocol.ts";
+import { CaptureCode } from "./capture_worklet_inline.ts";
 import { AudioWorkletModule, stopProcessor } from "./audio_worklet_module.ts";
-import { HIJACK_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
+import { CAPTURE_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 
-const hijackWorklet = new AudioWorkletModule(HijackCode);
+const captureWorklet = new AudioWorkletModule(CaptureCode);
 
 interface AudioContextLike {
 	readonly sampleRate: number;
@@ -128,7 +128,7 @@ export class AudioEncodeNode extends GainNode {
 		});
 
 		// Initialize worklet and connect this GainNode to it
-		hijackWorklet.load(context).then(
+		captureWorklet.load(context).then(
 			() => {
 				// Disposed while the module was loading: capture nothing.
 				if (this.#disposed) return;
@@ -210,7 +210,7 @@ export class AudioEncodeNode extends GainNode {
 	#attachWorklet(): void {
 		const worklet = new AudioWorkletNode(
 			this.#context as unknown as BaseAudioContext,
-			HIJACK_PROCESSOR_NAME,
+			CAPTURE_PROCESSOR_NAME,
 			{
 				numberOfInputs: 1,
 				numberOfOutputs: 1,

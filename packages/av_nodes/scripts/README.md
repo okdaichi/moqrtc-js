@@ -16,7 +16,7 @@ deno task build:worklets
 
 **What it does:**
 
-1. Bundles `audio/audio_hijack_worklet.ts` and `audio/audio_offload_worklet.ts`
+1. Bundles `audio/capture_worklet.ts` and `audio/playout_worklet.ts`
 2. Minifies the code
 3. Generates `*_inline.ts` files in the audio directory with:
    - Worklet code as exported string constant

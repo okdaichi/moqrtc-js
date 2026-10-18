@@ -22,8 +22,8 @@ const packageConfigFile = join(__dirname, "..", "deno.json");
 const namesFile = join(audioDir, "audio_worklet_names.ts");
 
 const WORKLET_FILES = [
-	join(audioDir, "audio_hijack_worklet.ts"),
-	join(audioDir, "audio_offload_worklet.ts"),
+	join(audioDir, "capture_worklet.ts"),
+	join(audioDir, "playout_worklet.ts"),
 ];
 
 interface WorkletInfo {
@@ -36,14 +36,14 @@ function getWorkletInfo(sourceFile: string): WorkletInfo {
 	const baseName = basename(sourceFile, ".ts");
 	const dir = dirname(sourceFile);
 	const outputFile = join(dir, `${baseName}_inline.ts`);
-	// Convert audio_hijack_worklet -> HijackCode, audio_offload_worklet -> OffloadCode
+	// Convert capture_worklet -> CaptureCode, playout_worklet -> PlayoutCode
 	let exportName: string;
-	if (baseName.includes("hijack")) {
-		exportName = "HijackCode";
-	} else if (baseName.includes("offload")) {
-		exportName = "OffloadCode";
+	if (baseName.includes("capture")) {
+		exportName = "CaptureCode";
+	} else if (baseName.includes("playout")) {
+		exportName = "PlayoutCode";
 	} else {
-		// Fallback: convert audio_hijack_worklet -> audioHijackWorkletCode
+		// Fallback: convert capture_worklet -> captureWorkletCode
 		exportName = baseName
 			.split("_")
 			.map((part, i) => i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1))
@@ -77,11 +77,11 @@ async function writeProcessorNames(version: string): Promise<void> {
 // of different versions can share a scope, each registering and using its own
 // processors.
 
-/** Name the playback processor is registered under. */
-export const OFFLOAD_PROCESSOR_NAME = ${JSON.stringify(`audio-offloader@${version}`)};
+/** Name the playout processor is registered under. */
+export const PLAYOUT_PROCESSOR_NAME = ${JSON.stringify(`@okdaichi/av-nodes/playout@${version}`)};
 
 /** Name the capture processor is registered under. */
-export const HIJACK_PROCESSOR_NAME = ${JSON.stringify(`audio-hijacker@${version}`)};
+export const CAPTURE_PROCESSOR_NAME = ${JSON.stringify(`@okdaichi/av-nodes/capture@${version}`)};
 `;
 
 	await Deno.writeTextFile(namesFile, tsContent);

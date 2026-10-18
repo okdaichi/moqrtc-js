@@ -5,7 +5,7 @@
 // scripts/build_worklets.ts into audio_worklet_names.ts, so copies of av-nodes
 // of different versions can share a scope, each registering and using its own
 // processors.
-export { HIJACK_PROCESSOR_NAME, OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_names.ts";
+export { CAPTURE_PROCESSOR_NAME, PLAYOUT_PROCESSOR_NAME } from "./audio_worklet_names.ts";
 
 /** Tells a processor to stop: it renders nothing more and closes its port. */
 export interface StopMessage {
