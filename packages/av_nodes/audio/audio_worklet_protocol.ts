@@ -5,7 +5,7 @@
 // processor's name, so copies of av-nodes that differ in it can share a scope,
 // each registering and using its own processors. Raise it with any change to a
 // processor or its messages.
-const WORKLET_PROTOCOL_VERSION = 2;
+const WORKLET_PROTOCOL_VERSION = 3;
 
 /** Name the playback processor is registered under. */
 export const OFFLOAD_PROCESSOR_NAME = `audio-offloader-v${WORKLET_PROTOCOL_VERSION}`;
