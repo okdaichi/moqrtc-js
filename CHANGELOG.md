@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-10-18
+
+Minor release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioDecodeNode` changes delay inaudibly using WSOLA (pitch-preserving time-stretching) and a slower release. Worklet processor names are derived from the package version (`@okdaichi/av-nodes/playout@<version>` and `@okdaichi/av-nodes/capture@<version>`), and internal processor/protocol files and exports are renamed from offload/hijack to playout/capture. CI and publish workflows now verify worklet bundle freshness.
+
+### Added
+
+- `AudioDecodeNode`: WSOLA (Waveform Similarity Overlap-Add) time-stretching for jitter buffer delay adjustments. When lowering delay, rather than cutting chunks out of audio with clicks or quick crossfades, the worklet speeds audio up by up to 1.5×, preserving pitch; when expanding due to underrun, it slows audio down or crossfades seamlessly. Target delay release is slowed down and rate-limited to avoid pumping ([#99]).
+- Worklet build freshness verification: CI and JSR publishing workflows now verify that worklet inlines and processor names match the package version (`deno task build:worklets && git diff --exit-code`) ([#81], [#92], [#100]).
+
+### Changed
+
+- The worklet processors are registered under package-scoped versioned names (`@okdaichi/av-nodes/playout@<version>` and `@okdaichi/av-nodes/capture@<version>`), automatically generated from `deno.json` ([#81], [#92], [#100], [#101]).
+- Worklet processors and files are renamed to reflect standard Web Audio / WebRTC terminology: `AudioOffloadProcessor` -> `PlayoutProcessor` (`playout_worklet.ts`), `AudioHijackProcessor` -> `CaptureProcessor` (`capture_worklet.ts`), and exports in `mod.ts` updated to `CaptureCode`, `PlayoutCode`, `createCaptureWorkletBlobUrl`, and `createPlayoutWorkletBlobUrl` ([#101]).
+
 ## [0.13.0] - 2026-10-18
 
 Minor release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioEncodeNode` hands its encoder whole codec frames and keeps every capture gap in the timestamps, so captured audio no longer clicks; `AudioDecodeNode` starts playback at the live edge. `AudioEncodeNode.configure()` now validates `opus.frameDuration`, and the worklet processor names move to `-v2`.
@@ -162,7 +176,7 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
   - Slower release: the peak delay is held at full height for 20 to 40 s (the largest of the current and previous 20 s window) and then decays with a 20 s time constant, and the arrival histogram forgets over 40 s instead of 20 s. The delay is lowered only once the target has stayed more than 10 ms below it for 4 s, then by at most one step per 500 ms. Stalls recurring within the hold keep the delay where the first one put it, with no lowering step; a link that stays clean for about a minute falls back to `latency`.
   - Time-scale modification (WSOLA) instead of cutting or inserting silence inside sound. A lowering step removes one pitch period, a segment of 2.5 to 15 ms found by normalized cross-correlation, with a 10 ms overlap-add at the matching offset, so a tone or voiced speech goes on without a discontinuity; a silence gap or a quiet stretch is still preferred and simply cut, and a step through continuous sound first waits 500 ms for one. A higher target repeats one correlated segment before each block instead of inserting silence.
   - Concealment: when the buffer is about to run out, the last pitch period is repeated with an overlap-add, at full level for 30 ms and then fading to silence over 30 ms, so a short stall plays through and a long one ends softly; the next block crossfades from the concealed audio. The concealed audio raises the delay by its length and counts as an expand. With `maxLatency` equal to `latency` (a fixed delay) nothing is concealed.
-  The search runs on channel 0 at about 8 kHz and refines the best few peaks at full rate, about 100 000 multiply-adds (some 80 µs on a desktop) at most once per block and once per render quantum when concealing, with every buffer allocated up front. `expands` / `expandedMs` now also count concealment and repeated periods, and `accelerates` / `acceleratedMs` count removed periods as well as cuts.
+    The search runs on channel 0 at about 8 kHz and refines the best few peaks at full rate, about 100 000 multiply-adds (some 80 µs on a desktop) at most once per block and once per render quantum when concealing, with every buffer allocated up front. `expands` / `expandedMs` now also count concealment and repeated periods, and `accelerates` / `acceleratedMs` count removed periods as well as cuts.
 
 ### Changed
 
@@ -193,7 +207,8 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 - **Minor version (0.X.0)**: Add functionality in a backward compatible manner
 - **Patch version (0.0.X)**: Backward compatible bug fixes
 
-[Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.13.0...HEAD
+[Unreleased]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.14.0...HEAD
+[0.14.0]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.13.0...av-nodes/v0.14.0
 [0.13.0]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.12.0...av-nodes/v0.13.0
 [0.12.0]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.2...av-nodes/v0.12.0
 [0.11.2]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.11.1...av-nodes/v0.11.2
@@ -230,6 +245,9 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 [#91]: https://github.com/okdaichi/moqrtc-js/pull/91
 [#92]: https://github.com/okdaichi/moqrtc-js/issues/92
 [#97]: https://github.com/okdaichi/moqrtc-js/pull/97
+[#99]: https://github.com/okdaichi/moqrtc-js/pull/99
+[#100]: https://github.com/okdaichi/moqrtc-js/pull/100
+[#101]: https://github.com/okdaichi/moqrtc-js/pull/101
 [0.1.0]: https://github.com/okdaichi/moqrtc-js/releases/tag/media-log/v0.1.0
 [0.10.1]: https://github.com/okdaichi/moqrtc-js/releases/tag/av-nodes/v0.10.1
 [0.10.2]: https://github.com/okdaichi/moqrtc-js/compare/av-nodes/v0.10.1...av-nodes/v0.10.2
