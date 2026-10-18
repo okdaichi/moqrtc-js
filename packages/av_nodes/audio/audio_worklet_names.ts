@@ -6,7 +6,7 @@
 // processors.
 
 /** Name the playout processor is registered under. */
-export const PLAYOUT_PROCESSOR_NAME = "@okdaichi/av-nodes/playout@0.13.0";
+export const PLAYOUT_PROCESSOR_NAME = "@okdaichi/av-nodes/playout@0.14.0";
 
 /** Name the capture processor is registered under. */
-export const CAPTURE_PROCESSOR_NAME = "@okdaichi/av-nodes/capture@0.13.0";
+export const CAPTURE_PROCESSOR_NAME = "@okdaichi/av-nodes/capture@0.14.0";
