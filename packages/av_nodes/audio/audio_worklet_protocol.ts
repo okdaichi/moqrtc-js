@@ -1,17 +1,11 @@
 // What the nodes and their worklet processors share: the processors' names and
 // the message every node posts to its processor on dispose.
 
-// The version of the processors and their messages. It is part of each
-// processor's name, so copies of av-nodes that differ in it can share a scope,
-// each registering and using its own processors. Raise it with any change to a
-// processor or its messages.
-const WORKLET_PROTOCOL_VERSION = 3;
-
-/** Name the playback processor is registered under. */
-export const OFFLOAD_PROCESSOR_NAME = `audio-offloader-v${WORKLET_PROTOCOL_VERSION}`;
-
-/** Name the capture processor is registered under. */
-export const HIJACK_PROCESSOR_NAME = `audio-hijacker-v${WORKLET_PROTOCOL_VERSION}`;
+// The processors' names are generated from the package version in deno.json by
+// scripts/build_worklets.ts into audio_worklet_names.ts, so copies of av-nodes
+// of different versions can share a scope, each registering and using its own
+// processors.
+export { HIJACK_PROCESSOR_NAME, OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_names.ts";
 
 /** Tells a processor to stop: it renders nothing more and closes its port. */
 export interface StopMessage {

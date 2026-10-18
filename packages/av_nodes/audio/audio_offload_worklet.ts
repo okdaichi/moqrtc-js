@@ -4,7 +4,7 @@ import {
 	type StatsReply,
 } from "./audio_offload_protocol.ts";
 import type { AudioPlayoutStats } from "./audio_playback_stats.ts";
-import { OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
+import { OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_names.ts";
 import { DelayEstimator } from "./delay_estimator.ts";
 import { insertSegment, removeSegment, TimeStretcher } from "./time_stretch.ts";
 
