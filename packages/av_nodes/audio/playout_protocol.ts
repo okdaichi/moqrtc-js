@@ -22,7 +22,7 @@ export interface StatsRequest {
 }
 
 /** Messages the node posts to the worklet. */
-export type AudioOffloadMessage = AppendMessage | StatsRequest | StopMessage;
+export type AudioPlayoutMessage = AppendMessage | StatsRequest | StopMessage;
 
 /** The worklet's answer to a {@link StatsRequest}. */
 export interface StatsReply {
@@ -58,7 +58,7 @@ function isFloat32ArrayList(value: unknown): value is readonly Float32Array[] {
 }
 
 /** Whether `value` is a well-formed message for the worklet. */
-export function isAudioOffloadMessage(value: unknown): value is AudioOffloadMessage {
+export function isAudioPlayoutMessage(value: unknown): value is AudioPlayoutMessage {
 	if (!isRecord(value)) return false;
 	switch (value.type) {
 		case "append":

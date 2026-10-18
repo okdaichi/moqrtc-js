@@ -5,11 +5,11 @@ export * from "./encode_node.ts";
 
 // Inline worklet modules (recommended for library usage)
 export {
-	createWorkletBlobUrl as createHijackWorkletBlobUrl,
-	HijackCode,
-} from "./audio_hijack_worklet_inline.ts";
+	CaptureCode,
+	createWorkletBlobUrl as createCaptureWorkletBlobUrl,
+} from "./capture_worklet_inline.ts";
 
 export {
-	createWorkletBlobUrl as createOffloadWorkletBlobUrl,
-	OffloadCode,
-} from "./audio_offload_worklet_inline.ts";
+	createWorkletBlobUrl as createPlayoutWorkletBlobUrl,
+	PlayoutCode,
+} from "./playout_worklet_inline.ts";

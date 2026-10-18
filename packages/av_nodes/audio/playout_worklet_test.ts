@@ -11,22 +11,22 @@ import {
 	assertThrows,
 } from "@std/assert";
 import type { AudioPlayoutStats } from "./audio_playback_stats.ts";
-import { importWorkletUrl } from "./audio_offload_worklet.ts";
+import { importWorkletUrl } from "./playout_worklet.ts";
 import {
 	type FakeProcessorPort,
 	setupFakeAudioWorkletEnvironment,
 } from "./fake_audio_worklet_environment_test.ts";
 
-type AudioOffloadProcessorInstance = {
+type PlayoutProcessorInstance = {
 	append(channels: readonly Float32Array[], tsUs: number): void;
 	stats(): AudioPlayoutStats;
 	process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean;
 	port: FakeProcessorPort;
 };
 
-type AudioOffloadProcessorConstructor = new (
+type PlayoutProcessorConstructor = new (
 	options: AudioWorkletNodeOptions,
-) => AudioOffloadProcessorInstance;
+) => PlayoutProcessorInstance;
 
 // Deterministic timing constants for the scheduling tests.
 // sampleRate 48000, latency 80ms → a 3840-frame cushion, a multiple of the
@@ -42,13 +42,13 @@ const BLOCK_US = Math.round(QUANTUM / SAMPLE_RATE * 1_000_000); // 2667
 // Fades at every edge between audio and silence last this many frames.
 const FADE_FRAMES = 144; // ceil(48000 * 3 / 1000)
 
-// The real AudioOffloadProcessor: the worklet module evaluated once in a fake
+// The real PlayoutProcessor: the worklet module evaluated once in a fake
 // worklet scope, so the behavioural tests exercise the code that ships.
-const OffloadProcessor = await (async () => {
+const PlayoutProcessor = await (async () => {
 	const env = setupFakeAudioWorkletEnvironment();
 	try {
-		await import("./audio_offload_worklet.ts?behaviour");
-		return env.registerProcessorCalls[0]![1] as AudioOffloadProcessorConstructor;
+		await import("./playout_worklet.ts?behaviour");
+		return env.registerProcessorCalls[0]![1] as PlayoutProcessorConstructor;
 	} finally {
 		env.restore();
 	}
@@ -56,8 +56,8 @@ const OffloadProcessor = await (async () => {
 
 function createProcessor(
 	options: { latency?: number; maxLatency?: number } = {},
-): AudioOffloadProcessorInstance {
-	return new OffloadProcessor({
+): PlayoutProcessorInstance {
+	return new PlayoutProcessor({
 		channelCount: 2,
 		processorOptions: {
 			sampleRate: SAMPLE_RATE,
@@ -68,13 +68,13 @@ function createProcessor(
 }
 
 // A processor whose delay never moves from `latency`.
-function createFixedProcessor(): AudioOffloadProcessorInstance {
+function createFixedProcessor(): PlayoutProcessorInstance {
 	return createProcessor({ maxLatency: LATENCY_MS });
 }
 
 // Run `quanta` render quanta through `processor`, concatenating channel 0 of the
 // output into one flat Float32Array of length quanta * QUANTUM.
-function drain(processor: AudioOffloadProcessorInstance, quanta: number): Float32Array {
+function drain(processor: PlayoutProcessorInstance, quanta: number): Float32Array {
 	const out = new Float32Array(quanta * QUANTUM);
 	const left = new Float32Array(QUANTUM);
 	const buffers = [[left, new Float32Array(QUANTUM)]];
@@ -86,7 +86,7 @@ function drain(processor: AudioOffloadProcessorInstance, quanta: number): Float3
 }
 
 // Delivers `data` to the processor's port as a message.
-function post(processor: AudioOffloadProcessorInstance, data: unknown): void {
+function post(processor: PlayoutProcessorInstance, data: unknown): void {
 	processor.port.onmessage?.(new MessageEvent("message", { data }));
 }
 
@@ -102,7 +102,7 @@ function ts(frames: number): number {
 
 // Audio after an asserted region, so the fade-out ahead of the end of the
 // written audio falls outside it.
-function appendTail(processor: AudioOffloadProcessorInstance, frame: number): void {
+function appendTail(processor: PlayoutProcessorInstance, frame: number): void {
 	processor.append(block(0.5, 4 * QUANTUM), ts(frame));
 }
 
@@ -118,10 +118,10 @@ function countOf(out: Float32Array, value: number): number {
 	return count;
 }
 
-Deno.test("audio_offload_worklet", async (t) => {
-	await t.step("provides a URL for the offload worklet", () => {
+Deno.test("playout_worklet", async (t) => {
+	await t.step("provides a URL for the playout worklet", () => {
 		const url = importWorkletUrl();
-		assert(url.endsWith("audio_offload_worklet.js"));
+		assert(url.endsWith("playout_worklet.js"));
 	});
 
 	await t.step(
@@ -220,7 +220,7 @@ Deno.test("audio_offload_worklet", async (t) => {
 			);
 
 			const ProcessorCtor = env
-				.registerProcessorCalls[0]![1] as AudioOffloadProcessorConstructor;
+				.registerProcessorCalls[0]![1] as PlayoutProcessorConstructor;
 
 			assertThrows(() => new ProcessorCtor({}), Error, "processorOptions is required");
 			assertThrows(
@@ -1133,7 +1133,7 @@ const FADE_STEP = 1 / FADE_FRAMES + 1e-6;
 const MIN_DELAY_MS = 100;
 const LOWER_MARGIN_MS = 10;
 
-Deno.test("audio_offload_worklet adaptive delay", async (t) => {
+Deno.test("playout_worklet adaptive delay", async (t) => {
 	await t.step("keeps the minimum delay on a clean link", () => {
 		const { stats } = play({ arrivals: cleanLink(10), seconds: 10 });
 
@@ -1362,7 +1362,7 @@ Deno.test("audio_offload_worklet adaptive delay", async (t) => {
 
 // The measured link: a phone on 2.4 GHz Wi-Fi whose delivery stalls for
 // about 160 ms every 12 s or so.
-Deno.test("audio_offload_worklet delay spikes", async (t) => {
+Deno.test("playout_worklet delay spikes", async (t) => {
 	const SECONDS = 90;
 	const STALL_MS = 160;
 	const stalls = everyTwelveSeconds(SECONDS);
@@ -1412,7 +1412,7 @@ Deno.test("audio_offload_worklet delay spikes", async (t) => {
 	});
 });
 
-Deno.test("audio_offload_worklet time-scale modification", async (t) => {
+Deno.test("playout_worklet time-scale modification", async (t) => {
 	const tones = [
 		{ name: "a 440 Hz tone", sample: tone440, hz: 440 },
 		{ name: "a 150 Hz tone", sample: tone150, hz: 150 },

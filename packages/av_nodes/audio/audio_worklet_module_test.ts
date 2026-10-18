@@ -1,7 +1,7 @@
 /// <reference path="../../../src/test_globals.d.ts" />
 import { assertEquals, assertRejects } from "@std/assert";
-import { HijackCode } from "./audio_hijack_worklet_inline.ts";
-import { OffloadCode } from "./audio_offload_worklet_inline.ts";
+import { CaptureCode } from "./capture_worklet_inline.ts";
+import { PlayoutCode } from "./playout_worklet_inline.ts";
 import {
 	type AudioWorkletHost,
 	AudioWorkletModule,
@@ -9,8 +9,8 @@ import {
 	stopProcessor,
 } from "./audio_worklet_module.ts";
 import {
-	HIJACK_PROCESSOR_NAME,
-	OFFLOAD_PROCESSOR_NAME,
+	CAPTURE_PROCESSOR_NAME,
+	PLAYOUT_PROCESSOR_NAME,
 	type StopMessage,
 } from "./audio_worklet_protocol.ts";
 import {
@@ -143,30 +143,30 @@ Deno.test("stopProcessor still releases the node when posting fails", () => {
 // `unversioned` is the name releases before versioned names registered.
 const worklets = [
 	{
-		name: "the offload worklet source",
-		processor: OFFLOAD_PROCESSOR_NAME,
+		name: "the playout worklet source",
+		processor: PLAYOUT_PROCESSOR_NAME,
 		unversioned: "audio-offloader",
-		evaluate: (n: number) => import(`./audio_offload_worklet.ts?evaluation=${n}`),
+		evaluate: (n: number) => import(`./playout_worklet.ts?evaluation=${n}`),
 	},
 	{
-		name: "the inline offload worklet",
-		processor: OFFLOAD_PROCESSOR_NAME,
+		name: "the inline playout worklet",
+		processor: PLAYOUT_PROCESSOR_NAME,
 		unversioned: "audio-offloader",
 		evaluate: (n: number) =>
-			import(`data:text/javascript,${encodeURIComponent(`${OffloadCode}//${n}`)}`),
+			import(`data:text/javascript,${encodeURIComponent(`${PlayoutCode}//${n}`)}`),
 	},
 	{
-		name: "the hijack worklet source",
-		processor: HIJACK_PROCESSOR_NAME,
+		name: "the capture worklet source",
+		processor: CAPTURE_PROCESSOR_NAME,
 		unversioned: "audio-hijacker",
-		evaluate: (n: number) => import(`./audio_hijack_worklet.ts?evaluation=${n}`),
+		evaluate: (n: number) => import(`./capture_worklet.ts?evaluation=${n}`),
 	},
 	{
-		name: "the inline hijack worklet",
-		processor: HIJACK_PROCESSOR_NAME,
+		name: "the inline capture worklet",
+		processor: CAPTURE_PROCESSOR_NAME,
 		unversioned: "audio-hijacker",
 		evaluate: (n: number) =>
-			import(`data:text/javascript,${encodeURIComponent(`${HijackCode}//${n}`)}`),
+			import(`data:text/javascript,${encodeURIComponent(`${CaptureCode}//${n}`)}`),
 	},
 ] as const;
 
@@ -230,13 +230,13 @@ async function registeredProcessor(
 
 const processors = [
 	{
-		name: "the offload processor",
-		processor: await registeredProcessor(() => import("./audio_offload_worklet.ts?stop")),
+		name: "the playout processor",
+		processor: await registeredProcessor(() => import("./playout_worklet.ts?stop")),
 		options: { channelCount: 2, processorOptions: { sampleRate: 48000, latency: 80 } },
 	},
 	{
-		name: "the hijack processor",
-		processor: await registeredProcessor(() => import("./audio_hijack_worklet.ts?stop")),
+		name: "the capture processor",
+		processor: await registeredProcessor(() => import("./capture_worklet.ts?stop")),
 		options: { processorOptions: { sampleRate: 48000, targetChannels: 1 } },
 	},
 ] as const;

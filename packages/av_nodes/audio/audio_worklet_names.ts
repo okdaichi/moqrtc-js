@@ -5,8 +5,8 @@
 // of different versions can share a scope, each registering and using its own
 // processors.
 
-/** Name the playback processor is registered under. */
-export const OFFLOAD_PROCESSOR_NAME = "audio-offloader@0.13.0";
+/** Name the playout processor is registered under. */
+export const PLAYOUT_PROCESSOR_NAME = "@okdaichi/av-nodes/playout@0.13.0";
 
 /** Name the capture processor is registered under. */
-export const HIJACK_PROCESSOR_NAME = "audio-hijacker@0.13.0";
+export const CAPTURE_PROCESSOR_NAME = "@okdaichi/av-nodes/capture@0.13.0";

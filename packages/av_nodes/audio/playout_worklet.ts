@@ -1,16 +1,16 @@
 import {
 	DEFAULT_MAX_LATENCY_MS,
-	isAudioOffloadMessage,
+	isAudioPlayoutMessage,
 	type StatsReply,
-} from "./audio_offload_protocol.ts";
+} from "./playout_protocol.ts";
 import type { AudioPlayoutStats } from "./audio_playback_stats.ts";
-import { OFFLOAD_PROCESSOR_NAME } from "./audio_worklet_names.ts";
+import { PLAYOUT_PROCESSOR_NAME } from "./audio_worklet_names.ts";
 import { DelayEstimator } from "./delay_estimator.ts";
 import { insertSegment, removeSegment, TimeStretcher } from "./time_stretch.ts";
 
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
-	return new URL("./audio_offload_worklet.js", import.meta.url).href;
+	return new URL("./playout_worklet.js", import.meta.url).href;
 }
 
 // Blocks in a row, each wholly in the playback past and too late to absorb by
@@ -123,10 +123,10 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	// end and fades back in when audio resumes, so an underrun is a soft gap.
 	// With a fixed delay nothing is concealed, as concealment moves the delay.
 	//
-	// Messages are an AudioOffloadMessage: `append` plays a block, `stats`
+	// Messages are an AudioPlayoutMessage: `append` plays a block, `stats`
 	// asks for a snapshot, answered with a StatsReply of the same id. Anything
 	// else is ignored.
-	class AudioOffloadProcessor extends AudioWorkletProcessor {
+	class PlayoutProcessor extends AudioWorkletProcessor {
 		readonly #channelsBuffer: Float32Array[] = [];
 
 		// Absolute playback frame counter. Drives the read side; advanced by the
@@ -279,7 +279,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 
 			this.port.onmessage = (event: MessageEvent<unknown>) => {
 				const message = event.data;
-				if (!isAudioOffloadMessage(message)) return;
+				if (!isAudioPlayoutMessage(message)) return;
 				switch (message.type) {
 					case "append":
 						this.append(message.channels, message.timestamp);
@@ -940,7 +940,7 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 	}
 
 	try {
-		registerProcessor(OFFLOAD_PROCESSOR_NAME, AudioOffloadProcessor);
+		registerProcessor(PLAYOUT_PROCESSOR_NAME, PlayoutProcessor);
 	} catch (e) {
 		// reason: the module was evaluated again in this scope (another copy of
 		// the same version loaded it); the identical processor registered first

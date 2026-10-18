@@ -51,8 +51,8 @@
 		"demo/",
 		"*_test.ts",
 		"mock_*.ts",
-		"audio/audio_hijack_worklet.ts",
-		"audio/audio_offload_worklet.ts"
+		"audio/capture_worklet.ts",
+		"audio/playout_worklet.ts"
 	],
 	"publish": {
 		"exclude": [
@@ -61,8 +61,8 @@
 			"**/*_bench.ts",
 			"mock_*.ts",
 			"scripts/",
-			"audio/audio_hijack_worklet.ts",
-			"audio/audio_offload_worklet.ts"
+			"audio/capture_worklet.ts",
+			"audio/playout_worklet.ts"
 		]
 	},
 	"imports": {
