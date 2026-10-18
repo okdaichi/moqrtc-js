@@ -5,19 +5,31 @@
 // arrival; a block's relative delay is how far it came after that floor. A
 // decaying histogram of relative delays gives the target cushion as a high
 // quantile, and a peak detector raises it at once when a block comes later
-// than any recent one (fast attack). The peak and the histogram forget slowly
-// (slow release). All values are in frames.
+// than any recent one (fast attack). Release is slow: a peak is held at full
+// height for 20 to 40 s, so delay spikes recurring within that keep the
+// target where they put it instead of letting it sag between them, and only
+// then decays; the histogram forgets over a similar time. All values are in
+// frames.
 
 // Relative-delay histogram: bucket width (ms), the quantile the target covers,
-// and the time constant (s) over which old arrivals are forgotten.
+// and the time constant (s) over which old arrivals are forgotten. Forty
+// seconds keeps the share of blocks that came late on a link that is often
+// bad, rather than of the last few seconds.
 const DELAY_BUCKET_MS = 10;
 const DELAY_QUANTILE = 0.97;
-const HISTOGRAM_TIME_CONSTANT_S = 20;
+const HISTOGRAM_TIME_CONSTANT_S = 40;
 
 // Fast attack: the largest recent relative delay plus this margin (ms) is
-// covered at once; that peak is released with this time constant (s).
+// covered at once.
 const PEAK_MARGIN_MS = 20;
-const PEAK_RELEASE_TIME_CONSTANT_S = 10;
+
+// Slow release: the peak is the largest relative delay of the current and the
+// previous window of this length (s), so it is held for one to two windows; a
+// peak older than that decays with the release time constant (s). A link that
+// stalls every ten or twenty seconds (2.4 GHz Wi-Fi) keeps its target; one
+// that stays clean for 40 s or more falls back within about a minute.
+const PEAK_WINDOW_S = 20;
+const PEAK_RELEASE_TIME_CONSTANT_S = 20;
 
 // The floor is the minimum over the last one to two windows of this length
 // (s), so it follows a slowly drifting clock.
@@ -40,6 +52,7 @@ export class DelayEstimator {
 	readonly #bucketFrames: number;
 	readonly #peakMargin: number;
 	readonly #floorWindow: number;
+	readonly #peakWindow: number;
 
 	// Weight per relative-delay bucket, summing to 1. It starts with all
 	// weight on no jitter, so a few early outliers do not set the target
@@ -49,7 +62,12 @@ export class DelayEstimator {
 	#floorCurrent = 0;
 	#floorPrevious = 0;
 	#floorWindowStart = 0;
-	#peak = 0;
+	// Largest relative delay of the current and the previous peak window, and
+	// the decaying peak of the windows before them.
+	#peakCurrent = 0;
+	#peakPrevious = 0;
+	#peakReleased = 0;
+	#peakWindowStart = 0;
 
 	constructor(options: DelayEstimatorOptions) {
 		this.#sampleRate = options.sampleRate;
@@ -58,6 +76,7 @@ export class DelayEstimator {
 		this.#bucketFrames = Math.max(1, this.#frames(DELAY_BUCKET_MS));
 		this.#peakMargin = this.#frames(PEAK_MARGIN_MS);
 		this.#floorWindow = this.#frames(FLOOR_WINDOW_S * 1000);
+		this.#peakWindow = this.#frames(PEAK_WINDOW_S * 1000);
 		this.#histogram = new Float64Array(Math.ceil(this.#maxCushion / this.#bucketFrames) + 1);
 		this.#histogram[0] = 1;
 	}
@@ -79,7 +98,10 @@ export class DelayEstimator {
 		this.#floorCurrent = delay;
 		this.#floorPrevious = delay;
 		this.#floorWindowStart = now;
-		this.#peak = 0;
+		this.#peakCurrent = 0;
+		this.#peakPrevious = 0;
+		this.#peakReleased = 0;
+		this.#peakWindowStart = now;
 	}
 
 	/** Records the delay of a block `numberOfFrames` long, arrived at playback frame `now`. */
@@ -94,7 +116,8 @@ export class DelayEstimator {
 
 		const relative = Math.max(0, delay - this.floor());
 		const seconds = numberOfFrames / this.#sampleRate;
-		this.#peak *= Math.exp(-seconds / PEAK_RELEASE_TIME_CONSTANT_S);
+		this.#rollPeakWindow(now);
+		this.#peakReleased *= Math.exp(-seconds / PEAK_RELEASE_TIME_CONSTANT_S);
 
 		// A relative delay beyond the maximum cushion cannot be absorbed: it is a
 		// straggler or a stream that fell behind, not jitter to cover.
@@ -110,14 +133,31 @@ export class DelayEstimator {
 			this.#histogram[i] = i === bucket ? weight + (1 - keep) : weight;
 		}
 
-		if (relative > this.#peak) {
-			this.#peak = relative;
+		if (relative > this.#peakCurrent) {
+			this.#peakCurrent = relative;
 		}
+	}
+
+	// Starts a new peak window once the current one is over: its peak becomes
+	// the previous one, and the previous one is released. When two windows
+	// have passed without a block, both are released.
+	#rollPeakWindow(now: number): void {
+		const elapsed = now - this.#peakWindowStart;
+		if (elapsed < this.#peakWindow) return;
+		const both = elapsed >= 2 * this.#peakWindow;
+		const released = both
+			? Math.max(this.#peakCurrent, this.#peakPrevious)
+			: this.#peakPrevious;
+		this.#peakReleased = Math.max(this.#peakReleased, released);
+		this.#peakPrevious = both ? 0 : this.#peakCurrent;
+		this.#peakCurrent = 0;
+		this.#peakWindowStart = now;
 	}
 
 	/** The cushion over the floor that the statistics ask for. */
 	targetCushion(): number {
-		const peak = this.#peak > 0 ? this.#peak + this.#peakMargin : 0;
+		const largest = Math.max(this.#peakCurrent, this.#peakPrevious, this.#peakReleased);
+		const peak = largest > 0 ? largest + this.#peakMargin : 0;
 		const cushion = Math.round(Math.max(this.#quantile(), peak));
 		return Math.min(this.#maxCushion, Math.max(this.#minCushion, cushion));
 	}

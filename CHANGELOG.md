@@ -156,8 +156,17 @@ Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`) with resource-lifecy
 
 Merged work on `main` not yet cut as a tagged release. The Deno runtime migration and AV/media + Room/elements refactor landed in [#3]; the fixes and features from that work are recorded (with PR references) under the versioned `@okdaichi/av-nodes` and `@okdaichi/media-log` entries above. Full pre-release history is preserved in git.
 
+### Fixed
+
+- `AudioDecodeNode`: changes of the playout delay are inaudible. On a phone on 2.4 GHz Wi-Fi playing a continuous 440 Hz tone (sender verified clean, 50 frames a second exactly 20 ms apart), a delivery stall of about 160 ms every 12 s raised the target from about 100 ms to 266 ms, the peak was forgotten within 10 s, and the buffer then cut 10 ms of audio every 2 s to come back down until the next stall: 2 to 3 lowering steps in every 5 s, each a click through the tone even with its 10 ms crossfade, and a click at each underrun. Three changes, after WebRTC's NetEQ ([#60]):
+  - Slower release: the peak delay is held at full height for 20 to 40 s (the largest of the current and previous 20 s window) and then decays with a 20 s time constant, and the arrival histogram forgets over 40 s instead of 20 s. The delay is lowered only once the target has stayed more than 10 ms below it for 4 s, then by at most one step per 500 ms. Stalls recurring within the hold keep the delay where the first one put it, with no lowering step; a link that stays clean for about a minute falls back to `latency`.
+  - Time-scale modification (WSOLA) instead of cutting or inserting silence inside sound. A lowering step removes one pitch period, a segment of 2.5 to 15 ms found by normalized cross-correlation, with a 10 ms overlap-add at the matching offset, so a tone or voiced speech goes on without a discontinuity; a silence gap or a quiet stretch is still preferred and simply cut, and a step through continuous sound first waits 500 ms for one. A higher target repeats one correlated segment before each block instead of inserting silence.
+  - Concealment: when the buffer is about to run out, the last pitch period is repeated with an overlap-add, at full level for 30 ms and then fading to silence over 30 ms, so a short stall plays through and a long one ends softly; the next block crossfades from the concealed audio. The concealed audio raises the delay by its length and counts as an expand. With `maxLatency` equal to `latency` (a fixed delay) nothing is concealed.
+  The search runs on channel 0 at about 8 kHz and refines the best few peaks at full rate, about 100 000 multiply-adds (some 80 µs on a desktop) at most once per block and once per render quantum when concealing, with every buffer allocated up front. `expands` / `expandedMs` now also count concealment and repeated periods, and `accelerates` / `acceleratedMs` count removed periods as well as cuts.
+
 ### Changed
 
+- The worklet processors are registered as `audio-offloader-v3` and `audio-hijacker-v3`: the playback processor's jitter buffer behaves differently (time-scale modification, concealment and a slower release), so a copy of av-nodes of an earlier version in the same scope keeps its own processors ([#60]).
 - CI now runs `deno lint` for the published packages (`@okdaichi/av-nodes`, `@okdaichi/media-log`) alongside `check`/`test`. The one blocker — `FakeAudioDataCtor` in `packages/av_nodes/audio/encode_bench.ts` calling `super()` in both branches of an if/else — was refactored to a single unconditional `super()` via an arg-resolving helper (no behavior change) ([#48]).
 
 ## [0.1.0] - TBD
@@ -212,6 +221,7 @@ Merged work on `main` not yet cut as a tagged release. The Deno runtime migratio
 [#54]: https://github.com/okdaichi/moqrtc-js/pull/54
 [#56]: https://github.com/okdaichi/moqrtc-js/pull/56
 [#58]: https://github.com/okdaichi/moqrtc-js/pull/58
+[#60]: https://github.com/okdaichi/moqrtc-js/issues/60
 [#68]: https://github.com/okdaichi/moqrtc-js/issues/68
 [#71]: https://github.com/okdaichi/moqrtc-js/issues/71
 [#84]: https://github.com/okdaichi/moqrtc-js/pull/84

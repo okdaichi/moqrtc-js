@@ -18,13 +18,17 @@ export interface AudioPlayoutStats {
 	readonly droppedBlocks: number;
 	/** Times playback ran out of audio and faded to silence. */
 	readonly underruns: number;
-	/** Silence insertions that raised the delay. */
+	/**
+	 * Times the delay was raised other than for a late block: concealment of
+	 * audio that had not arrived when the buffer ran low, a repeated pitch
+	 * period, or a widened silence gap.
+	 */
 	readonly expands: number;
-	/** Total length of the silence inserted to raise the delay. */
+	/** Total length of the audio concealed, repeated or inserted as silence to raise the delay. */
 	readonly expandedMs: number;
-	/** Cuts that lowered the delay. */
+	/** Steps that lowered the delay: a removed pitch period, or a cut of silence or quiet audio. */
 	readonly accelerates: number;
-	/** Total length of the audio cut to lower the delay. */
+	/** Total length of the audio removed to lower the delay. */
 	readonly acceleratedMs: number;
 	/** Jumps to the live edge after the stream ran far ahead of playback. */
 	readonly resyncs: number;

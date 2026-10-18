@@ -7,6 +7,7 @@ const MIN_CUSHION = 960; // 20 ms
 const MAX_CUSHION = 19200; // 400 ms
 const PEAK_MARGIN = 960; // 20 ms
 const BUCKET = 480; // 10 ms
+const PEAK_WINDOW_BLOCKS = 1000; // 20 s
 
 function createEstimator(): DelayEstimator {
 	const estimator = new DelayEstimator({
@@ -68,18 +69,40 @@ Deno.test("DelayEstimator", async (t) => {
 		assertEquals(estimator.targetCushion(), MIN_CUSHION);
 	});
 
-	await t.step("releases a single late arrival over ten seconds", () => {
+	await t.step("holds a late arrival at full height for two peak windows", () => {
 		const estimator = createEstimator();
 		estimator.observe(4800, BLOCK, 0);
 
-		// Ten seconds of on-time blocks: the peak decays by e.
-		observeBlocks(estimator, 500, BLOCK, () => 0);
+		// On-time blocks up to just before 40 s.
+		observeBlocks(estimator, 2 * PEAK_WINDOW_BLOCKS - 1, BLOCK, () => 0);
 
-		assertAlmostEquals(
-			estimator.targetCushion(),
-			4800 * Math.exp(-1) + PEAK_MARGIN,
-			1,
-		);
+		assertEquals(estimator.targetCushion(), 4800 + PEAK_MARGIN);
+	});
+
+	await t.step("releases a late arrival over 20 s once two peak windows have passed", () => {
+		const estimator = createEstimator();
+		estimator.observe(4800, BLOCK, 0);
+		const now = observeBlocks(estimator, 2 * PEAK_WINDOW_BLOCKS - 1, BLOCK, () => 0);
+
+		// Twenty seconds more on time: the released peak decays by e.
+		observeBlocks(estimator, PEAK_WINDOW_BLOCKS, now, () => 0);
+
+		assertAlmostEquals(estimator.targetCushion(), 4800 * Math.exp(-1) + PEAK_MARGIN, 1);
+	});
+
+	await t.step("keeps the target of a late arrival recurring every 12 s", () => {
+		const estimator = createEstimator();
+		const every = 600; // blocks: 12 s
+		const targets: number[] = [];
+
+		let now = 0;
+		for (let i = 0; i < 10 * every; i++) {
+			estimator.observe(i % every === 0 ? 4800 : 0, BLOCK, now);
+			targets.push(estimator.targetCushion());
+			now += BLOCK;
+		}
+
+		assertEquals(Math.min(...targets), 4800 + PEAK_MARGIN);
 	});
 
 	await t.step("holds a delay seen in more than 3% of recent blocks", () => {
@@ -87,8 +110,8 @@ Deno.test("DelayEstimator", async (t) => {
 		// Twenty seconds where every other block is 50 ms late...
 		const now = observeBlocks(estimator, 1000, 0, (i) => i % 2 === 0 ? 0 : 2400);
 
-		// ...then thirty seconds on time: the peak has decayed, the histogram
-		// still holds the late bucket above the 97th percentile.
+		// ...then thirty seconds on time: the peak is releasing, and the
+		// histogram still holds the late bucket above the 97th percentile.
 		observeBlocks(estimator, 1500, now, () => 0);
 
 		assertEquals(estimator.targetCushion(), (2400 / BUCKET + 1) * BUCKET);
