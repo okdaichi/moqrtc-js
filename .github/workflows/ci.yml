@@ -73,3 +73,16 @@ jobs:
       - name: Test media-log
         working-directory: packages/media_log
         run: deno task test
+
+      - name: Lint media-devices
+        working-directory: packages/media_devices
+        run: deno lint
+
+      - name: Check media-devices
+        working-directory: packages/media_devices
+        run: deno task check
+
+      - name: Test media-devices
+        working-directory: packages/media_devices
+        run: deno task test
+

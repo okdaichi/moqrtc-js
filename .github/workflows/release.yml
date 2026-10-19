@@ -57,6 +57,7 @@ jobs:
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
 
       - name: Bump version
+        id: bump
         working-directory: ${{ steps.pkg.outputs.dir }}
         run: |
           current=$(deno eval "console.log(JSON.parse(Deno.readTextFileSync('deno.json')).version)")

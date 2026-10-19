@@ -1,8 +1,49 @@
-/// <reference path="./test_globals.d.ts" />
 import { assertEquals } from "@std/assert";
-import { FakeAudioContext } from "../packages/av_nodes/audio/fake_audio_context_test.ts";
-import { FakeGainNode } from "../packages/av_nodes/audio/fake_gainnode_test.ts";
 import { VolumeController } from "./volume.ts";
+
+class FakeAudioParam {
+	#value: number;
+
+	constructor(initialValue = 1.0) {
+		this.#value = initialValue;
+	}
+
+	get value(): number {
+		return this.#value;
+	}
+
+	set value(v: number) {
+		this.#value = v;
+	}
+
+	cancelScheduledValues(_startTime: number): this {
+		return this;
+	}
+
+	setValueAtTime(value: number, _startTime: number): this {
+		this.#value = value;
+		return this;
+	}
+
+	exponentialRampToValueAtTime(value: number, _endTime: number): this {
+		this.#value = value;
+		return this;
+	}
+}
+
+class FakeGainNode {
+	readonly context: AudioContext;
+	readonly gain: AudioParam;
+
+	constructor(context: AudioContext, initialGain = 1.0) {
+		this.context = context;
+		this.gain = new FakeAudioParam(initialGain) as unknown as AudioParam;
+	}
+}
+
+class FakeAudioContext {
+	currentTime = 0;
+}
 
 Deno.test("VolumeController", async (t) => {
 	let audioContext: AudioContext;

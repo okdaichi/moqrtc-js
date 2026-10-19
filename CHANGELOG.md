@@ -14,6 +14,7 @@ Initial release of `@okdaichi/media-devices` (`packages/media_devices`). Device 
 - `MediaDeviceContext`: manages shared device state — enumeration, permission (with in-flight request dedup), devicechange listener with debounce, and subscriber notifications.
 - `Device<K>`: manages a single media track lifecycle — start/stop/switch device, constraint updates, and track ended handling.
 - `Microphone`, `Camera`, `Screen`: typed wrappers over `Device` with device-specific defaults.
+- `VolumeController`: manages `GainNode` for audio volume control with smooth exponential fading and mute state restoration.
 
 ## [0.14.0] - 2026-10-18
 

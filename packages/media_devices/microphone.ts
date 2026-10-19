@@ -45,37 +45,37 @@ export class Microphone {
 	}
 
 	// Delegate to Device
-	get context() {
+	get context(): MediaDeviceContext {
 		return this.#device.context;
 	}
-	get kind() {
+	get kind(): "audio" {
 		return this.#device.kind;
 	}
-	get enabled() {
+	get enabled(): boolean {
 		return this.#device.enabled;
 	}
 	set enabled(value: boolean) {
 		this.#device.enabled = value;
 	}
-	get constraints() {
+	get constraints(): MediaTrackConstraints | undefined {
 		return this.#device.constraints;
 	}
 	set constraints(value: MediaTrackConstraints | undefined) {
 		this.#device.constraints = value;
 	}
-	get preferred() {
+	get preferred(): string | undefined {
 		return this.#device.preferred;
 	}
 	set preferred(value: string | undefined) {
 		this.#device.preferred = value;
 	}
-	get activeDeviceId() {
+	get activeDeviceId(): string | undefined {
 		return this.#device.activeDeviceId;
 	}
 	set activeDeviceId(value: string | undefined) {
 		this.#device.activeDeviceId = value;
 	}
-	get onTrackEnded() {
+	get onTrackEnded(): ((reason: string) => void) | undefined {
 		return this.#device.onTrackEnded;
 	}
 	set onTrackEnded(value: ((reason: string) => void) | undefined) {

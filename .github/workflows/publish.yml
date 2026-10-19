@@ -1,10 +1,10 @@
 name: Publish
 
 # Publishes a single package to JSR (https://jsr.io) using OIDC auth — no
-# secrets required. Each JSR package (@okdaichi/av-nodes, @okdaichi/media-log)
+# secrets required. Each JSR package (@okdaichi/av-nodes, @okdaichi/media-log, @okdaichi/media-devices)
 # must be linked to this repo (okdaichi/moqrtc-js) in its JSR package settings.
 #
-# Triggered by a release tag push (av-nodes/v*, media-log/v*) so only the
+# Triggered by a release tag push (av-nodes/v*, media-log/v*, media-devices/v*) so only the
 # tagged package is published, exactly at its tagged version. Use the manual
 # `workflow_dispatch` to (re)publish a package from the current main checkout,
 # e.g. to publish tags that were pushed before this workflow existed.
@@ -26,6 +26,7 @@ on:
         options:
           - av-nodes
           - media-log
+          - media-devices
 
 jobs:
   publish:
@@ -54,7 +55,8 @@ jobs:
           case "$prefix" in
             av-nodes) dir="packages/av_nodes" ;;
             media-log) dir="packages/media_log" ;;
-            *) echo "::error::Unknown package prefix '$prefix' (expected av-nodes or media-log)"; exit 1 ;;
+            media-devices) dir="packages/media_devices" ;;
+            *) echo "::error::Unknown package prefix '$prefix' (expected av-nodes, media-log, or media-devices)"; exit 1 ;;
           esac
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
           echo "Publishing '$prefix' from $dir"
