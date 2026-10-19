@@ -14,6 +14,7 @@ on:
     tags:
       - "av-nodes/v*"
       - "media-log/v*"
+      - "media-devices/v*"
   workflow_dispatch:
     branches:
       - main

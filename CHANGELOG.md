@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-10-19
+
+Initial release of `@okdaichi/media-devices` (`packages/media_devices`). Device management for real-time media apps: device enumeration, permission caching, device selection, device-change tracking, and per-track lifecycle management.
+
+### Added
+
+- `MediaDeviceContext`: manages shared device state — enumeration, permission (with in-flight request dedup), devicechange listener with debounce, and subscriber notifications.
+- `Device<K>`: manages a single media track lifecycle — start/stop/switch device, constraint updates, and track ended handling.
+- `Microphone`, `Camera`, `Screen`: typed wrappers over `Device` with device-specific defaults.
+
 ## [0.14.0] - 2026-10-18
 
 Minor release of `@okdaichi/av-nodes` (`packages/av_nodes`). `AudioDecodeNode` changes delay inaudibly using WSOLA (pitch-preserving time-stretching) and a slower release. Worklet processor names are derived from the package version (`@okdaichi/av-nodes/playout@<version>` and `@okdaichi/av-nodes/capture@<version>`), and internal processor/protocol files and exports are renamed from offload/hijack to playout/capture. CI and publish workflows now verify worklet bundle freshness.
