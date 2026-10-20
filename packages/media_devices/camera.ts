@@ -29,14 +29,11 @@ export class Camera {
 				}
 
 				// Find default device using heuristics for cameras
-				let defaultDevice = devices.find((d) => d.deviceId === "default");
-				if (!defaultDevice) {
-					defaultDevice = devices.find((d) =>
-						d.label.toLowerCase().includes("front") ||
-						d.label.toLowerCase().includes("external") ||
-						d.label.toLowerCase().includes("usb")
-					);
-				}
+				let defaultDevice = devices.find((d) =>
+					d.label.toLowerCase().includes("front") ||
+					d.label.toLowerCase().includes("external") ||
+					d.label.toLowerCase().includes("usb")
+				);
 				if (!defaultDevice) {
 					defaultDevice = devices[0];
 				}
@@ -145,12 +142,14 @@ export class Camera {
 
 			// Set up track ended listener
 			track.addEventListener("ended", () => {
+				// A live track that already replaced this one stays.
+				if (this.#device.stream) return;
 				this.#device.stream = undefined;
 				this.#device.onTrackEnded?.("Device disconnected or track ended");
 			});
 
 			this.#device.stream = track;
-			return this.#device.stream;
+			return track;
 		} catch (error) {
 			// Ensure any partial stream is stopped
 			stream?.getTracks().forEach((t) => {

@@ -7,6 +7,35 @@ const devices = [
 	{ kind: "videoinput" as MediaDeviceKind, label: "Cam", deviceId: "cam-1" },
 ];
 
+// Chrome on Windows: a USB microphone is both the default and the
+// communications device, and is listed under both aliases besides its own id.
+const windowsHeadset = [
+	{
+		kind: "audioinput" as MediaDeviceKind,
+		label: "Default - USB Mic",
+		deviceId: "default",
+		groupId: "g-usb",
+	},
+	{
+		kind: "audioinput" as MediaDeviceKind,
+		label: "Communications - USB Mic",
+		deviceId: "communications",
+		groupId: "g-usb",
+	},
+	{
+		kind: "audioinput" as MediaDeviceKind,
+		label: "Built-in Mic",
+		deviceId: "mic-1",
+		groupId: "g-builtin",
+	},
+	{
+		kind: "audioinput" as MediaDeviceKind,
+		label: "USB Mic",
+		deviceId: "mic-2",
+		groupId: "g-usb",
+	},
+];
+
 Deno.test("MediaDeviceContext", async (t) => {
 	await t.step("enumerates devices on creation", async () => {
 		using _fakeMap = setupFakeMediaDevices(devices);
@@ -28,8 +57,53 @@ Deno.test("MediaDeviceContext", async (t) => {
 		const videoDevices = context.getDevices("video");
 		assertEquals(videoDevices[0]?.deviceId, "cam-1"); // Permissions granted
 
-		const audioDevices = context.getDevices("audio");
-		assertEquals(audioDevices[0]?.deviceId, ""); // Still no audio permissions
+		// Still no audio permission: the hidden microphone cannot be chosen.
+		assertEquals(context.getDevices("audio"), []);
+	});
+
+	await t.step("lists each device once beside the browser's aliases", async () => {
+		using _fakeMap = setupFakeMediaDevices(windowsHeadset);
+		const context = new MediaDeviceContext();
+		await context.requestPermission("audio");
+
+		assertEquals(context.getDevices("audio").map((d) => d.deviceId), ["mic-1", "mic-2"]);
+	});
+
+	await t.step("resolves the default alias to the device it points at", async () => {
+		using _fakeMap = setupFakeMediaDevices(windowsHeadset);
+		const context = new MediaDeviceContext();
+		await context.requestPermission("audio");
+
+		assertEquals(context.getDefaultDevice("audio")?.deviceId, "mic-2");
+	});
+
+	await t.step("takes the first device as default when there is no alias", async () => {
+		using _fakeMap = setupFakeMediaDevices(devices);
+		const context = new MediaDeviceContext();
+		await context.requestPermission("audio");
+
+		assertEquals(context.getDefaultDevice("audio")?.deviceId, "mic-1");
+	});
+
+	await t.step("lists the audio outputs and their default", async () => {
+		using _fakeMap = setupFakeMediaDevices([
+			...windowsHeadset,
+			{
+				kind: "audiooutput",
+				label: "Default - Speakers",
+				deviceId: "default",
+				groupId: "g-spk",
+			},
+			{ kind: "audiooutput", label: "Speakers", deviceId: "spk-1", groupId: "g-spk" },
+			{ kind: "audiooutput", label: "Headphones", deviceId: "spk-2", groupId: "g-hp" },
+		]);
+		const context = new MediaDeviceContext();
+		await context.requestPermission("audio");
+
+		assertEquals({
+			outputs: context.getOutputDevices().map((d) => d.deviceId),
+			defaultOutput: context.getDefaultOutputDevice()?.deviceId,
+		}, { outputs: ["spk-1", "spk-2"], defaultOutput: "spk-1" });
 	});
 
 	await t.step("findDevice finds by exact or partial match", async () => {

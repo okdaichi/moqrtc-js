@@ -92,16 +92,24 @@ export class FakeMediaStream implements MediaStream {
 	}
 }
 
+/** A device the fake lists; groupId defaults to one group shared by all. */
+export interface FakeDeviceInit {
+	kind: MediaDeviceKind;
+	label: string;
+	deviceId: string;
+	groupId?: string;
+}
+
 export class FakeMediaDevices implements MediaDevices {
 	// deno-lint-ignore no-explicit-any
 	ondevicechange: ((this: MediaDevices, ev: Event) => any) | null = null;
 	devices: MediaDeviceInfo[] = [];
 	permissions: { audio: boolean; video: boolean } = { audio: false, video: false };
 
-	constructor(initialDevices: { kind: MediaDeviceKind; label: string; deviceId: string }[] = []) {
+	constructor(initialDevices: FakeDeviceInit[] = []) {
 		this.devices = initialDevices.map((d) => ({
 			...d,
-			groupId: "group1",
+			groupId: d.groupId ?? "group1",
 			toJSON: () => d,
 		}));
 	}
@@ -199,9 +207,7 @@ export class FakeMediaDevices implements MediaDevices {
 /**
  * Replace global navigator.mediaDevices with FakeMediaDevices during the test block.
  */
-export function setupFakeMediaDevices(
-	devices: { kind: MediaDeviceKind; label: string; deviceId: string }[],
-) {
+export function setupFakeMediaDevices(devices: FakeDeviceInit[]) {
 	const fake = new FakeMediaDevices(devices);
 	const originalNavigator = globalThis.navigator;
 

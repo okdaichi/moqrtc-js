@@ -65,7 +65,8 @@ Deno.test("Microphone", async (t) => {
 
 			const track = await mic.getAudioTrack();
 			assertExists(track);
-			assertEquals(track.getConstraints(), constraints);
+			// The device is named once permission reveals it.
+			assertEquals(track.getConstraints(), { deviceId: { exact: "mic-1" }, ...constraints });
 		});
 
 		await st.step("returns cached track on subsequent calls", async () => {
@@ -77,6 +78,21 @@ Deno.test("Microphone", async (t) => {
 			const track2 = await mic.getAudioTrack();
 
 			assertEquals(track1, track2);
+		});
+
+		await st.step("asks for a new track after the cached one was stopped", async () => {
+			using _fakeMap = setupFakeMediaDevices(devices);
+			const context = new MediaDeviceContext();
+			const mic = new Microphone(context, { enabled: true });
+			const stopped = await mic.getAudioTrack();
+			stopped.stop();
+
+			const track = await mic.getAudioTrack();
+
+			assertEquals({ fresh: track !== stopped, state: track.readyState }, {
+				fresh: true,
+				state: "live",
+			});
 		});
 
 		await st.step("throws when microphone not enabled", async () => {
@@ -161,7 +177,10 @@ Deno.test("Microphone", async (t) => {
 			});
 
 			const track = await mic.getAudioTrack();
-			assertEquals(track.getConstraints(), { echoCancellation: true });
+			assertEquals(track.getConstraints(), {
+				deviceId: { exact: "mic-1" },
+				echoCancellation: true,
+			});
 
 			await mic.updateConstraints({ echoCancellation: false, noiseSuppression: true });
 			const updatedTrack = await mic.getAudioTrack();
