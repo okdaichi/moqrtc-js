@@ -53,7 +53,8 @@ Deno.test("Camera", async (t) => {
 			const track = await camera.getVideoTrack();
 			const settings = track.getSettings();
 			assertEquals(settings.deviceId, "vid1");
-			assertEquals(track.getConstraints(), { width: 1080 });
+			// The device is named once permission reveals it.
+			assertEquals(track.getConstraints(), { deviceId: { exact: "vid1" }, width: 1080 });
 		});
 
 		await t.step("returns cached track on subsequent calls", async () => {

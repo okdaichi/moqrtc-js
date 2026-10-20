@@ -29,14 +29,11 @@ export class Camera {
 				}
 
 				// Find default device using heuristics for cameras
-				let defaultDevice = devices.find((d) => d.deviceId === "default");
-				if (!defaultDevice) {
-					defaultDevice = devices.find((d) =>
-						d.label.toLowerCase().includes("front") ||
-						d.label.toLowerCase().includes("external") ||
-						d.label.toLowerCase().includes("usb")
-					);
-				}
+				let defaultDevice = devices.find((d) =>
+					d.label.toLowerCase().includes("front") ||
+					d.label.toLowerCase().includes("external") ||
+					d.label.toLowerCase().includes("usb")
+				);
 				if (!defaultDevice) {
 					defaultDevice = devices[0];
 				}

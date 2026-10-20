@@ -23,24 +23,8 @@ export class Microphone {
 	constructor(context: MediaDeviceContext, props?: MicrophoneProps) {
 		this.#device = new Device(context, "audio", {
 			...props,
-			getDefaultDeviceId: (devices) => {
-				if (devices.length === 0) {
-					return undefined;
-				}
-
-				// Find default device using heuristics for microphones
-				let defaultDevice = devices.find((d) => d.deviceId === "default");
-				if (!defaultDevice) {
-					defaultDevice = devices.find((d) =>
-						d.label.toLowerCase().includes("default") ||
-						d.label.toLowerCase().includes("communications")
-					);
-				}
-				if (!defaultDevice) {
-					defaultDevice = devices[0];
-				}
-				return defaultDevice?.deviceId;
-			},
+			// The system's default microphone, as the context resolves it.
+			getDefaultDeviceId: () => context.getDefaultDevice("audio")?.deviceId,
 		});
 	}
 
