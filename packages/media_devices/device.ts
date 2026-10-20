@@ -44,7 +44,7 @@ const EMPTY_LIST: DeviceList = { devices: [], defaultDevice: undefined };
  * without an id are hidden until permission is granted and cannot be chosen;
  * alias entries name a device already listed under its own id. The default is
  * the device the "default" alias points at — the one sharing its group whose
- * label it ends with — or else the first, which the browser lists as default.
+ * label it ends with — or else the first device listed.
  */
 function listOf(all: readonly MediaDeviceInfo[], kind: MediaDeviceKind): DeviceList {
 	const entries = all.filter((d) => d.kind === kind && d.deviceId !== "");
@@ -418,8 +418,9 @@ export class Device<K extends "audio" | "video"> {
 	async updateConstraints(constraints: MediaTrackConstraints): Promise<void> {
 		this.constraints = constraints;
 
-		if (this.#stream) {
-			await this.#stream.applyConstraints(constraints);
+		const track = this.stream;
+		if (track) {
+			await track.applyConstraints(constraints);
 		}
 	}
 

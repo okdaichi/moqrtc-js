@@ -128,12 +128,14 @@ export class Microphone {
 
 			// Set up track ended listener
 			track.addEventListener("ended", () => {
+				// A live track that already replaced this one stays.
+				if (this.#device.stream) return;
 				this.#device.stream = undefined;
 				this.#device.onTrackEnded?.("Device disconnected or track ended");
 			});
 
 			this.#device.stream = track;
-			return this.#device.stream;
+			return track;
 		} catch (error) {
 			// Ensure any partial stream is stopped
 			stream?.getTracks().forEach((t) => {
