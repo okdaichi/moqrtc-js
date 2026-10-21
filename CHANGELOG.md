@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `@okdaichi/av-nodes`: `VoiceActivityNode`, which tells whether the audio passing through it carries a voice. Its input is measured on the audio thread: mixed to mono, filtered to the voice band (300–3400 Hz), and judged against the voice's own noise floor with separate start and stop thresholds and a short hold, so a fan or music does not count, a quiet speaker does, and the result does not flicker. Only a change reaches the main thread, as a `speakingchange` event (`VoiceActivityEvent`, with `speaking` and the input `time`); `speaking` holds the current state. It passes its audio through unchanged, so it sits in a chain or hangs off a source as a tap. `dispose()` ends a voice still heard with a last event.
-- `@okdaichi/av-nodes`: the detector behind it, `VoiceDetector` (with `levelDb`, `DEFAULT_VOICE_DETECTOR_OPTIONS` and `isVoiceDetectorOptions`), and `VoiceBandFilter`, for measuring levels elsewhere. `audio/voice_detector_cases.json` holds shared cases for ports of the detector to other languages.
+- `@okdaichi/av-nodes`: `VoiceActivityNodeEventMap`, so `addEventListener("speakingchange", …)` hands the listener a typed `VoiceActivityEvent`; `VoiceActivityNodeOptionError` (with `option` and `value`) for thresholds no detector can work with; and the `VoiceDetectorOptions` type. The processor registers as `@okdaichi/av-nodes/vad@<version>`. `audio/voice_detector_cases.json` holds shared cases for ports of the detector to other languages.
 
 ## [0.2.0] - 2026-10-20
 

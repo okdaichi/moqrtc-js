@@ -28,7 +28,7 @@ export interface SpeakingMessage {
 /** Whether `value` is a well-formed message from the voice activity worklet. */
 export function isSpeakingMessage(value: unknown): value is SpeakingMessage {
 	if (typeof value !== "object" || value === null) return false;
-	const v = value as Record<string, unknown>;
-	return v.type === "speaking" && typeof v.speaking === "boolean" &&
-		typeof v.time === "number" && Number.isFinite(v.time);
+	return "type" in value && value.type === "speaking" &&
+		"speaking" in value && typeof value.speaking === "boolean" &&
+		"time" in value && typeof value.time === "number" && Number.isFinite(value.time);
 }

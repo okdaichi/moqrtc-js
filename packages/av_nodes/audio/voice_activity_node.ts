@@ -27,11 +27,16 @@ export interface VoiceActivityNodeInit {
 	readonly windowMs?: number;
 }
 
-/** Thrown by the constructor for options no detector can work with. */
+/** Thrown by the constructor for an option no detector can work with. */
 export class VoiceActivityNodeOptionError extends RangeError {
-	constructor(message: string) {
-		super(message);
+	readonly option: "detector" | "windowMs";
+	readonly value: unknown;
+
+	constructor(option: "detector" | "windowMs", value: unknown, requirement: string) {
+		super(`VoiceActivityNode: ${option} must be ${requirement}, got ${JSON.stringify(value)}`);
 		this.name = "VoiceActivityNodeOptionError";
+		this.option = option;
+		this.value = value;
 	}
 }
 
@@ -49,6 +54,11 @@ export class VoiceActivityEvent extends Event {
 		this.speaking = speaking;
 		this.time = time;
 	}
+}
+
+/** The events a VoiceActivityNode fires, by type. */
+export interface VoiceActivityNodeEventMap {
+	speakingchange: VoiceActivityEvent;
 }
 
 /**
@@ -80,6 +90,43 @@ export class VoiceActivityNode extends GainNode {
 	/** Called on each {@link VoiceActivityEvent}, as a listener would be. */
 	onspeakingchange: ((event: VoiceActivityEvent) => void) | null = null;
 
+	/** Listens for `speakingchange`, typed as {@link VoiceActivityEvent}. */
+	override addEventListener<K extends keyof VoiceActivityNodeEventMap>(
+		type: K,
+		listener: (this: VoiceActivityNode, event: VoiceActivityNodeEventMap[K]) => unknown,
+		options?: boolean | AddEventListenerOptions,
+	): void;
+	override addEventListener(
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: boolean | AddEventListenerOptions,
+	): void;
+	override addEventListener(
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: boolean | AddEventListenerOptions,
+	): void {
+		super.addEventListener(type, listener, options);
+	}
+
+	override removeEventListener<K extends keyof VoiceActivityNodeEventMap>(
+		type: K,
+		listener: (this: VoiceActivityNode, event: VoiceActivityNodeEventMap[K]) => unknown,
+		options?: boolean | EventListenerOptions,
+	): void;
+	override removeEventListener(
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: boolean | EventListenerOptions,
+	): void;
+	override removeEventListener(
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: boolean | EventListenerOptions,
+	): void {
+		super.removeEventListener(type, listener, options);
+	}
+
 	/**
 	 * @throws {VoiceActivityNodeOptionError} if the detector's options cannot
 	 * work (non-finite, a stop threshold above the start one, a negative hold
@@ -89,12 +136,18 @@ export class VoiceActivityNode extends GainNode {
 		const detector = { ...DEFAULT_VOICE_DETECTOR_OPTIONS, ...init.detector };
 		if (!isVoiceDetectorOptions(detector)) {
 			throw new VoiceActivityNodeOptionError(
-				"detector options must be finite, with offDb <= onDb and holdMs, floorRiseDbPerSec >= 0",
+				"detector",
+				detector,
+				"finite numbers with offDb <= onDb, holdMs >= 0 and floorRiseDbPerSec >= 0",
 			);
 		}
 		const windowMs = init.windowMs ?? DEFAULT_VOICE_WINDOW_MS;
 		if (!Number.isFinite(windowMs) || windowMs <= 0) {
-			throw new VoiceActivityNodeOptionError("windowMs must be a positive finite number");
+			throw new VoiceActivityNodeOptionError(
+				"windowMs",
+				windowMs,
+				"a positive finite number",
+			);
 		}
 		super(context as unknown as BaseAudioContext, { gain: 1 });
 		this.#context = context;

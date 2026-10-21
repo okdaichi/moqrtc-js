@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertGreaterOrEqual, assertLessOrEqual } from "@std/assert";
 import { VoiceBandFilter } from "./voice_band.ts";
 import { levelDb } from "./voice_detector.ts";
 
@@ -19,19 +19,19 @@ function passed(hz: number): number {
 
 Deno.test("VoiceBandFilter keeps the voice band", () => {
 	for (const hz of [500, 1000, 2000]) {
-		assertEquals(passed(hz) >= -1, true, `${hz} Hz lost ${passed(hz)} dB`);
+		assertGreaterOrEqual(passed(hz), -1, `${hz} Hz`);
 	}
 });
 
 Deno.test("VoiceBandFilter cuts hum and rumble", () => {
 	for (const hz of [50, 60, 100]) {
-		assertEquals(passed(hz) <= -15, true, `${hz} Hz kept at ${passed(hz)} dB`);
+		assertLessOrEqual(passed(hz), -15, `${hz} Hz`);
 	}
 });
 
 Deno.test("VoiceBandFilter cuts hiss", () => {
 	for (const hz of [10_000, 15_000]) {
-		assertEquals(passed(hz) <= -15, true, `${hz} Hz kept at ${passed(hz)} dB`);
+		assertLessOrEqual(passed(hz), -15, `${hz} Hz`);
 	}
 });
 

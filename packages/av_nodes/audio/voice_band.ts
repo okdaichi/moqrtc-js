@@ -62,7 +62,11 @@ export class VoiceBandFilter {
 		this.#high = new Biquad("lowpass", highHz, sampleRate);
 	}
 
-	/** Filters `input` into `output` (the same length; may be the same array). */
+	/**
+	 * Filters `input` into `output` (the same length; may be the same array).
+	 * Writing into the caller's buffer is the point: on the audio thread a
+	 * render quantum must not allocate.
+	 */
 	process(input: ArrayLike<number>, output: Float32Array): void {
 		for (let i = 0; i < output.length; i++) {
 			output[i] = this.#high.next(this.#low.next(input[i] ?? 0));

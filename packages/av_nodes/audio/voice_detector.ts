@@ -52,12 +52,19 @@ export function levelDb(samples: ArrayLike<number>): number {
  * start threshold at or above the stop one, and no negative durations or rates.
  */
 export function isVoiceDetectorOptions(options: unknown): options is VoiceDetectorOptions {
-	if (typeof options !== "object" || options === null) return false;
-	const o = options as Record<string, unknown>;
-	const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
-	return finite(o.onDb) && finite(o.offDb) && finite(o.holdMs) &&
-		finite(o.floorRiseDbPerSec) && finite(o.minDb) &&
-		o.onDb >= o.offDb && o.holdMs >= 0 && o.floorRiseDbPerSec >= 0;
+	if (!isRecord(options)) return false;
+	const { onDb, offDb, holdMs, floorRiseDbPerSec, minDb } = options;
+	return isFiniteNumber(onDb) && isFiniteNumber(offDb) && isFiniteNumber(holdMs) &&
+		isFiniteNumber(floorRiseDbPerSec) && isFiniteNumber(minDb) &&
+		onDb >= offDb && holdMs >= 0 && floorRiseDbPerSec >= 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value);
 }
 
 /**
