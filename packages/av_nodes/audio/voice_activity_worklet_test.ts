@@ -1,7 +1,7 @@
 /// <reference path="../../../src/test_globals.d.ts" />
 import { assertEquals } from "@std/assert";
 import { isSpeakingMessage, type SpeakingMessage } from "./voice_activity_protocol.ts";
-import { VOICE_ACTIVITY_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
+import { VAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import {
 	type FakeProcessorPort,
 	setupFakeAudioWorkletEnvironment,
@@ -61,7 +61,7 @@ function feed(p: Processor, ...quanta: Iterable<Float32Array[]>[]): SpeakingMess
 const speakingOf = (sent: SpeakingMessage[]) => sent.map((m) => m.speaking);
 
 Deno.test("the processor registers under its versioned name", () => {
-	assertEquals(registered.name, VOICE_ACTIVITY_PROCESSOR_NAME);
+	assertEquals(registered.name, VAD_PROCESSOR_NAME);
 });
 
 Deno.test("a voice in a quiet room is reported speaking, then not after it stops", () => {

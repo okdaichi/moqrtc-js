@@ -86,10 +86,8 @@ export const PLAYOUT_PROCESSOR_NAME = ${JSON.stringify(`@okdaichi/av-nodes/playo
 /** Name the capture processor is registered under. */
 export const CAPTURE_PROCESSOR_NAME = ${JSON.stringify(`@okdaichi/av-nodes/capture@${version}`)};
 
-/** Name the voice activity processor is registered under. */
-export const VOICE_ACTIVITY_PROCESSOR_NAME = ${
-		JSON.stringify(`@okdaichi/av-nodes/voice-activity@${version}`)
-	};
+/** Name the voice activity (VAD) processor is registered under. */
+export const VAD_PROCESSOR_NAME = ${JSON.stringify(`@okdaichi/av-nodes/vad@${version}`)};
 `;
 
 	await Deno.writeTextFile(namesFile, tsContent);

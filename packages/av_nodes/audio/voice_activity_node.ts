@@ -1,7 +1,7 @@
 // VoiceActivityNode: whether the audio passing through carries a voice.
 // Extends GainNode so it connects like any node, inline or as a tap.
 import { AudioWorkletModule, stopProcessor } from "./audio_worklet_module.ts";
-import { VOICE_ACTIVITY_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
+import { VAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 import { DEFAULT_VOICE_WINDOW_MS, isSpeakingMessage } from "./voice_activity_protocol.ts";
 import {
 	DEFAULT_VOICE_DETECTOR_OPTIONS,
@@ -143,7 +143,7 @@ export class VoiceActivityNode extends GainNode {
 	#attachWorklet(): void {
 		const worklet = new AudioWorkletNode(
 			this.#context as unknown as BaseAudioContext,
-			VOICE_ACTIVITY_PROCESSOR_NAME,
+			VAD_PROCESSOR_NAME,
 			{
 				numberOfInputs: 1,
 				numberOfOutputs: 1,

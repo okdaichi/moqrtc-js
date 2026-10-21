@@ -8,7 +8,7 @@
 export {
 	CAPTURE_PROCESSOR_NAME,
 	PLAYOUT_PROCESSOR_NAME,
-	VOICE_ACTIVITY_PROCESSOR_NAME,
+	VAD_PROCESSOR_NAME,
 } from "./audio_worklet_names.ts";
 
 /** Tells a processor to stop: it renders nothing more and closes its port. */

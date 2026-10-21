@@ -1,6 +1,6 @@
 import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
 import { FakeGainNode } from "./fake_gainnode_test.ts";
-import { VOICE_ACTIVITY_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
+import { VAD_PROCESSOR_NAME } from "./audio_worklet_protocol.ts";
 
 // GainNode and AudioWorkletNode must be the fakes before the node's module
 // is evaluated, as it extends GainNode.
@@ -83,7 +83,7 @@ Deno.test("VoiceActivityNode", async (t) => {
 	await t.step("creates its processor with the context's rate and the defaults", async () => {
 		const { node, worklet } = await attached();
 
-		assertEquals(worklet.name, VOICE_ACTIVITY_PROCESSOR_NAME);
+		assertEquals(worklet.name, VAD_PROCESSOR_NAME);
 		assertEquals(worklet.options?.processorOptions, {
 			sampleRate: 48_000,
 			windowMs: 20,

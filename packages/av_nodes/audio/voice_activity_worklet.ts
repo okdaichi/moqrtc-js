@@ -9,7 +9,7 @@ import {
 	VoiceDetector,
 } from "./voice_detector.ts";
 import { VoiceBandFilter } from "./voice_band.ts";
-import { VOICE_ACTIVITY_PROCESSOR_NAME } from "./audio_worklet_names.ts";
+import { VAD_PROCESSOR_NAME } from "./audio_worklet_names.ts";
 
 // URL getter function for main thread import
 export function importWorkletUrl(): string {
@@ -107,5 +107,5 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 		}
 	}
 
-	registerProcessor(VOICE_ACTIVITY_PROCESSOR_NAME, VoiceActivityProcessor);
+	registerProcessor(VAD_PROCESSOR_NAME, VoiceActivityProcessor);
 }
