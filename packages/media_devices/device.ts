@@ -14,11 +14,15 @@ export interface MediaDeviceAccess {
 
 /** Options for creating a MediaDeviceContext. */
 export interface MediaDeviceContextOptions {
-	/** The media devices to use; defaults to the browser's `navigator.mediaDevices`. */
-	mediaDevices?: MediaDeviceAccess;
 	/**
-	 * How long requestPermission waits for a permission prompt to be answered
-	 * before it reports the permission as not granted. Defaults to
+	 * The media devices to use; defaults to the browser's
+	 * `navigator.mediaDevices`. `null` says there are none, as on an insecure
+	 * page.
+	 */
+	mediaDevices?: MediaDeviceAccess | null;
+	/**
+	 * How long a request waits for a permission prompt to be answered before
+	 * it gives up (see requestStream). Defaults to
 	 * `MediaDeviceContext.GET_USER_MEDIA_TIMEOUT`.
 	 */
 	permissionTimeoutMs?: number;
@@ -37,6 +41,28 @@ export interface Clock {
 	timeout(ms: number): Timeout;
 }
 
+/**
+ * PermissionTimeoutError is a request for media whose permission prompt was
+ * not answered within the permission timeout.
+ */
+export class PermissionTimeoutError extends Error {
+	override readonly name = "PermissionTimeoutError";
+	readonly timeoutMs: number;
+
+	constructor(timeoutMs: number) {
+		super(`The permission prompt was not answered within ${timeoutMs}ms`);
+		this.timeoutMs = timeoutMs;
+	}
+}
+
+/** The kinds of input a request for media asks for. */
+function kindsOf(constraints: MediaStreamConstraints): ("audio" | "video")[] {
+	const kinds: ("audio" | "video")[] = [];
+	if (constraints.audio) kinds.push("audio");
+	if (constraints.video) kinds.push("video");
+	return kinds;
+}
+
 /** TimerClock runs timeouts on the global setTimeout. */
 class TimerClock implements Clock {
 	timeout(ms: number): Timeout {
@@ -51,8 +77,9 @@ class TimerClock implements Clock {
  * - `unknown` until the browser has listed devices;
  * - `unlisted` when it listed no entry of the kind at all, which means either
  *   that there is no such device or that the browser does not list the kind
- *   (Safari and Firefox do not list audio outputs) — enumeration cannot tell
- *   the two apart;
+ *   (not every browser lists audio outputs; Safari, as far as is known, does
+ *   not) — enumeration cannot tell the two apart. Where there are no media
+ *   devices at all, every kind is unlisted;
  * - `hidden` while it lists the kind's entries without ids, as it does until
  *   permission is granted;
  * - `listed` once it names them: the devices a page can choose, each once,
@@ -169,7 +196,9 @@ export class MediaDeviceContext {
 	}
 
 	constructor(options?: MediaDeviceContextOptions) {
-		this.#mediaDevices = options?.mediaDevices ?? globalThis.navigator?.mediaDevices;
+		this.#mediaDevices = options?.mediaDevices === undefined
+			? globalThis.navigator?.mediaDevices
+			: options.mediaDevices ?? undefined;
 		this.#permissionTimeoutMs = options?.permissionTimeoutMs;
 		this.#clock = options?.clock ?? new TimerClock();
 
@@ -219,8 +248,10 @@ export class MediaDeviceContext {
 	async #enumerate(): Promise<void> {
 		const media = this.#mediaDevices;
 		if (media === undefined || typeof media.enumerateDevices !== "function") {
+			// Nothing can be listed: every kind is known to have no entry.
 			this.#devices = [];
-			this.#lists = new Map();
+			this.#lists = new Map(LISTED_KINDS.map((kind) => [kind, EMPTY_LIST]));
+			this.#notify(this.#devices);
 			return;
 		}
 
@@ -385,11 +416,6 @@ export class MediaDeviceContext {
 			const stream = await this.requestStream(
 				kind === "audio" ? { audio: true } : { video: true },
 			);
-			if (stream === undefined) {
-				console.warn(`The ${kind} permission prompt was not answered in time`);
-				return false;
-			}
-
 			this.#permissions.set(kind, true);
 			stopTracks(stream);
 
@@ -403,14 +429,17 @@ export class MediaDeviceContext {
 	}
 
 	/**
-	 * requestStream asks the media devices for a stream, which may take a
-	 * permission prompt. It resolves undefined when no answer comes within the
-	 * permission timeout; getUserMedia cannot be aborted, so a stream granted
-	 * after that is stopped as it arrives, and the devices are read again. It
-	 * rejects with the browser's error when the request is refused, and when
-	 * there are no media devices to ask.
+	 * requestStream asks the media devices for a stream. While permission for
+	 * a kind it asks for is not known to be granted, the request may wait on
+	 * a permission prompt, so it is bounded by the permission timeout: it then
+	 * rejects with a PermissionTimeoutError, and since getUserMedia cannot be
+	 * aborted, a stream granted later is stopped as it arrives (and the devices
+	 * are read again). With permission granted it waits for the device as long
+	 * as it takes, since a device may be slow to start. It rejects with the
+	 * browser's error when the request is refused, and with an Error when there
+	 * are no media devices to ask.
 	 */
-	async requestStream(constraints: MediaStreamConstraints): Promise<MediaStream | undefined> {
+	async requestStream(constraints: MediaStreamConstraints): Promise<MediaStream> {
 		const media = this.#mediaDevices;
 		if (media === undefined || typeof media.getUserMedia !== "function") {
 			throw new Error("getUserMedia is not available in this environment");
@@ -418,23 +447,23 @@ export class MediaDeviceContext {
 
 		// An async function: a getUserMedia that throws at once rejects it, like a refusal.
 		const asked = media.getUserMedia(constraints);
-		const timeout = this.#clock.timeout(
-			this.#permissionTimeoutMs ?? MediaDeviceContext.GET_USER_MEDIA_TIMEOUT,
-		);
+		if (kindsOf(constraints).every((kind) => this.hasPermission(kind))) return asked;
+
+		const timeoutMs = this.#permissionTimeoutMs ?? MediaDeviceContext.GET_USER_MEDIA_TIMEOUT;
+		const timeout = this.#clock.timeout(timeoutMs);
 		try {
 			const stream = await Promise.race([asked, timeout.expired.then(() => undefined)]);
-			if (stream === undefined) {
-				asked.then(
-					(late) => {
-						stopTracks(late);
-						// The grant names the devices, as one in time would.
-						void this.updateDevices();
-					},
-					// reason: a request refused after the timeout changes nothing; undefined was returned.
-					() => {},
-				);
-			}
-			return stream;
+			if (stream !== undefined) return stream;
+			asked.then(
+				(late) => {
+					stopTracks(late);
+					// The grant names the devices, as one in time would.
+					void this.updateDevices();
+				},
+				// reason: a request refused after the timeout changes nothing; it already failed.
+				() => {},
+			);
+			throw new PermissionTimeoutError(timeoutMs);
 		} finally {
 			timeout.cancel();
 		}
@@ -490,6 +519,11 @@ export class Device<K extends "audio" | "video"> {
 	enabled: boolean;
 	constraints: MediaTrackConstraints | undefined;
 	preferred: string | undefined;
+	/**
+	 * The device in use: the one the live track records from while a track is
+	 * open, and otherwise the preferred device or, failing that, the system
+	 * default.
+	 */
 	activeDeviceId: string | undefined;
 	onTrackEnded?: (reason: string) => void;
 	onDefaultChange?: (deviceId: string) => void;
@@ -517,21 +551,26 @@ export class Device<K extends "audio" | "video"> {
 		// Subscribe to device changes
 		this.#unsubscribe = this.context.subscribe(() => this.#devicesChanged());
 
-		// Set initial activeDeviceId
 		this.#knownDefault = this.defaultDeviceId;
-		this.activeDeviceId = this.preferred || this.#knownDefault;
+		this.#resolveActive();
+	}
+
+	/** resolveActive names the device the next track opens on: the preferred one, or the default. */
+	#resolveActive(): void {
+		this.activeDeviceId = this.preferred || this.defaultDeviceId;
 	}
 
 	/**
-	 * devicesChanged follows a new enumeration: the active device is the
-	 * preferred one or else the system default, and a default that moved
+	 * devicesChanged follows a new enumeration: with no live track, the active
+	 * device is the preferred one or else the system default (a live track
+	 * keeps naming the device it records from), and a default that moved
 	 * while it is followed is reported.
 	 */
 	#devicesChanged(): void {
 		const previous = this.#knownDefault;
 		const next = this.defaultDeviceId;
 		this.#knownDefault = next;
-		this.activeDeviceId = this.preferred || next;
+		if (this.stream === undefined) this.#resolveActive();
 
 		if (this.preferred) return;
 		// A default first learned, or lost with every device, is no move.
@@ -554,19 +593,31 @@ export class Device<K extends "audio" | "video"> {
 		return this.#stream?.readyState === "ended" ? undefined : this.#stream;
 	}
 
-	/** Set current stream */
+	/** Set current stream; clearing it makes the active device the one the next track opens on. */
 	set stream(track: MediaStreamTrack | undefined) {
 		this.#stream = track;
+		if (track === undefined) this.#resolveActive();
 	}
 
 	/**
 	 * Stop current track.
 	 */
 	stop(): void {
-		if (this.#stream) {
-			this.#stream.stop();
-			this.#stream = undefined;
-		}
+		this.#stream?.stop();
+		this.stream = undefined;
+	}
+
+	/**
+	 * trackConstraints are the constraints to open a track with: the
+	 * preferred device by its id, and the configured constraints. A device
+	 * that follows the default names none, so the browser opens the default
+	 * as it is now rather than one an enumeration last saw.
+	 */
+	trackConstraints(): MediaTrackConstraints {
+		return {
+			...(this.preferred ? { deviceId: { exact: this.preferred } } : {}),
+			...(this.constraints ?? {}),
+		};
 	}
 
 	/**
@@ -577,10 +628,8 @@ export class Device<K extends "audio" | "video"> {
 	 */
 	async switchDevice(deviceId: string | undefined): Promise<void> {
 		this.preferred = deviceId;
-		this.activeDeviceId = deviceId || this.defaultDeviceId;
-
-		// Stop current stream
 		this.stop();
+		this.#resolveActive();
 	}
 
 	/**

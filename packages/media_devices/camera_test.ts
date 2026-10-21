@@ -53,8 +53,35 @@ Deno.test("Camera", async (t) => {
 			const track = await camera.getVideoTrack();
 			const settings = track.getSettings();
 			assertEquals(settings.deviceId, "vid1");
-			// The device is named once permission reveals it.
-			assertEquals(track.getConstraints(), { deviceId: { exact: "vid1" }, width: 1080 });
+			// Following the default camera names no device.
+			assertEquals(track.getConstraints(), { width: 1080 });
+		});
+
+		await t.step("opens a preferred camera by its id", async () => {
+			const fake = new FakeMediaDevices([
+				{ kind: "videoinput", label: "Camera 1", deviceId: "vid1" },
+				{ kind: "videoinput", label: "Camera 2", deviceId: "vid2" },
+			]);
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
+			const camera = new Camera(ctx, { enabled: true, preferred: "vid2" });
+
+			const track = await camera.getVideoTrack();
+
+			assertEquals(track.getSettings().deviceId, "vid2");
+		});
+
+		await t.step("opens the browser's default camera when none is preferred", async () => {
+			const fake = new FakeMediaDevices([
+				{ kind: "videoinput", label: "Built-in Camera", deviceId: "vid1" },
+				{ kind: "videoinput", label: "USB Camera", deviceId: "vid2" },
+			]);
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
+			await ctx.requestPermission("video");
+			const camera = new Camera(ctx, { enabled: true });
+
+			const track = await camera.getVideoTrack();
+
+			assertEquals(track.getConstraints().deviceId, undefined);
 		});
 
 		await t.step("returns cached track on subsequent calls", async () => {

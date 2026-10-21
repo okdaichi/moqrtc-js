@@ -29,6 +29,32 @@ export interface VolumeGainNode {
 
 const MS_PER_SECOND = 1000;
 
+/**
+ * Fade is the gain curve the controller last scheduled: an exponential ramp
+ * from `from` at `start` to `ramp` at `end`, after which the gain is
+ * `settled` (0 for a fade into silence, which ramps only to minGain).
+ */
+interface Fade {
+	readonly start: number;
+	readonly end: number;
+	readonly from: number;
+	readonly ramp: number;
+	readonly settled: number;
+}
+
+/** steady is a gain held at value from time on. */
+function steady(value: number, time: number): Fade {
+	return { start: time, end: time, from: value, ramp: value, settled: value };
+}
+
+/** gainAt is the gain fade gives at time t. */
+function gainAt(fade: Fade, t: number): number {
+	if (t >= fade.end) return fade.settled;
+	if (t <= fade.start) return fade.from;
+	const progress = (t - fade.start) / (fade.end - fade.start);
+	return fade.from * (fade.ramp / fade.from) ** progress;
+}
+
 export class VolumeController {
 	static readonly DEFAULT_VOLUME = 0.5;
 	static readonly DEFAULT_MIN_GAIN = 0.001;
@@ -37,10 +63,11 @@ export class VolumeController {
 	readonly gainNode: VolumeGainNode;
 	#muted = false;
 	/**
-	 * The gain the controller last asked for: where a fade is heading, not
-	 * where it is. 0 while muted.
+	 * The curve last scheduled. A fade starts from the gain this curve gives
+	 * now, not from `gain.value`, which a browser updates only as it renders
+	 * (right after scheduling it can still read the param's default, 1).
 	 */
-	#target: number;
+	#fade: Fade;
 	#unmuteVolume: number;
 	#defaultVolume: number;
 	#minGain: number;
@@ -85,7 +112,7 @@ export class VolumeController {
 		this.#defaultVolume = normalizedDefaultVolume;
 		this.#minGain = normalizedMinGain;
 		this.#fadeSeconds = normalizedFadeTimeMs / MS_PER_SECOND;
-		this.#target = clampedInitial;
+		this.#fade = steady(clampedInitial, now);
 		this.#unmuteVolume = clampedInitial === 0 ? normalizedDefaultVolume : clampedInitial;
 	}
 
@@ -100,25 +127,25 @@ export class VolumeController {
 	 * then drops to 0.
 	 */
 	#rampTo(target: number): void {
-		this.#target = target;
 		const gainParam = this.gainNode.gain;
 		const now = this.gainNode.context.currentTime;
 		const end = now + this.#fadeSeconds;
-		const from = gainParam.value;
+		const current = gainAt(this.#fade, now);
 
 		gainParam.cancelScheduledValues(now);
-		if (from < this.#minGain && target < this.#minGain) {
+		if (current < this.#minGain && target < this.#minGain) {
 			gainParam.setValueAtTime(0, now);
+			this.#fade = steady(0, now);
 			return;
 		}
 
-		gainParam.setValueAtTime(Math.max(from, this.#minGain), now);
-		if (target < this.#minGain) {
-			gainParam.exponentialRampToValueAtTime(this.#minGain, end);
-			gainParam.setValueAtTime(0, end);
-		} else {
-			gainParam.exponentialRampToValueAtTime(target, end);
-		}
+		const from = Math.max(current, this.#minGain);
+		const ramp = Math.max(target, this.#minGain);
+		gainParam.setValueAtTime(from, now);
+		gainParam.exponentialRampToValueAtTime(ramp, end);
+		const settled = target < this.#minGain ? 0 : target;
+		if (settled === 0) gainParam.setValueAtTime(0, end);
+		this.#fade = { start: now, end, from, ramp, settled };
 	}
 
 	/**
@@ -140,8 +167,8 @@ export class VolumeController {
 
 		if (m) {
 			// The volume faded to, not the gain mid-fade, is what unmuting restores.
-			if (this.#target > 0) {
-				this.#unmuteVolume = this.#target;
+			if (this.#fade.settled > 0) {
+				this.#unmuteVolume = this.#fade.settled;
 			}
 			this.#rampTo(0);
 		} else {
@@ -156,6 +183,6 @@ export class VolumeController {
 
 	/** The gain asked for: where a fade is heading, and 0 while muted. */
 	get volume(): number {
-		return this.#target;
+		return this.#fade.settled;
 	}
 }

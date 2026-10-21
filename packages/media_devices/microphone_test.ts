@@ -177,7 +177,7 @@ Deno.test("Microphone", async (t) => {
 		}
 
 		await st.step("rejects as failed where the browser has no media devices", async () => {
-			const context = new MediaDeviceContext();
+			const context = new MediaDeviceContext({ mediaDevices: null });
 			const mic = new Microphone(context, { enabled: true });
 
 			const error = await assertRejects(() => mic.getAudioTrack(), MicrophoneError);
@@ -343,6 +343,152 @@ Deno.test("Microphone", async (t) => {
 			const error = await assertRejects(() => opening, MicrophoneError);
 			assertEquals(error.reason, "aborted");
 		});
+
+		await st.step("rejects a refused open overtaken by switchDevice as aborted", async () => {
+			const fake = new FakeMediaDevices(devices);
+			const prompt = Promise.withResolvers<void>();
+			fake.answer = prompt.promise;
+			fake.failure = new DOMException("Permission denied", "NotAllowedError");
+			const context = new MediaDeviceContext({ mediaDevices: fake });
+			const mic = new Microphone(context, { enabled: true });
+			const opening = mic.getAudioTrack();
+			await mic.switchDevice("mic-2");
+
+			prompt.resolve();
+
+			const error = await assertRejects(() => opening, MicrophoneError);
+			assertEquals(error.reason, "aborted");
+		});
+
+		await st.step("rejects a timed-out open overtaken by close as aborted", async () => {
+			const fake = new FakeMediaDevices(devices);
+			fake.answer = new Promise(() => {});
+			const clock = new FakeClock();
+			const context = new MediaDeviceContext({ mediaDevices: fake, clock });
+			const mic = new Microphone(context, { enabled: true });
+			const opening = mic.getAudioTrack();
+			mic.close();
+
+			clock.fire();
+
+			const error = await assertRejects(() => opening, MicrophoneError);
+			assertEquals(error.reason, "aborted");
+		});
+
+		await st.step("rejects an open overtaken by disabling as aborted", async () => {
+			const fake = new FakeMediaDevices(devices);
+			const prompt = Promise.withResolvers<void>();
+			fake.answer = prompt.promise;
+			const context = new MediaDeviceContext({ mediaDevices: fake });
+			const mic = new Microphone(context, { enabled: true });
+			const opening = mic.getAudioTrack();
+			mic.enabled = false;
+
+			prompt.resolve();
+
+			const error = await assertRejects(() => opening, MicrophoneError);
+			assertEquals(error.reason, "aborted");
+		});
+
+		await st.step(
+			"rejects an open overtaken by a new preferred device as aborted",
+			async () => {
+				const fake = new FakeMediaDevices(devices);
+				const prompt = Promise.withResolvers<void>();
+				fake.answer = prompt.promise;
+				const context = new MediaDeviceContext({ mediaDevices: fake });
+				const mic = new Microphone(context, { enabled: true });
+				const opening = mic.getAudioTrack();
+				mic.preferred = "mic-2";
+
+				prompt.resolve();
+
+				const error = await assertRejects(() => opening, MicrophoneError);
+				assertEquals(error.reason, "aborted");
+			},
+		);
+
+		await st.step("waits for a slow microphone once permission is granted", async () => {
+			const fake = new FakeMediaDevices(devices);
+			const clock = new FakeClock();
+			const context = new MediaDeviceContext({ mediaDevices: fake, clock });
+			await context.requestPermission("audio");
+			const mic = new Microphone(context, { enabled: true });
+			const waking = Promise.withResolvers<void>();
+			fake.answer = waking.promise;
+			const opening = mic.getAudioTrack();
+			clock.fire();
+
+			waking.resolve();
+
+			assertEquals((await opening).readyState, "live");
+		});
+	});
+
+	await t.step("track ended", async (st) => {
+		await st.step("reports a track that ended to onTrackEnded", async () => {
+			const fake = new FakeMediaDevices(devices);
+			const context = new MediaDeviceContext({ mediaDevices: fake });
+			const reasons: string[] = [];
+			const mic = new Microphone(context, {
+				enabled: true,
+				onTrackEnded: (reason) => reasons.push(reason),
+			});
+			await mic.getAudioTrack();
+
+			fake.granted[0]?.end();
+
+			assertEquals(reasons, ["Device disconnected or track ended"]);
+		});
+
+		await st.step("opens a new track after the live one ended", async () => {
+			const fake = new FakeMediaDevices(devices);
+			const context = new MediaDeviceContext({ mediaDevices: fake });
+			const mic = new Microphone(context, { enabled: true });
+			const ended = await mic.getAudioTrack();
+			fake.granted[0]?.end();
+
+			const track = await mic.getAudioTrack();
+
+			assertEquals(track !== ended && track.readyState === "live", true);
+		});
+	});
+
+	await t.step("activeDeviceId", async (st) => {
+		// The browser opens mic-1; the system default then moves to mic-2.
+		const movedToUsb = [
+			...devices,
+			{
+				kind: "audioinput" as MediaDeviceKind,
+				label: "Default - External USB Mic",
+				deviceId: "default",
+			},
+		];
+
+		await st.step("names the live track's device when the default moves", async () => {
+			const fake = new FakeMediaDevices(devices);
+			const context = new MediaDeviceContext({ mediaDevices: fake });
+			const mic = new Microphone(context, { enabled: true });
+			await mic.getAudioTrack();
+			fake.setDevices(movedToUsb);
+
+			await context.updateDevices();
+
+			assertEquals(mic.activeDeviceId, "mic-1");
+		});
+
+		await st.step("names the default again once the live track ended", async () => {
+			const fake = new FakeMediaDevices(devices);
+			const context = new MediaDeviceContext({ mediaDevices: fake });
+			const mic = new Microphone(context, { enabled: true });
+			await mic.getAudioTrack();
+			fake.setDevices(movedToUsb);
+			await context.updateDevices();
+
+			fake.granted[0]?.end();
+
+			assertEquals(mic.activeDeviceId, "mic-2");
+		});
 	});
 
 	await t.step("switchDevice", async (st) => {
@@ -440,38 +586,31 @@ Deno.test("Microphone", async (t) => {
 			assertEquals(track.readyState, "ended");
 		});
 
-		await st.step("clears track reference after closing", async () => {
+		await st.step("rejects a track asked for after close", async () => {
 			const fake = new FakeMediaDevices(devices);
 			const context = new MediaDeviceContext({ mediaDevices: fake });
 			const mic = new Microphone(context, { enabled: true });
-
 			await mic.getAudioTrack();
 			mic.close();
 
-			mic.enabled = true; // RE-enable
-			const track2 = await mic.getAudioTrack(); // should create new track
-			assertExists(track2);
-			assertEquals(track2.readyState, "live");
+			await assertRejects(() => mic.getAudioTrack(), Error, "Microphone is closed");
 		});
 	});
 
 	await t.step("Integration scenarios", async (st) => {
-		await st.step("enable/disable workflow", async () => {
+		await st.step("hands back the live track once enabled again", async () => {
 			const fake = new FakeMediaDevices(devices);
 			const context = new MediaDeviceContext({ mediaDevices: fake });
 			const mic = new Microphone(context, { enabled: true });
 
 			const track = await mic.getAudioTrack();
-			assertEquals(track.readyState, "live");
-
 			mic.enabled = false;
-			mic.close();
-			assertEquals(track.readyState, "ended");
+			await assertRejects(() => mic.getAudioTrack(), Error, "Microphone is not enabled");
 
 			mic.enabled = true;
-			const newTrack = await mic.getAudioTrack();
-			assertEquals(newTrack.readyState, "live");
-			assertEquals(newTrack !== track, true);
+			const again = await mic.getAudioTrack();
+
+			assertEquals(again === track, true);
 		});
 
 		await st.step("constraints updates", async () => {

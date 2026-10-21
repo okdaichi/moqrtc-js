@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertAlmostEquals, assertEquals } from "@std/assert";
 import { VolumeController, type VolumeGainNode, type VolumeParam } from "./volume.ts";
 
 /** A value the fake param was told to reach: at once ("set") or by a ramp. */
@@ -10,10 +10,11 @@ interface ScheduledValue {
 
 /**
  * FakeAudioParam records the values scheduled on it. Like a browser's, its
- * value is the one reached by the clock's current time: a set value from its
- * time on, a ramp's target only from its end time on (the ramp itself is not
- * interpolated). Like a browser, it rejects an exponential ramp to a value
- * that is not positive.
+ * value changes only as audio renders: it reads the param's default (1)
+ * until render() is called, which takes the value reached by the clock's
+ * current time — a set value from its time on, a ramp's target only from its
+ * end time on (the ramp itself is not interpolated). Like a browser, it
+ * rejects an exponential ramp to a value that is not positive.
  */
 class FakeAudioParam implements VolumeParam {
 	/** Every value scheduled, in order, including ones cancelled since. */
@@ -21,19 +22,30 @@ class FakeAudioParam implements VolumeParam {
 	readonly #clock: { readonly currentTime: number };
 	#timeline: ScheduledValue[] = [];
 	#base: number;
+	#rendered: number;
 
-	constructor(clock: { readonly currentTime: number }, initialValue = 1.0) {
+	constructor(clock: { readonly currentTime: number }, defaultValue = 1.0) {
 		this.#clock = clock;
-		this.#base = initialValue;
+		this.#base = defaultValue;
+		this.#rendered = defaultValue;
 	}
 
 	get value(): number {
+		return this.#rendered;
+	}
+
+	/** render brings value up to the clock's current time, as rendering audio does. */
+	render(): void {
+		this.#rendered = this.#reached();
+	}
+
+	#reached(): number {
 		const reached = this.#timeline.filter((s) => s.time <= this.#clock.currentTime);
 		return reached.at(-1)?.value ?? this.#base;
 	}
 
 	cancelScheduledValues(cancelTime: number): this {
-		this.#base = this.value;
+		this.#base = this.#reached();
 		this.#timeline = this.#timeline.filter((s) => s.time < cancelTime);
 		return this;
 	}
@@ -109,6 +121,26 @@ Deno.test("VolumeController", async (t) => {
 				{ kind: "set", value: 0.5, time: 10 },
 				{ kind: "ramp", value: 0.3, time: 10.08 },
 			]);
+		});
+
+		await t.step("starts the first fade from the initial volume before any render", () => {
+			const { controller, node } = controllerOn();
+
+			controller.setVolume(0.8);
+
+			assertEquals(lastFade(node.gain)[0], { kind: "set", value: 0.5, time: 0 });
+		});
+
+		await t.step("starts a fade mid-fade from the gain the curve has reached", () => {
+			const { controller, node } = controllerOn();
+			controller.setVolume(0.8);
+			node.context.currentTime = 0.04;
+			node.gain.render();
+
+			controller.setVolume(0.2);
+
+			// Halfway along the exponential ramp from 0.5 to 0.8.
+			assertAlmostEquals(lastFade(node.gain)[0]?.value ?? NaN, Math.sqrt(0.5 * 0.8));
 		});
 
 		await t.step("takes the fade time in milliseconds", () => {
@@ -239,6 +271,7 @@ Deno.test("VolumeController", async (t) => {
 			controller.setVolume(0.8);
 
 			node.context.currentTime = 1;
+			node.gain.render();
 
 			assertEquals(node.gain.value, 0);
 		});

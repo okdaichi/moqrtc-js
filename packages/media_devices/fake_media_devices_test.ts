@@ -1,6 +1,11 @@
 import type { Clock, Timeout } from "./device.ts";
 
-export class FakeMediaStreamTrack implements MediaStreamTrack {
+/**
+ * FakeMediaStreamTrack is a track a fake device handed out. Like a browser's,
+ * stopping it fires no event; end() ends it as a device going away does,
+ * firing "ended".
+ */
+export class FakeMediaStreamTrack extends EventTarget implements MediaStreamTrack {
 	id: string = crypto.randomUUID();
 	kind: string;
 	label: string;
@@ -25,6 +30,7 @@ export class FakeMediaStreamTrack implements MediaStreamTrack {
 		deviceId: string,
 		constraints?: MediaTrackConstraints,
 	) {
+		super();
 		this.#constraints = constraints || {};
 		this.kind = kind;
 		this.label = label;
@@ -37,6 +43,12 @@ export class FakeMediaStreamTrack implements MediaStreamTrack {
 	stop(): void {
 		this.readyState = "ended";
 		this.#stopped.resolve();
+	}
+
+	/** end ends the track as unplugging its device does: it fires "ended". */
+	end(): void {
+		this.readyState = "ended";
+		this.dispatchEvent(new Event("ended"));
 	}
 
 	/** Settles once the track is stopped. */
@@ -54,11 +66,6 @@ export class FakeMediaStreamTrack implements MediaStreamTrack {
 	}
 	async applyConstraints(constraints?: MediaTrackConstraints): Promise<void> {
 		this.#constraints = constraints || {};
-	}
-	addEventListener() {}
-	removeEventListener() {}
-	dispatchEvent(): boolean {
-		return true;
 	}
 }
 

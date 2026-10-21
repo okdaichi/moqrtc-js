@@ -1,4 +1,4 @@
-import { Device, MediaDeviceContext } from "./device.ts";
+import { Device, MediaDeviceContext, PermissionTimeoutError } from "./device.ts";
 import { isAliasDeviceId, stopTracks } from "./internal.ts";
 
 export interface MicrophoneProps {
@@ -23,8 +23,8 @@ export interface MicrophoneProps {
  * - `busy`: another application holds it, or the system could not start it;
  * - `timeout`: the permission prompt was not answered within the context's
  *   permission timeout (a microphone granted later is stopped at once);
- * - `aborted`: switchDevice or close was called while it was opening, so the
- *   track it opened was stopped;
+ * - `aborted`: while it was opening, switchDevice or close was called, or
+ *   `enabled` or `preferred` was changed; a track it opened was stopped;
  * - `failed`: anything else.
  */
 export type MicrophoneFailure = "blocked" | "missing" | "busy" | "timeout" | "aborted" | "failed";
@@ -56,11 +56,21 @@ const FAILURE_BY_ERROR_NAME: ReadonlyMap<string, MicrophoneFailure> = new Map([
 /** microphoneErrorOf names why the microphone did not open. */
 function microphoneErrorOf(error: unknown): MicrophoneError {
 	if (error instanceof MicrophoneError) return error;
+	if (error instanceof PermissionTimeoutError) {
+		return new MicrophoneError("timeout", error.message, { cause: error });
+	}
 	if (error instanceof Error) {
 		const reason = FAILURE_BY_ERROR_NAME.get(error.name) ?? "failed";
 		return new MicrophoneError(reason, error.message, { cause: error });
 	}
 	return new MicrophoneError("failed", "Failed to obtain microphone track", { cause: error });
+}
+
+/** abortedBy is the error of an open abandoned while it ran; cause is how it ended, if it failed. */
+function abortedBy(cause: unknown): MicrophoneError {
+	return new MicrophoneError("aborted", "The microphone open was abandoned while it ran", {
+		cause,
+	});
 }
 
 /**
@@ -77,8 +87,12 @@ export class Microphone {
 	readonly #device: Device<"audio">;
 	/** The open in flight, which concurrent getAudioTrack calls share. */
 	#opening: Promise<MediaStreamTrack> | undefined;
-	/** Counts switches and closes: an open that started before one is stale. */
+	/**
+	 * Counts switches, closes and changes of `enabled` and `preferred`: an open
+	 * that started before one is stale.
+	 */
 	#generation = 0;
+	#closed = false;
 
 	constructor(context: MediaDeviceContext, props?: MicrophoneProps) {
 		this.#device = new Device(context, "audio", {
@@ -98,7 +112,9 @@ export class Microphone {
 	get enabled(): boolean {
 		return this.#device.enabled;
 	}
+	/** Disabling the microphone abandons an open in flight. */
 	set enabled(value: boolean) {
+		if (!value) this.#abandonOpen();
 		this.#device.enabled = value;
 	}
 	get constraints(): MediaTrackConstraints | undefined {
@@ -110,7 +126,12 @@ export class Microphone {
 	get preferred(): string | undefined {
 		return this.#device.preferred;
 	}
+	/**
+	 * Setting the preferred device abandons an open in flight; unlike
+	 * switchDevice, it leaves a live track open on its device.
+	 */
 	set preferred(value: string | undefined) {
+		if (value !== this.#device.preferred) this.#abandonOpen();
 		this.#device.preferred = value;
 	}
 	get activeDeviceId(): string | undefined {
@@ -147,8 +168,12 @@ export class Microphone {
 		return this.#device.updateConstraints(constraints);
 	}
 
-	/** close stops the live track and abandons an open in flight. */
+	/**
+	 * close stops the live track and abandons an open in flight. A closed
+	 * microphone opens no more tracks.
+	 */
 	close(): void {
+		this.#closed = true;
 		this.#abandonOpen();
 		this.#device.close();
 	}
@@ -162,12 +187,15 @@ export class Microphone {
 	 * getAudioTrack hands out the live microphone track, opening one when
 	 * there is none; calls made while it opens share that open. A preferred
 	 * microphone is opened by its id; one that follows the system default is
-	 * left to the browser, which opens the default as it is now. A disabled
-	 * microphone throws a plain Error: that is the caller's mistake, not a
-	 * microphone that failed. One that cannot be opened rejects with a
-	 * MicrophoneError saying why.
+	 * left to the browser, which opens the default as it is now. A closed or
+	 * disabled microphone rejects with a plain Error: that is the caller's
+	 * mistake, not a microphone that failed. One that cannot be opened rejects
+	 * with a MicrophoneError saying why.
 	 */
 	getAudioTrack(): Promise<MediaStreamTrack> {
+		if (this.#closed) {
+			return Promise.reject(new Error("Microphone is closed"));
+		}
 		if (!this.#device.enabled) {
 			return Promise.reject(new Error("Microphone is not enabled"));
 		}
@@ -184,30 +212,17 @@ export class Microphone {
 	}
 
 	async #open(generation: number): Promise<MediaStreamTrack> {
-		const preferred = this.#device.preferred;
-		const constraints: MediaStreamConstraints = {
-			audio: {
-				...(preferred ? { deviceId: { exact: preferred } } : {}),
-				...(this.#device.constraints ?? {}),
-			},
-		};
-
 		const context = this.#device.context;
-		let stream: MediaStream | undefined;
+		let stream: MediaStream;
 		try {
-			stream = await context.requestStream(constraints);
+			stream = await context.requestStream({ audio: this.#device.trackConstraints() });
 		} catch (error) {
-			throw microphoneErrorOf(error);
-		}
-		if (stream === undefined) {
-			throw new MicrophoneError("timeout", "The microphone prompt was not answered in time");
+			// An open abandoned meanwhile is reported as such, however it ended.
+			throw generation === this.#generation ? microphoneErrorOf(error) : abortedBy(error);
 		}
 		if (generation !== this.#generation) {
 			stopTracks(stream);
-			throw new MicrophoneError(
-				"aborted",
-				"The microphone was switched or closed while opening",
-			);
+			throw abortedBy(undefined);
 		}
 
 		const track = stream.getAudioTracks()[0];

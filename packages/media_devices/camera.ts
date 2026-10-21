@@ -108,24 +108,11 @@ export class Camera {
 
 		if (this.#device.stream) return this.#device.stream;
 
-		// Permission names the devices, so the default camera can be chosen.
-		await this.#device.context.requestPermission(this.#device.kind);
-
-		const deviceIdConstraint: MediaTrackConstraints = this.#device.activeDeviceId
-			? { deviceId: { exact: this.#device.activeDeviceId } }
-			: {};
-
-		const constraints: MediaStreamConstraints = {
-			video: {
-				...deviceIdConstraint,
-				...(this.#device.constraints ?? {}),
-			},
-		};
-
-		const stream = await this.#device.context.requestStream(constraints);
-		if (stream === undefined) {
-			throw new Error("The camera prompt was not answered in time");
-		}
+		// A preferred camera is opened by its id; following the default names
+		// none, and the browser opens its default camera. A request that waits
+		// on an unanswered prompt rejects with a PermissionTimeoutError.
+		const context = this.#device.context;
+		const stream = await context.requestStream({ video: this.#device.trackConstraints() });
 
 		const track = stream.getVideoTracks()[0];
 		if (!track) {
@@ -148,6 +135,10 @@ export class Camera {
 		});
 
 		this.#device.stream = track;
+
+		// The first camera opened grants the permission the browser needs
+		// before it names devices.
+		if (!context.hasPermission("video")) void context.updateDevices();
 		return track;
 	}
 }

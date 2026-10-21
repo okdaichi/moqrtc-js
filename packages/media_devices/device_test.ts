@@ -398,6 +398,30 @@ Deno.test("MediaDeviceContext.listStatus", async (t) => {
 		assertEquals(context.listStatus("videoinput"), { status: "unlisted" });
 	});
 
+	await t.step("is unlisted for every kind where there are no media devices", async () => {
+		const context = new MediaDeviceContext({ mediaDevices: null });
+
+		await context.updateDevices();
+
+		assertEquals(
+			(["audioinput", "videoinput", "audiooutput"] as const).map((kind) =>
+				context.listStatus(kind).status
+			),
+			["unlisted", "unlisted", "unlisted"],
+		);
+	});
+
+	await t.step("tells listeners where there are no media devices", async () => {
+		const context = new MediaDeviceContext({ mediaDevices: null });
+		await context.updateDevices();
+		let heard = 0;
+		context.subscribe(() => heard++);
+
+		await context.updateDevices();
+
+		assertEquals(heard, 1);
+	});
+
 	await t.step("is unlisted for audio outputs a browser never lists", async () => {
 		const fake = new FakeMediaDevices(devices);
 		const context = new MediaDeviceContext({ mediaDevices: fake });
