@@ -1,4 +1,5 @@
 import { Device, MediaDeviceContext } from "./device.ts";
+import { stopTracks } from "./internal.ts";
 
 export interface CameraProps {
 	enabled?: boolean;
@@ -107,12 +108,8 @@ export class Camera {
 
 		if (this.#device.stream) return this.#device.stream;
 
-		// Ensure permissions are granted
-		try {
-			await this.#device.context.requestPermission(this.#device.kind);
-		} catch {
-			// requestPermission is best-effort; continue to try
-		}
+		// Permission names the devices, so the default camera can be chosen.
+		await this.#device.context.requestPermission(this.#device.kind);
 
 		const deviceIdConstraint: MediaTrackConstraints = this.#device.activeDeviceId
 			? { deviceId: { exact: this.#device.activeDeviceId } }
@@ -125,47 +122,32 @@ export class Camera {
 			},
 		};
 
-		const media = this.#device.context.mediaDevices;
-		if (media === undefined || typeof media.getUserMedia !== "function") {
-			throw new Error("getUserMedia is not available in this environment");
+		const stream = await this.#device.context.requestStream(constraints);
+		if (stream === undefined) {
+			throw new Error("The camera prompt was not answered in time");
 		}
 
-		let stream: MediaStream | undefined;
-		try {
-			stream = await media.getUserMedia(constraints);
-			const track = stream.getVideoTracks()[0];
-
-			if (!track) {
-				stream.getTracks().forEach((t) => t.stop());
-				throw new Error("Failed to obtain camera track");
-			}
-
-			// Update activeDeviceId from actual settings
-			const settings = track.getSettings();
-			if (settings?.deviceId) {
-				this.#device.activeDeviceId = settings.deviceId;
-			}
-
-			// Set up track ended listener
-			track.addEventListener("ended", () => {
-				// A live track that already replaced this one stays.
-				if (this.#device.stream) return;
-				this.#device.stream = undefined;
-				this.#device.onTrackEnded?.("Device disconnected or track ended");
-			});
-
-			this.#device.stream = track;
-			return track;
-		} catch (error) {
-			// Ensure any partial stream is stopped
-			stream?.getTracks().forEach((t) => {
-				try {
-					t.stop();
-				} catch {
-					// Ignore errors when stopping track
-				}
-			});
-			throw error instanceof Error ? error : new Error("Failed to obtain camera track");
+		const track = stream.getVideoTracks()[0];
+		if (!track) {
+			stopTracks(stream);
+			throw new Error("Failed to obtain camera track");
 		}
+
+		// Update activeDeviceId from actual settings
+		const settings = track.getSettings();
+		if (settings?.deviceId) {
+			this.#device.activeDeviceId = settings.deviceId;
+		}
+
+		// Set up track ended listener
+		track.addEventListener("ended", () => {
+			// A live track that already replaced this one stays.
+			if (this.#device.stream) return;
+			this.#device.stream = undefined;
+			this.#device.onTrackEnded?.("Device disconnected or track ended");
+		});
+
+		this.#device.stream = track;
+		return track;
 	}
 }

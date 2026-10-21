@@ -1,4 +1,5 @@
 import { Device, MediaDeviceContext } from "./device.ts";
+import { isAliasDeviceId, stopTracks } from "./internal.ts";
 
 export interface MicrophoneProps {
 	enabled?: boolean;
@@ -16,12 +17,17 @@ export interface MicrophoneProps {
 }
 
 /**
- * Why the microphone could not be opened: the browser or the user refused it
- * (`blocked`), there is no such microphone (`missing`), another application
- * holds it or the system could not start it (`busy`), or anything else
- * (`failed`).
+ * Why the microphone could not be opened:
+ * - `blocked`: the browser or the user refused it;
+ * - `missing`: there is no such microphone;
+ * - `busy`: another application holds it, or the system could not start it;
+ * - `timeout`: the permission prompt was not answered within the context's
+ *   permission timeout (a microphone granted later is stopped at once);
+ * - `aborted`: switchDevice or close was called while it was opening, so the
+ *   track it opened was stopped;
+ * - `failed`: anything else.
  */
-export type MicrophoneFailure = "blocked" | "missing" | "busy" | "failed";
+export type MicrophoneFailure = "blocked" | "missing" | "busy" | "timeout" | "aborted" | "failed";
 
 /**
  * MicrophoneError is why getAudioTrack could not open the microphone. The
@@ -69,6 +75,10 @@ function microphoneErrorOf(error: unknown): MicrophoneError {
  */
 export class Microphone {
 	readonly #device: Device<"audio">;
+	/** The open in flight, which concurrent getAudioTrack calls share. */
+	#opening: Promise<MediaStreamTrack> | undefined;
+	/** Counts switches and closes: an open that started before one is stale. */
+	#generation = 0;
 
 	constructor(context: MediaDeviceContext, props?: MicrophoneProps) {
 		this.#device = new Device(context, "audio", {
@@ -125,9 +135,11 @@ export class Microphone {
 	/**
 	 * switchDevice records deviceId as the microphone to use — or, given
 	 * undefined, follows the system default again — and stops the live track.
-	 * The next getAudioTrack opens the device switched to.
+	 * The next getAudioTrack opens the device switched to; an open still in
+	 * flight is abandoned, and rejects as `aborted`.
 	 */
 	async switchDevice(deviceId: string | undefined): Promise<void> {
+		this.#abandonOpen();
 		return this.#device.switchDevice(deviceId);
 	}
 
@@ -135,83 +147,95 @@ export class Microphone {
 		return this.#device.updateConstraints(constraints);
 	}
 
+	/** close stops the live track and abandons an open in flight. */
 	close(): void {
+		this.#abandonOpen();
 		this.#device.close();
 	}
 
+	#abandonOpen(): void {
+		this.#generation++;
+		this.#opening = undefined;
+	}
+
 	/**
-	 * getAudioTrack hands out the live microphone track, opening one through
-	 * the context's media devices when there is none. A microphone that
-	 * cannot be opened rejects with a MicrophoneError saying why.
+	 * getAudioTrack hands out the live microphone track, opening one when
+	 * there is none; calls made while it opens share that open. A preferred
+	 * microphone is opened by its id; one that follows the system default is
+	 * left to the browser, which opens the default as it is now. A disabled
+	 * microphone throws a plain Error: that is the caller's mistake, not a
+	 * microphone that failed. One that cannot be opened rejects with a
+	 * MicrophoneError saying why.
 	 */
-	async getAudioTrack(): Promise<MediaStreamTrack> {
+	getAudioTrack(): Promise<MediaStreamTrack> {
 		if (!this.#device.enabled) {
-			throw new Error("Microphone is not enabled");
+			return Promise.reject(new Error("Microphone is not enabled"));
 		}
 
-		if (this.#device.stream) return this.#device.stream;
+		const live = this.#device.stream;
+		if (live) return Promise.resolve(live);
+		if (this.#opening) return this.#opening;
 
-		// Ensure permissions are granted
-		try {
-			await this.#device.context.requestPermission(this.#device.kind);
-		} catch {
-			// requestPermission is best-effort; continue to try
-		}
+		const opening = this.#open(this.#generation).finally(() => {
+			if (this.#opening === opening) this.#opening = undefined;
+		});
+		this.#opening = opening;
+		return opening;
+	}
 
-		const deviceIdConstraint: MediaTrackConstraints = this.#device.activeDeviceId
-			? { deviceId: { exact: this.#device.activeDeviceId } }
-			: {};
-
+	async #open(generation: number): Promise<MediaStreamTrack> {
+		const preferred = this.#device.preferred;
 		const constraints: MediaStreamConstraints = {
 			audio: {
-				...deviceIdConstraint,
+				...(preferred ? { deviceId: { exact: preferred } } : {}),
 				...(this.#device.constraints ?? {}),
 			},
 		};
 
-		const media = this.#device.context.mediaDevices;
-		if (media === undefined || typeof media.getUserMedia !== "function") {
+		const context = this.#device.context;
+		let stream: MediaStream | undefined;
+		try {
+			stream = await context.requestStream(constraints);
+		} catch (error) {
+			throw microphoneErrorOf(error);
+		}
+		if (stream === undefined) {
+			throw new MicrophoneError("timeout", "The microphone prompt was not answered in time");
+		}
+		if (generation !== this.#generation) {
+			stopTracks(stream);
 			throw new MicrophoneError(
-				"failed",
-				"getUserMedia is not available in this environment",
+				"aborted",
+				"The microphone was switched or closed while opening",
 			);
 		}
 
-		let stream: MediaStream | undefined;
-		try {
-			stream = await media.getUserMedia(constraints);
-			const track = stream.getAudioTracks()[0];
-
-			if (!track) {
-				throw new MicrophoneError("failed", "Failed to obtain microphone track");
-			}
-
-			// Update activeDeviceId from actual settings
-			const settings = track.getSettings();
-			if (settings?.deviceId) {
-				this.#device.activeDeviceId = settings.deviceId;
-			}
-
-			// Set up track ended listener
-			track.addEventListener("ended", () => {
-				// A live track that already replaced this one stays.
-				if (this.#device.stream) return;
-				this.#device.stream = undefined;
-				this.#device.onTrackEnded?.("Device disconnected or track ended");
-			});
-
-			this.#device.stream = track;
-			return track;
-		} catch (error) {
-			// Ensure any partial stream is stopped
-			stream?.getTracks().forEach((t) => {
-				try {
-					t.stop();
-				} catch {
-					// Ignore errors when stopping track
-				}
-			});
-			throw microphoneErrorOf(error);
+		const track = stream.getAudioTracks()[0];
+		if (!track) {
+			stopTracks(stream);
+			throw new MicrophoneError("failed", "Failed to obtain microphone track");
 		}
+
+		// The device the track records from; an alias id ("default") names no
+		// device, so the default the context resolved stays.
+		const deviceId = track.getSettings().deviceId;
+		if (deviceId && !isAliasDeviceId(deviceId)) {
+			this.#device.activeDeviceId = deviceId;
+		}
+
+		// Set up track ended listener
+		track.addEventListener("ended", () => {
+			// A live track that already replaced this one stays.
+			if (this.#device.stream) return;
+			this.#device.stream = undefined;
+			this.#device.onTrackEnded?.("Device disconnected or track ended");
+		});
+
+		this.#device.stream = track;
+
+		// The first microphone opened grants the permission the browser needs
+		// before it names devices.
+		if (!context.hasPermission("audio")) void context.updateDevices();
+		return track;
 	}
 }

@@ -1,6 +1,6 @@
 import { assertEquals, assertExists } from "@std/assert";
 import { Device, MediaDeviceContext } from "./device.ts";
-import { FakeMediaDevices, setupFakeMediaDevices } from "./fake_media_devices_test.ts";
+import { FakeClock, FakeMediaDevices, setupFakeMediaDevices } from "./fake_media_devices_test.ts";
 
 const devices = [
 	{ kind: "audioinput" as MediaDeviceKind, label: "Mic", deviceId: "mic-1" },
@@ -266,9 +266,28 @@ Deno.test("MediaDeviceContext.requestPermission", async (t) => {
 	await t.step("resolves false when the prompt is not answered in time", async () => {
 		const fake = new FakeMediaDevices(devices);
 		fake.answer = new Promise(() => {});
-		const context = new MediaDeviceContext({ mediaDevices: fake, permissionTimeoutMs: 1 });
+		const clock = new FakeClock();
+		const context = new MediaDeviceContext({ mediaDevices: fake, clock });
+		const granted = context.requestPermission("audio");
 
-		assertEquals(await context.requestPermission("audio"), false);
+		clock.fire();
+
+		assertEquals(await granted, false);
+	});
+
+	await t.step("waits the permission timeout it was given", () => {
+		const fake = new FakeMediaDevices(devices);
+		fake.answer = new Promise(() => {});
+		const clock = new FakeClock();
+		const context = new MediaDeviceContext({
+			mediaDevices: fake,
+			clock,
+			permissionTimeoutMs: 1500,
+		});
+
+		void context.requestPermission("audio");
+
+		assertEquals(clock.started, [1500]);
 	});
 
 	await t.step("resolves false when permission is refused", async () => {
@@ -279,28 +298,59 @@ Deno.test("MediaDeviceContext.requestPermission", async (t) => {
 		assertEquals(await context.requestPermission("audio"), false);
 	});
 
-	await t.step("releases a stream granted after the timeout", async () => {
+	await t.step("resolves false when getUserMedia throws at once", async () => {
+		const fake = new FakeMediaDevices(devices);
+		fake.syncFailure = new TypeError("bad constraints");
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		assertEquals(await context.requestPermission("audio"), false);
+	});
+
+	await t.step("stops a stream granted after the timeout", async () => {
 		const fake = new FakeMediaDevices(devices);
 		const prompt = Promise.withResolvers<void>();
 		fake.answer = prompt.promise;
-		const context = new MediaDeviceContext({ mediaDevices: fake, permissionTimeoutMs: 1 });
-		await context.requestPermission("audio");
+		const clock = new FakeClock();
+		const context = new MediaDeviceContext({ mediaDevices: fake, clock });
+		const granted = context.requestPermission("audio");
+		clock.fire();
+		await granted;
 
 		prompt.resolve();
-		await new Promise((resolve) => setTimeout(resolve, 0));
+		const late = await fake.firstGrant;
+		await late.stopped;
 
-		assertEquals(fake.granted.map((track) => track.readyState), ["ended"]);
+		assertEquals(late.readyState, "ended");
 	});
 
 	await t.step("asks again after a prompt timed out", async () => {
 		const fake = new FakeMediaDevices(devices);
-		const prompt = Promise.withResolvers<void>();
-		fake.answer = prompt.promise;
-		const context = new MediaDeviceContext({ mediaDevices: fake, permissionTimeoutMs: 1 });
-		await context.requestPermission("audio");
+		fake.answer = new Promise(() => {});
+		const clock = new FakeClock();
+		const context = new MediaDeviceContext({ mediaDevices: fake, clock });
+		const first = context.requestPermission("audio");
+		clock.fire();
+		await first;
 		fake.answer = undefined;
 
 		assertEquals(await context.requestPermission("audio"), true);
+	});
+});
+
+Deno.test("MediaDeviceContext.subscribe", async (t) => {
+	await t.step("hands the devices to every listener when one throws", async () => {
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+		await context.updateDevices();
+		let heard = 0;
+		context.subscribe(() => {
+			throw new Error("listener failed");
+		});
+		context.subscribe(() => heard++);
+
+		await context.updateDevices();
+
+		assertEquals(heard, 1);
 	});
 });
 
@@ -339,17 +389,22 @@ Deno.test("MediaDeviceContext.listStatus", async (t) => {
 		);
 	});
 
-	await t.step("lists a kind the browser has no device of as empty", async () => {
+	await t.step("is unlisted for a kind the browser lists no entry of", async () => {
 		const fake = new FakeMediaDevices(windowsHeadset);
 		const context = new MediaDeviceContext({ mediaDevices: fake });
 
 		await context.updateDevices();
 
-		assertEquals(context.listStatus("videoinput"), {
-			status: "listed",
-			devices: [],
-			defaultDevice: undefined,
-		});
+		assertEquals(context.listStatus("videoinput"), { status: "unlisted" });
+	});
+
+	await t.step("is unlisted for audio outputs a browser never lists", async () => {
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		await context.requestPermission("audio");
+
+		assertEquals(context.listStatus("audiooutput"), { status: "unlisted" });
 	});
 
 	await t.step("is hidden for audio outputs until permission is granted", async () => {

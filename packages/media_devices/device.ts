@@ -1,3 +1,5 @@
+import { isAliasDeviceId, stopTracks } from "./internal.ts";
+
 /**
  * MediaDeviceAccess is the part of the browser's `navigator.mediaDevices` the
  * context and the devices made on it use. A page passes nothing and gets the
@@ -20,17 +22,45 @@ export interface MediaDeviceContextOptions {
 	 * `MediaDeviceContext.GET_USER_MEDIA_TIMEOUT`.
 	 */
 	permissionTimeoutMs?: number;
+	/** The clock the permission timeout runs on; defaults to the global timers. */
+	clock?: Clock;
+}
+
+/** Timeout is one running timeout: expired settles when it fires, unless cancelled first. */
+export interface Timeout {
+	readonly expired: Promise<void>;
+	cancel(): void;
+}
+
+/** Clock starts timeouts; tests supply one they fire by hand. */
+export interface Clock {
+	timeout(ms: number): Timeout;
+}
+
+/** TimerClock runs timeouts on the global setTimeout. */
+class TimerClock implements Clock {
+	timeout(ms: number): Timeout {
+		const { promise, resolve } = Promise.withResolvers<void>();
+		const id = globalThis.setTimeout(resolve, ms);
+		return { expired: promise, cancel: () => clearTimeout(id) };
+	}
 }
 
 /**
  * DeviceListStatus is what the context knows about one kind of device:
- * unknown until the browser has listed devices, hidden while it lists that
- * kind's entries without ids (as it does until permission is granted), and
- * then listed — the devices a page can choose, each once, and the one the
- * system uses by default. An empty listed list means there is no such device.
+ * - `unknown` until the browser has listed devices;
+ * - `unlisted` when it listed no entry of the kind at all, which means either
+ *   that there is no such device or that the browser does not list the kind
+ *   (Safari and Firefox do not list audio outputs) — enumeration cannot tell
+ *   the two apart;
+ * - `hidden` while it lists the kind's entries without ids, as it does until
+ *   permission is granted;
+ * - `listed` once it names them: the devices a page can choose, each once,
+ *   and the one the system uses by default.
  */
 export type DeviceListStatus =
 	| { readonly status: "unknown" }
+	| { readonly status: "unlisted" }
 	| { readonly status: "hidden" }
 	| {
 		readonly status: "listed";
@@ -38,33 +68,22 @@ export type DeviceListStatus =
 		readonly defaultDevice: MediaDeviceInfo | undefined;
 	};
 
-/**
- * The deviceIds a browser gives entries that follow a system choice rather
- * than name a device: Chrome lists the system default as "default" and, on
- * Windows, the communications device as "communications", each beside the
- * device it currently points at.
- */
-const ALIAS_DEVICE_IDS: ReadonlySet<string> = new Set(["default", "communications"]);
-
 /** The kinds of device the context lists. */
 const LISTED_KINDS: readonly MediaDeviceKind[] = ["audioinput", "videoinput", "audiooutput"];
 
 /**
  * DeviceList is what one enumeration says about one kind of device: the
  * devices a page can choose, each once, the one the system uses by default,
- * and whether the browser hid entries of the kind.
+ * and whether the browser listed the kind's entries at all, hid them, or
+ * named them.
  */
 interface DeviceList {
 	readonly devices: MediaDeviceInfo[];
 	readonly defaultDevice: MediaDeviceInfo | undefined;
-	readonly hidden: boolean;
+	readonly status: "unlisted" | "hidden" | "listed";
 }
 
-const EMPTY_LIST: DeviceList = { devices: [], defaultDevice: undefined, hidden: false };
-
-const UNKNOWN_STATUS: DeviceListStatus = { status: "unknown" };
-
-const HIDDEN_STATUS: DeviceListStatus = { status: "hidden" };
+const EMPTY_LIST: DeviceList = { devices: [], defaultDevice: undefined, status: "unlisted" };
 
 /**
  * listOf builds the DeviceList of kind from the browser's enumeration. Entries
@@ -76,7 +95,7 @@ const HIDDEN_STATUS: DeviceListStatus = { status: "hidden" };
 function listOf(all: readonly MediaDeviceInfo[], kind: MediaDeviceKind): DeviceList {
 	const ofKind = all.filter((d) => d.kind === kind);
 	const entries = ofKind.filter((d) => d.deviceId !== "");
-	const devices = entries.filter((d) => !ALIAS_DEVICE_IDS.has(d.deviceId));
+	const devices = entries.filter((d) => !isAliasDeviceId(d.deviceId));
 	const alias = entries.find((d) => d.deviceId === "default");
 	const pointed = alias === undefined
 		? undefined
@@ -84,13 +103,12 @@ function listOf(all: readonly MediaDeviceInfo[], kind: MediaDeviceKind): DeviceL
 	return {
 		devices,
 		defaultDevice: pointed ?? devices[0],
-		hidden: entries.length < ofKind.length,
+		status: ofKind.length === 0
+			? "unlisted"
+			: entries.length < ofKind.length
+			? "hidden"
+			: "listed",
 	};
-}
-
-/** stopTracks releases every track of stream. */
-function stopTracks(stream: MediaStream): void {
-	for (const track of stream.getTracks()) track.stop();
 }
 
 /**
@@ -118,6 +136,7 @@ function stopTracks(stream: MediaStream): void {
 export class MediaDeviceContext {
 	readonly #mediaDevices: MediaDeviceAccess | undefined;
 	readonly #permissionTimeoutMs: number | undefined;
+	readonly #clock: Clock;
 	#devices: MediaDeviceInfo[] = [];
 	#lists: Map<MediaDeviceKind, DeviceList> = new Map();
 	#permissions: Map<"audio" | "video", boolean> = new Map();
@@ -152,6 +171,7 @@ export class MediaDeviceContext {
 	constructor(options?: MediaDeviceContextOptions) {
 		this.#mediaDevices = options?.mediaDevices ?? globalThis.navigator?.mediaDevices;
 		this.#permissionTimeoutMs = options?.permissionTimeoutMs;
+		this.#clock = options?.clock ?? new TimerClock();
 
 		// Initial device enumeration
 		void this.updateDevices();
@@ -219,11 +239,21 @@ export class MediaDeviceContext {
 
 			if (hasAudioPermission) this.#permissions.set("audio", true);
 			if (hasVideoPermission) this.#permissions.set("video", true);
-
-			// Notify all listeners
-			this.#listeners.forEach((fn) => fn(devices));
 		} catch (error) {
 			console.warn("Failed to update devices:", error);
+			return;
+		}
+		this.#notify(this.#devices);
+	}
+
+	/** notify hands devices to every listener; one that throws holds up none of the others. */
+	#notify(devices: MediaDeviceInfo[]): void {
+		for (const listener of [...this.#listeners]) {
+			try {
+				listener(devices);
+			} catch (error) {
+				console.error("A device listener failed:", error);
+			}
 		}
 	}
 
@@ -252,14 +282,28 @@ export class MediaDeviceContext {
 
 	/**
 	 * listStatus tells what the context knows of kind's devices: unknown before
-	 * the browser has listed any, hidden while it lists them without ids, and
-	 * then listed, with the devices to choose and the system default.
+	 * the browser has listed any, unlisted when it lists no entry of the kind,
+	 * hidden while it lists them without ids, and then listed, with the devices
+	 * to choose and the system default.
 	 */
 	listStatus(kind: MediaDeviceKind): DeviceListStatus {
 		const list = this.#lists.get(kind);
-		if (list === undefined) return UNKNOWN_STATUS;
-		if (list.hidden) return HIDDEN_STATUS;
-		return { status: "listed", devices: [...list.devices], defaultDevice: list.defaultDevice };
+		if (list === undefined) return { status: "unknown" };
+		switch (list.status) {
+			case "unlisted":
+			case "hidden":
+				return { status: list.status };
+			case "listed":
+				return {
+					status: "listed",
+					devices: [...list.devices],
+					defaultDevice: list.defaultDevice,
+				};
+			default: {
+				const unknown: never = list.status;
+				return unknown;
+			}
+		}
 	}
 
 	/**
@@ -329,36 +373,20 @@ export class MediaDeviceContext {
 			return false;
 		}
 
-		const request = this.#askPermission(media, kind).finally(() => {
+		const request = this.#askPermission(kind).finally(() => {
 			this.#permissionRequests.delete(kind);
 		});
 		this.#permissionRequests.set(kind, request);
 		return request;
 	}
 
-	async #askPermission(media: MediaDeviceAccess, kind: "audio" | "video"): Promise<boolean> {
-		const timeoutMs = this.#permissionTimeoutMs ?? MediaDeviceContext.GET_USER_MEDIA_TIMEOUT;
-		const asked = media.getUserMedia(kind === "audio" ? { audio: true } : { video: true });
-		let timer: number | undefined;
-		const expired = new Promise<undefined>((resolve) => {
-			timer = globalThis.setTimeout(() => resolve(undefined), timeoutMs);
-		});
-
+	async #askPermission(kind: "audio" | "video"): Promise<boolean> {
 		try {
-			const stream = await Promise.race([asked, expired]);
+			const stream = await this.requestStream(
+				kind === "audio" ? { audio: true } : { video: true },
+			);
 			if (stream === undefined) {
-				console.warn(
-					`The ${kind} permission prompt was not answered within ${timeoutMs}ms`,
-				);
-				asked.then(
-					(late) => {
-						stopTracks(late);
-						// The grant names the devices, as one in time would.
-						void this.updateDevices();
-					},
-					// reason: a prompt refused after the timeout changes nothing; false was reported.
-					() => {},
-				);
+				console.warn(`The ${kind} permission prompt was not answered in time`);
 				return false;
 			}
 
@@ -371,8 +399,44 @@ export class MediaDeviceContext {
 		} catch (error) {
 			console.warn(`Failed to request ${kind} permission:`, error);
 			return false;
+		}
+	}
+
+	/**
+	 * requestStream asks the media devices for a stream, which may take a
+	 * permission prompt. It resolves undefined when no answer comes within the
+	 * permission timeout; getUserMedia cannot be aborted, so a stream granted
+	 * after that is stopped as it arrives, and the devices are read again. It
+	 * rejects with the browser's error when the request is refused, and when
+	 * there are no media devices to ask.
+	 */
+	async requestStream(constraints: MediaStreamConstraints): Promise<MediaStream | undefined> {
+		const media = this.#mediaDevices;
+		if (media === undefined || typeof media.getUserMedia !== "function") {
+			throw new Error("getUserMedia is not available in this environment");
+		}
+
+		// An async function: a getUserMedia that throws at once rejects it, like a refusal.
+		const asked = media.getUserMedia(constraints);
+		const timeout = this.#clock.timeout(
+			this.#permissionTimeoutMs ?? MediaDeviceContext.GET_USER_MEDIA_TIMEOUT,
+		);
+		try {
+			const stream = await Promise.race([asked, timeout.expired.then(() => undefined)]);
+			if (stream === undefined) {
+				asked.then(
+					(late) => {
+						stopTracks(late);
+						// The grant names the devices, as one in time would.
+						void this.updateDevices();
+					},
+					// reason: a request refused after the timeout changes nothing; undefined was returned.
+					() => {},
+				);
+			}
+			return stream;
 		} finally {
-			clearTimeout(timer);
+			timeout.cancel();
 		}
 	}
 
@@ -500,11 +564,7 @@ export class Device<K extends "audio" | "video"> {
 	 */
 	stop(): void {
 		if (this.#stream) {
-			try {
-				this.#stream.stop();
-			} catch {
-				// Ignore errors when stopping track
-			}
+			this.#stream.stop();
 			this.#stream = undefined;
 		}
 	}

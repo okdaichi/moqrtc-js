@@ -9,25 +9,37 @@ interface ScheduledValue {
 }
 
 /**
- * FakeAudioParam records the values scheduled on it and takes each one at
- * once. Like a browser, it rejects an exponential ramp to a value that is
- * not positive.
+ * FakeAudioParam records the values scheduled on it. Like a browser's, its
+ * value is the one reached by the clock's current time: a set value from its
+ * time on, a ramp's target only from its end time on (the ramp itself is not
+ * interpolated). Like a browser, it rejects an exponential ramp to a value
+ * that is not positive.
  */
 class FakeAudioParam implements VolumeParam {
-	value: number;
+	/** Every value scheduled, in order, including ones cancelled since. */
 	scheduled: ScheduledValue[] = [];
+	readonly #clock: { readonly currentTime: number };
+	#timeline: ScheduledValue[] = [];
+	#base: number;
 
-	constructor(initialValue = 1.0) {
-		this.value = initialValue;
+	constructor(clock: { readonly currentTime: number }, initialValue = 1.0) {
+		this.#clock = clock;
+		this.#base = initialValue;
 	}
 
-	cancelScheduledValues(_cancelTime: number): this {
+	get value(): number {
+		const reached = this.#timeline.filter((s) => s.time <= this.#clock.currentTime);
+		return reached.at(-1)?.value ?? this.#base;
+	}
+
+	cancelScheduledValues(cancelTime: number): this {
+		this.#base = this.value;
+		this.#timeline = this.#timeline.filter((s) => s.time < cancelTime);
 		return this;
 	}
 
 	setValueAtTime(value: number, time: number): this {
-		this.scheduled.push({ kind: "set", value, time });
-		this.value = value;
+		this.#schedule({ kind: "set", value, time });
 		return this;
 	}
 
@@ -35,15 +47,19 @@ class FakeAudioParam implements VolumeParam {
 		if (!(value > 0)) {
 			throw new RangeError(`exponential ramp to ${value}, which is not positive`);
 		}
-		this.scheduled.push({ kind: "ramp", value, time });
-		this.value = value;
+		this.#schedule({ kind: "ramp", value, time });
 		return this;
+	}
+
+	#schedule(event: ScheduledValue): void {
+		this.scheduled.push(event);
+		this.#timeline.push(event);
 	}
 }
 
 class FakeGainNode implements VolumeGainNode {
 	readonly context = { currentTime: 0 };
-	readonly gain = new FakeAudioParam();
+	readonly gain = new FakeAudioParam(this.context);
 }
 
 /** controllerOn makes a controller on a fresh fake gain node. */
@@ -186,14 +202,65 @@ Deno.test("VolumeController", async (t) => {
 		await t.step("mutes by fading to minGain and then to silence", () => {
 			const { controller, node } = controllerOn();
 			controller.setVolume(0.7);
+			node.context.currentTime = 1;
 
 			controller.mute(true);
 
 			assertEquals(lastFade(node.gain), [
-				{ kind: "set", value: 0.7, time: 0 },
-				{ kind: "ramp", value: 0.001, time: 0.08 },
-				{ kind: "set", value: 0, time: 0.08 },
+				{ kind: "set", value: 0.7, time: 1 },
+				{ kind: "ramp", value: 0.001, time: 1.08 },
+				{ kind: "set", value: 0, time: 1.08 },
 			]);
+		});
+
+		await t.step("restores the volume being faded to when muted mid-fade", () => {
+			const { controller, node } = controllerOn();
+			controller.setVolume(0.8);
+			node.context.currentTime = 0.04;
+			controller.mute(true);
+
+			controller.mute(false);
+
+			assertEquals(lastFade(node.gain).at(-1), { kind: "ramp", value: 0.8, time: 0.12 });
+		});
+
+		await t.step("reports the volume being faded to", () => {
+			const { controller, node } = controllerOn();
+			controller.setVolume(0.8);
+
+			node.context.currentTime = 0.04;
+
+			assertEquals(controller.volume, 0.8);
+		});
+
+		await t.step("keeps the gain silent when the volume is set while muted", () => {
+			const { controller, node } = controllerOn();
+			controller.mute(true);
+			controller.setVolume(0.8);
+
+			node.context.currentTime = 1;
+
+			assertEquals(node.gain.value, 0);
+		});
+
+		await t.step("reports no volume while muted after the volume is set", () => {
+			const { controller } = controllerOn();
+			controller.mute(true);
+
+			controller.setVolume(0.8);
+
+			assertEquals(controller.volume, 0);
+		});
+
+		await t.step("restores the volume set while muted on unmute", () => {
+			const { controller, node } = controllerOn();
+			controller.mute(true);
+			controller.setVolume(0.8);
+			node.context.currentTime = 1;
+
+			controller.mute(false);
+
+			assertEquals(lastFade(node.gain).at(-1), { kind: "ramp", value: 0.8, time: 1.08 });
 		});
 
 		await t.step("mutes low volume correctly", () => {

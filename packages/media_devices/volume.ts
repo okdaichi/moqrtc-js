@@ -36,6 +36,11 @@ export class VolumeController {
 
 	readonly gainNode: VolumeGainNode;
 	#muted = false;
+	/**
+	 * The gain the controller last asked for: where a fade is heading, not
+	 * where it is. 0 while muted.
+	 */
+	#target: number;
 	#unmuteVolume: number;
 	#defaultVolume: number;
 	#minGain: number;
@@ -80,6 +85,7 @@ export class VolumeController {
 		this.#defaultVolume = normalizedDefaultVolume;
 		this.#minGain = normalizedMinGain;
 		this.#fadeSeconds = normalizedFadeTimeMs / MS_PER_SECOND;
+		this.#target = clampedInitial;
 		this.#unmuteVolume = clampedInitial === 0 ? normalizedDefaultVolume : clampedInitial;
 	}
 
@@ -94,6 +100,7 @@ export class VolumeController {
 	 * then drops to 0.
 	 */
 	#rampTo(target: number): void {
+		this.#target = target;
 		const gainParam = this.gainNode.gain;
 		const now = this.gainNode.context.currentTime;
 		const end = now + this.#fadeSeconds;
@@ -114,13 +121,17 @@ export class VolumeController {
 		}
 	}
 
+	/**
+	 * setVolume fades to v. While muted, the gain stays silent and v is only
+	 * kept, to be restored on unmute.
+	 */
 	setVolume(v: number) {
 		const clamped = this.#clamp(v);
-		this.#rampTo(clamped);
-
 		if (clamped > 0) {
 			this.#unmuteVolume = clamped;
 		}
+		if (this.#muted) return;
+		this.#rampTo(clamped);
 	}
 
 	mute(m: boolean) {
@@ -128,9 +139,9 @@ export class VolumeController {
 		this.#muted = m;
 
 		if (m) {
-			const current = this.gainNode.gain.value;
-			if (current > 0.0001) {
-				this.#unmuteVolume = current;
+			// The volume faded to, not the gain mid-fade, is what unmuting restores.
+			if (this.#target > 0) {
+				this.#unmuteVolume = this.#target;
 			}
 			this.#rampTo(0);
 		} else {
@@ -143,7 +154,8 @@ export class VolumeController {
 		return this.#muted;
 	}
 
+	/** The gain asked for: where a fade is heading, and 0 while muted. */
 	get volume(): number {
-		return this.gainNode.gain.value;
+		return this.#target;
 	}
 }
