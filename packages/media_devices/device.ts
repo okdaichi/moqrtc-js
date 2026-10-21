@@ -1,4 +1,99 @@
 /**
+ * MediaDeviceAccess is the part of the browser's `navigator.mediaDevices` the
+ * context and the devices made on it use. A page passes nothing and gets the
+ * browser's; tests and apps that need control pass their own.
+ */
+export interface MediaDeviceAccess {
+	enumerateDevices(): Promise<MediaDeviceInfo[]>;
+	getUserMedia(constraints?: MediaStreamConstraints): Promise<MediaStream>;
+	addEventListener(type: "devicechange", listener: () => void): void;
+	removeEventListener(type: "devicechange", listener: () => void): void;
+}
+
+/** Options for creating a MediaDeviceContext. */
+export interface MediaDeviceContextOptions {
+	/** The media devices to use; defaults to the browser's `navigator.mediaDevices`. */
+	mediaDevices?: MediaDeviceAccess;
+	/**
+	 * How long requestPermission waits for a permission prompt to be answered
+	 * before it reports the permission as not granted. Defaults to
+	 * `MediaDeviceContext.GET_USER_MEDIA_TIMEOUT`.
+	 */
+	permissionTimeoutMs?: number;
+}
+
+/**
+ * DeviceListStatus is what the context knows about one kind of device:
+ * unknown until the browser has listed devices, hidden while it lists that
+ * kind's entries without ids (as it does until permission is granted), and
+ * then listed — the devices a page can choose, each once, and the one the
+ * system uses by default. An empty listed list means there is no such device.
+ */
+export type DeviceListStatus =
+	| { readonly status: "unknown" }
+	| { readonly status: "hidden" }
+	| {
+		readonly status: "listed";
+		readonly devices: readonly MediaDeviceInfo[];
+		readonly defaultDevice: MediaDeviceInfo | undefined;
+	};
+
+/**
+ * The deviceIds a browser gives entries that follow a system choice rather
+ * than name a device: Chrome lists the system default as "default" and, on
+ * Windows, the communications device as "communications", each beside the
+ * device it currently points at.
+ */
+const ALIAS_DEVICE_IDS: ReadonlySet<string> = new Set(["default", "communications"]);
+
+/** The kinds of device the context lists. */
+const LISTED_KINDS: readonly MediaDeviceKind[] = ["audioinput", "videoinput", "audiooutput"];
+
+/**
+ * DeviceList is what one enumeration says about one kind of device: the
+ * devices a page can choose, each once, the one the system uses by default,
+ * and whether the browser hid entries of the kind.
+ */
+interface DeviceList {
+	readonly devices: MediaDeviceInfo[];
+	readonly defaultDevice: MediaDeviceInfo | undefined;
+	readonly hidden: boolean;
+}
+
+const EMPTY_LIST: DeviceList = { devices: [], defaultDevice: undefined, hidden: false };
+
+const UNKNOWN_STATUS: DeviceListStatus = { status: "unknown" };
+
+const HIDDEN_STATUS: DeviceListStatus = { status: "hidden" };
+
+/**
+ * listOf builds the DeviceList of kind from the browser's enumeration. Entries
+ * without an id are hidden until permission is granted and cannot be chosen;
+ * alias entries name a device already listed under its own id. The default is
+ * the device the "default" alias points at — the one sharing its group whose
+ * label it ends with — or else the first device listed.
+ */
+function listOf(all: readonly MediaDeviceInfo[], kind: MediaDeviceKind): DeviceList {
+	const ofKind = all.filter((d) => d.kind === kind);
+	const entries = ofKind.filter((d) => d.deviceId !== "");
+	const devices = entries.filter((d) => !ALIAS_DEVICE_IDS.has(d.deviceId));
+	const alias = entries.find((d) => d.deviceId === "default");
+	const pointed = alias === undefined
+		? undefined
+		: devices.find((d) => d.groupId === alias.groupId && alias.label.endsWith(d.label));
+	return {
+		devices,
+		defaultDevice: pointed ?? devices[0],
+		hidden: entries.length < ofKind.length,
+	};
+}
+
+/** stopTracks releases every track of stream. */
+function stopTracks(stream: MediaStream): void {
+	for (const track of stream.getTracks()) track.stop();
+}
+
+/**
  * MediaDeviceContext manages shared state for all media devices.
  * Context pattern allows explicit dependency injection and clear boundaries.
  *
@@ -20,43 +115,9 @@
  * deviceContext.close();
  * ```
  */
-/**
- * The deviceIds a browser gives entries that follow a system choice rather
- * than name a device: Chrome lists the system default as "default" and, on
- * Windows, the communications device as "communications", each beside the
- * device it currently points at.
- */
-const ALIAS_DEVICE_IDS: ReadonlySet<string> = new Set(["default", "communications"]);
-
-/**
- * DeviceList is what the context knows about one kind of device: the devices
- * a page can choose, each once, and the one the system uses by default.
- */
-interface DeviceList {
-	readonly devices: MediaDeviceInfo[];
-	readonly defaultDevice: MediaDeviceInfo | undefined;
-}
-
-const EMPTY_LIST: DeviceList = { devices: [], defaultDevice: undefined };
-
-/**
- * listOf builds the DeviceList of kind from the browser's enumeration. Entries
- * without an id are hidden until permission is granted and cannot be chosen;
- * alias entries name a device already listed under its own id. The default is
- * the device the "default" alias points at — the one sharing its group whose
- * label it ends with — or else the first device listed.
- */
-function listOf(all: readonly MediaDeviceInfo[], kind: MediaDeviceKind): DeviceList {
-	const entries = all.filter((d) => d.kind === kind && d.deviceId !== "");
-	const devices = entries.filter((d) => !ALIAS_DEVICE_IDS.has(d.deviceId));
-	const alias = entries.find((d) => d.deviceId === "default");
-	const pointed = alias === undefined
-		? undefined
-		: devices.find((d) => d.groupId === alias.groupId && alias.label.endsWith(d.label));
-	return { devices, defaultDevice: pointed ?? devices[0] };
-}
-
 export class MediaDeviceContext {
+	readonly #mediaDevices: MediaDeviceAccess | undefined;
+	readonly #permissionTimeoutMs: number | undefined;
 	#devices: MediaDeviceInfo[] = [];
 	#lists: Map<MediaDeviceKind, DeviceList> = new Map();
 	#permissions: Map<"audio" | "video", boolean> = new Map();
@@ -67,6 +128,7 @@ export class MediaDeviceContext {
 	#updateInProgress: Promise<void> | undefined;
 	#updateQueued: Promise<void> | undefined;
 
+	/** How long requestPermission waits for an answer, unless the context was given its own. */
 	static GET_USER_MEDIA_TIMEOUT = 8000; // 8s
 
 	/**
@@ -78,12 +140,24 @@ export class MediaDeviceContext {
 		return this.#devices;
 	}
 
-	constructor() {
+	/**
+	 * The media devices the context reads and opens: the ones it was given,
+	 * or else the browser's. Undefined where the browser offers none (an
+	 * insecure page, a server).
+	 */
+	get mediaDevices(): MediaDeviceAccess | undefined {
+		return this.#mediaDevices;
+	}
+
+	constructor(options?: MediaDeviceContextOptions) {
+		this.#mediaDevices = options?.mediaDevices ?? globalThis.navigator?.mediaDevices;
+		this.#permissionTimeoutMs = options?.permissionTimeoutMs;
+
 		// Initial device enumeration
 		void this.updateDevices();
 
-		// Set up devicechange listener once for all Device instances
-		this.#onchange = () => {
+		// One devicechange listener serves every Device made on the context.
+		const onchange = () => {
 			// Debounce rapid devicechange events
 			if (typeof this.#debounceTimer !== "undefined") {
 				clearTimeout(this.#debounceTimer);
@@ -95,20 +169,9 @@ export class MediaDeviceContext {
 			}, 200);
 		};
 
-		// Only set up event listeners if mediaDevices is available
-		if (navigator && navigator.mediaDevices) {
-			try {
-				navigator.mediaDevices.addEventListener(
-					"devicechange",
-					this.#onchange as EventListener,
-				);
-			} catch (_e) {
-				// Some environments may not support addEventListener on mediaDevices
-				// Fall back to assigning onchange if available
-				if (typeof navigator.mediaDevices.ondevicechange !== "undefined") {
-					navigator.mediaDevices.ondevicechange = this.#onchange;
-				}
-			}
+		if (this.#mediaDevices !== undefined) {
+			this.#mediaDevices.addEventListener("devicechange", onchange);
+			this.#onchange = onchange;
 		}
 	}
 
@@ -134,21 +197,17 @@ export class MediaDeviceContext {
 	}
 
 	async #enumerate(): Promise<void> {
-		if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+		const media = this.#mediaDevices;
+		if (media === undefined || typeof media.enumerateDevices !== "function") {
 			this.#devices = [];
 			this.#lists = new Map();
 			return;
 		}
 
 		try {
-			const devices = await navigator.mediaDevices.enumerateDevices();
+			const devices = await media.enumerateDevices();
 			this.#devices = devices;
-			this.#lists = new Map(
-				(["audioinput", "videoinput", "audiooutput"] as const).map((kind) => [
-					kind,
-					listOf(devices, kind),
-				]),
-			);
+			this.#lists = new Map(LISTED_KINDS.map((kind) => [kind, listOf(devices, kind)]));
 
 			// Check if we have permission by looking for devices with IDs
 			const hasAudioPermission = devices.some((d) =>
@@ -189,6 +248,18 @@ export class MediaDeviceContext {
 	/** The audio output device the system plays through by default. */
 	getDefaultOutputDevice(): MediaDeviceInfo | undefined {
 		return (this.#lists.get("audiooutput") ?? EMPTY_LIST).defaultDevice;
+	}
+
+	/**
+	 * listStatus tells what the context knows of kind's devices: unknown before
+	 * the browser has listed any, hidden while it lists them without ids, and
+	 * then listed, with the devices to choose and the system default.
+	 */
+	listStatus(kind: MediaDeviceKind): DeviceListStatus {
+		const list = this.#lists.get(kind);
+		if (list === undefined) return UNKNOWN_STATUS;
+		if (list.hidden) return HIDDEN_STATUS;
+		return { status: "listed", devices: [...list.devices], defaultDevice: list.defaultDevice };
 	}
 
 	/**
@@ -233,6 +304,13 @@ export class MediaDeviceContext {
 		return this.#permissions.get(kind) ?? false;
 	}
 
+	/**
+	 * requestPermission asks the browser for kind, which it needs before it
+	 * names devices, and releases the stream it grants at once. It resolves
+	 * false when permission is refused, and also when the prompt is left
+	 * unanswered for the permission timeout: getUserMedia cannot be aborted,
+	 * so a stream granted after that is released as it arrives.
+	 */
 	async requestPermission(kind: "audio" | "video"): Promise<boolean> {
 		// Return cached permission state if already granted
 		if (this.hasPermission(kind)) {
@@ -245,44 +323,57 @@ export class MediaDeviceContext {
 			return existingRequest;
 		}
 
-		if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+		const media = this.#mediaDevices;
+		if (media === undefined || typeof media.getUserMedia !== "function") {
 			console.warn("getUserMedia is not available in this environment");
 			return false;
 		}
 
-		// Create new permission request
-		const request = (async () => {
-			const controller = new AbortController();
-			const timeoutId = globalThis.setTimeout(
-				() => controller.abort(),
-				MediaDeviceContext.GET_USER_MEDIA_TIMEOUT,
-			);
-
-			try {
-				const stream = await navigator.mediaDevices.getUserMedia(
-					{ [kind]: true } as MediaStreamConstraints,
-				);
-				this.#permissions.set(kind, true);
-
-				// Clean up the temporary stream
-				stream.getTracks().forEach((track) => track.stop());
-
-				// Update device list to get fresh data with labels
-				await this.updateDevices();
-
-				return true;
-			} catch (error) {
-				console.warn(`Failed to request ${kind} permission:`, error);
-				return false;
-			} finally {
-				clearTimeout(timeoutId);
-				controller.abort();
-				this.#permissionRequests.delete(kind);
-			}
-		})();
-
+		const request = this.#askPermission(media, kind).finally(() => {
+			this.#permissionRequests.delete(kind);
+		});
 		this.#permissionRequests.set(kind, request);
 		return request;
+	}
+
+	async #askPermission(media: MediaDeviceAccess, kind: "audio" | "video"): Promise<boolean> {
+		const timeoutMs = this.#permissionTimeoutMs ?? MediaDeviceContext.GET_USER_MEDIA_TIMEOUT;
+		const asked = media.getUserMedia(kind === "audio" ? { audio: true } : { video: true });
+		let timer: number | undefined;
+		const expired = new Promise<undefined>((resolve) => {
+			timer = globalThis.setTimeout(() => resolve(undefined), timeoutMs);
+		});
+
+		try {
+			const stream = await Promise.race([asked, expired]);
+			if (stream === undefined) {
+				console.warn(
+					`The ${kind} permission prompt was not answered within ${timeoutMs}ms`,
+				);
+				asked.then(
+					(late) => {
+						stopTracks(late);
+						// The grant names the devices, as one in time would.
+						void this.updateDevices();
+					},
+					// reason: a prompt refused after the timeout changes nothing; false was reported.
+					() => {},
+				);
+				return false;
+			}
+
+			this.#permissions.set(kind, true);
+			stopTracks(stream);
+
+			// Update device list to get fresh data with labels
+			await this.updateDevices();
+			return true;
+		} catch (error) {
+			console.warn(`Failed to request ${kind} permission:`, error);
+			return false;
+		} finally {
+			clearTimeout(timer);
+		}
 	}
 
 	subscribe(listener: (devices: MediaDeviceInfo[]) => void): () => void {
@@ -291,16 +382,8 @@ export class MediaDeviceContext {
 	}
 
 	close(): void {
-		if (this.#onchange && navigator && navigator.mediaDevices) {
-			try {
-				if (typeof navigator.mediaDevices.removeEventListener === "function") {
-					navigator.mediaDevices.removeEventListener("devicechange", this.#onchange);
-				} else if (typeof navigator.mediaDevices.ondevicechange !== "undefined") {
-					navigator.mediaDevices.ondevicechange = null;
-				}
-			} catch (_e) {
-				// Ignore
-			}
+		if (this.#onchange !== undefined) {
+			this.#mediaDevices?.removeEventListener("devicechange", this.#onchange);
 			this.#onchange = undefined;
 		}
 
@@ -323,6 +406,13 @@ export interface DeviceOptions {
 	constraints?: MediaTrackConstraints;
 	preferred?: string;
 	onTrackEnded?: (reason: string) => void;
+	/**
+	 * Called with the new default's deviceId when the system default moves to
+	 * another device while the device follows the default (no preferred
+	 * device). A track already open keeps recording from the device it was
+	 * opened on: switchDevice(undefined) and asking for a new track moves it.
+	 */
+	onDefaultChange?: (deviceId: string) => void;
 	getDefaultDeviceId: (devices: MediaDeviceInfo[]) => string | undefined;
 }
 
@@ -338,10 +428,13 @@ export class Device<K extends "audio" | "video"> {
 	preferred: string | undefined;
 	activeDeviceId: string | undefined;
 	onTrackEnded?: (reason: string) => void;
+	onDefaultChange?: (deviceId: string) => void;
 
 	#stream: MediaStreamTrack | undefined;
 	#unsubscribe: (() => void) | undefined;
 	#getDefaultDeviceId: (devices: MediaDeviceInfo[]) => string | undefined;
+	/** The system default as last seen, to tell when it moves. */
+	#knownDefault: string | undefined;
 
 	constructor(
 		context: MediaDeviceContext,
@@ -354,15 +447,32 @@ export class Device<K extends "audio" | "video"> {
 		this.constraints = options.constraints;
 		this.preferred = options.preferred;
 		this.onTrackEnded = options.onTrackEnded;
+		this.onDefaultChange = options.onDefaultChange;
 		this.#getDefaultDeviceId = options.getDefaultDeviceId;
 
 		// Subscribe to device changes
-		this.#unsubscribe = this.context.subscribe(() => {
-			this.activeDeviceId = this.preferred || this.defaultDeviceId;
-		});
+		this.#unsubscribe = this.context.subscribe(() => this.#devicesChanged());
 
 		// Set initial activeDeviceId
-		this.activeDeviceId = this.preferred || this.defaultDeviceId;
+		this.#knownDefault = this.defaultDeviceId;
+		this.activeDeviceId = this.preferred || this.#knownDefault;
+	}
+
+	/**
+	 * devicesChanged follows a new enumeration: the active device is the
+	 * preferred one or else the system default, and a default that moved
+	 * while it is followed is reported.
+	 */
+	#devicesChanged(): void {
+		const previous = this.#knownDefault;
+		const next = this.defaultDeviceId;
+		this.#knownDefault = next;
+		this.activeDeviceId = this.preferred || next;
+
+		if (this.preferred) return;
+		// A default first learned, or lost with every device, is no move.
+		if (previous === undefined || next === undefined || previous === next) return;
+		this.onDefaultChange?.(next);
 	}
 
 	/** Get default device ID using provided heuristics */
@@ -400,12 +510,14 @@ export class Device<K extends "audio" | "video"> {
 	}
 
 	/**
-	 * Switch to a different device.
-	 * If currently streaming, stops and restarts with the new device.
+	 * switchDevice records deviceId as the device to use — or, given
+	 * undefined, stops preferring one and follows the system default again —
+	 * and stops the live track. It opens nothing: the next track asked for is
+	 * opened on the device switched to.
 	 */
-	async switchDevice(deviceId: string): Promise<void> {
+	async switchDevice(deviceId: string | undefined): Promise<void> {
 		this.preferred = deviceId;
-		this.activeDeviceId = deviceId;
+		this.activeDeviceId = deviceId || this.defaultDeviceId;
 
 		// Stop current stream
 		this.stop();

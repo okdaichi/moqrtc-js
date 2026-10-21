@@ -1,6 +1,6 @@
 import { assertEquals, assertExists } from "@std/assert";
 import { Device, MediaDeviceContext } from "./device.ts";
-import { setupFakeMediaDevices } from "./fake_media_devices_test.ts";
+import { FakeMediaDevices, setupFakeMediaDevices } from "./fake_media_devices_test.ts";
 
 const devices = [
 	{ kind: "audioinput" as MediaDeviceKind, label: "Mic", deviceId: "mic-1" },
@@ -38,8 +38,8 @@ const windowsHeadset = [
 
 Deno.test("MediaDeviceContext", async (t) => {
 	await t.step("enumerates devices on creation", async () => {
-		using _fakeMap = setupFakeMediaDevices(devices);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		await context.updateDevices();
 
 		const all = context.devices;
@@ -48,8 +48,8 @@ Deno.test("MediaDeviceContext", async (t) => {
 	});
 
 	await t.step("requests permissions and exposes true devices", async () => {
-		using _fakeMap = setupFakeMediaDevices(devices);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 
 		await context.requestPermission("video");
 		await context.updateDevices();
@@ -62,31 +62,31 @@ Deno.test("MediaDeviceContext", async (t) => {
 	});
 
 	await t.step("lists each device once beside the browser's aliases", async () => {
-		using _fakeMap = setupFakeMediaDevices(windowsHeadset);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(windowsHeadset);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		await context.requestPermission("audio");
 
 		assertEquals(context.getDevices("audio").map((d) => d.deviceId), ["mic-1", "mic-2"]);
 	});
 
 	await t.step("resolves the default alias to the device it points at", async () => {
-		using _fakeMap = setupFakeMediaDevices(windowsHeadset);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(windowsHeadset);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		await context.requestPermission("audio");
 
 		assertEquals(context.getDefaultDevice("audio")?.deviceId, "mic-2");
 	});
 
 	await t.step("takes the first device as default when there is no alias", async () => {
-		using _fakeMap = setupFakeMediaDevices(devices);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		await context.requestPermission("audio");
 
 		assertEquals(context.getDefaultDevice("audio")?.deviceId, "mic-1");
 	});
 
 	await t.step("lists the audio outputs and their default", async () => {
-		using _fakeMap = setupFakeMediaDevices([
+		const fake = new FakeMediaDevices([
 			...windowsHeadset,
 			{
 				kind: "audiooutput",
@@ -97,7 +97,7 @@ Deno.test("MediaDeviceContext", async (t) => {
 			{ kind: "audiooutput", label: "Speakers", deviceId: "spk-1", groupId: "g-spk" },
 			{ kind: "audiooutput", label: "Headphones", deviceId: "spk-2", groupId: "g-hp" },
 		]);
-		const context = new MediaDeviceContext();
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		await context.requestPermission("audio");
 
 		assertEquals({
@@ -107,8 +107,8 @@ Deno.test("MediaDeviceContext", async (t) => {
 	});
 
 	await t.step("findDevice finds by exact or partial match", async () => {
-		using _fakeMap = setupFakeMediaDevices(devices);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		await context.requestPermission("video");
 		await context.updateDevices();
 
@@ -118,8 +118,8 @@ Deno.test("MediaDeviceContext", async (t) => {
 	});
 
 	await t.step("subscribe/unsubscribe and trigger devicechange", async () => {
-		using _fakeMap = setupFakeMediaDevices(devices);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		await context.updateDevices();
 
 		let callCount = 0;
@@ -128,7 +128,7 @@ Deno.test("MediaDeviceContext", async (t) => {
 		});
 
 		// Trigger a device change in our fake
-		_fakeMap.fake.triggerDeviceChange();
+		fake.triggerDeviceChange();
 
 		// Using setImmediate or small timeout to wait for debounce
 		await new Promise((r) => setTimeout(r, 250));
@@ -136,7 +136,7 @@ Deno.test("MediaDeviceContext", async (t) => {
 		assertEquals(callCount, 1);
 
 		unsubscribe();
-		_fakeMap.fake.triggerDeviceChange();
+		fake.triggerDeviceChange();
 		await new Promise((r) => setTimeout(r, 250));
 
 		assertEquals(callCount, 1); // should not increment
@@ -147,8 +147,8 @@ Deno.test("abstract Device", async (t) => {
 	const getDefaultDeviceId = () => "cam-1";
 
 	await t.step("initializes correctly", () => {
-		using _fakeMap = setupFakeMediaDevices(devices);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		const device = new Device(context, "video", {
 			enabled: true,
 			preferred: "cam-1",
@@ -163,12 +163,11 @@ Deno.test("abstract Device", async (t) => {
 	});
 
 	await t.step("stop() clears stream", async () => {
-		using _fakeMap = setupFakeMediaDevices(devices);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		const device = new Device(context, "video", { enabled: true, getDefaultDeviceId });
 
-		device.stream =
-			(await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0];
+		device.stream = (await fake.getUserMedia({ video: true })).getVideoTracks()[0];
 		assertEquals(device.stream?.readyState, "live");
 
 		device.stop();
@@ -176,12 +175,11 @@ Deno.test("abstract Device", async (t) => {
 	});
 
 	await t.step("switchDevice updates preferred device ID and stops old track", async () => {
-		using _fakeMap = setupFakeMediaDevices(devices);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		const device = new Device(context, "video", { enabled: true, getDefaultDeviceId });
 
-		device.stream =
-			(await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0];
+		device.stream = (await fake.getUserMedia({ video: true })).getVideoTracks()[0];
 
 		await device.switchDevice("cam-2");
 		assertEquals(device.preferred, "cam-2");
@@ -189,17 +187,195 @@ Deno.test("abstract Device", async (t) => {
 		assertEquals(device.stream, undefined);
 	});
 
+	await t.step("switchDevice(undefined) follows the default device again", async () => {
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+		const device = new Device(context, "video", {
+			enabled: true,
+			preferred: "cam-2",
+			getDefaultDeviceId,
+		});
+
+		await device.switchDevice(undefined);
+
+		assertEquals({ preferred: device.preferred, active: device.activeDeviceId }, {
+			preferred: undefined,
+			active: "cam-1",
+		});
+	});
+
+	await t.step("switchDevice(undefined) stops the live track", async () => {
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+		const device = new Device(context, "video", {
+			enabled: true,
+			preferred: "cam-2",
+			getDefaultDeviceId,
+		});
+		const track = (await fake.getUserMedia({ video: true })).getVideoTracks()[0];
+		device.stream = track;
+
+		await device.switchDevice(undefined);
+
+		assertEquals(track?.readyState, "ended");
+	});
+
 	await t.step("updateConstraints applies constraints to active track", async () => {
-		using _fakeMap = setupFakeMediaDevices(devices);
-		const context = new MediaDeviceContext();
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
 		const device = new Device(context, "video", { enabled: true, getDefaultDeviceId });
 
-		device.stream =
-			(await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0];
+		device.stream = (await fake.getUserMedia({ video: true })).getVideoTracks()[0];
 		assertEquals(device.stream?.readyState, "live");
 
 		await device.updateConstraints({ height: 1080 });
 		assertEquals(device.constraints?.height, 1080);
 		assertEquals(device.stream?.getConstraints()?.height, 1080);
+	});
+});
+
+Deno.test("MediaDeviceContext media devices", async (t) => {
+	await t.step("uses the browser's media devices when given none", async () => {
+		using env = setupFakeMediaDevices(devices);
+		const context = new MediaDeviceContext();
+
+		await context.requestPermission("audio");
+
+		assertEquals(context.getDevices("audio").map((d) => d.deviceId), ["mic-1"]);
+		assertEquals(env.fake.granted.length, 1);
+	});
+
+	await t.step("enumerates the media devices it was given", async () => {
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		await context.requestPermission("video");
+
+		assertEquals(context.getDevices("video").map((d) => d.deviceId), ["cam-1"]);
+	});
+});
+
+Deno.test("MediaDeviceContext.requestPermission", async (t) => {
+	await t.step("resolves true once the prompt is answered", async () => {
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		assertEquals(await context.requestPermission("audio"), true);
+	});
+
+	await t.step("resolves false when the prompt is not answered in time", async () => {
+		const fake = new FakeMediaDevices(devices);
+		fake.answer = new Promise(() => {});
+		const context = new MediaDeviceContext({ mediaDevices: fake, permissionTimeoutMs: 1 });
+
+		assertEquals(await context.requestPermission("audio"), false);
+	});
+
+	await t.step("resolves false when permission is refused", async () => {
+		const fake = new FakeMediaDevices(devices);
+		fake.failure = new DOMException("Permission denied", "NotAllowedError");
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		assertEquals(await context.requestPermission("audio"), false);
+	});
+
+	await t.step("releases a stream granted after the timeout", async () => {
+		const fake = new FakeMediaDevices(devices);
+		const prompt = Promise.withResolvers<void>();
+		fake.answer = prompt.promise;
+		const context = new MediaDeviceContext({ mediaDevices: fake, permissionTimeoutMs: 1 });
+		await context.requestPermission("audio");
+
+		prompt.resolve();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		assertEquals(fake.granted.map((track) => track.readyState), ["ended"]);
+	});
+
+	await t.step("asks again after a prompt timed out", async () => {
+		const fake = new FakeMediaDevices(devices);
+		const prompt = Promise.withResolvers<void>();
+		fake.answer = prompt.promise;
+		const context = new MediaDeviceContext({ mediaDevices: fake, permissionTimeoutMs: 1 });
+		await context.requestPermission("audio");
+		fake.answer = undefined;
+
+		assertEquals(await context.requestPermission("audio"), true);
+	});
+});
+
+Deno.test("MediaDeviceContext.listStatus", async (t) => {
+	await t.step("is unknown before the browser has listed devices", () => {
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		assertEquals(context.listStatus("audioinput"), { status: "unknown" });
+	});
+
+	await t.step("is hidden while the browser lists devices without ids", async () => {
+		const fake = new FakeMediaDevices(devices);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		await context.updateDevices();
+
+		assertEquals(context.listStatus("audioinput"), { status: "hidden" });
+	});
+
+	await t.step("lists the devices and the default once permission is granted", async () => {
+		const fake = new FakeMediaDevices(windowsHeadset);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		await context.requestPermission("audio");
+
+		const status = context.listStatus("audioinput");
+		assertEquals(
+			status.status === "listed"
+				? {
+					devices: status.devices.map((d) => d.deviceId),
+					defaultDevice: status.defaultDevice?.deviceId,
+				}
+				: status,
+			{ devices: ["mic-1", "mic-2"], defaultDevice: "mic-2" },
+		);
+	});
+
+	await t.step("lists a kind the browser has no device of as empty", async () => {
+		const fake = new FakeMediaDevices(windowsHeadset);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		await context.updateDevices();
+
+		assertEquals(context.listStatus("videoinput"), {
+			status: "listed",
+			devices: [],
+			defaultDevice: undefined,
+		});
+	});
+
+	await t.step("is hidden for audio outputs until permission is granted", async () => {
+		const fake = new FakeMediaDevices([
+			{ kind: "audiooutput", label: "Speakers", deviceId: "spk-1" },
+		]);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		await context.updateDevices();
+
+		assertEquals(context.listStatus("audiooutput"), { status: "hidden" });
+	});
+
+	await t.step("lists the audio outputs once permission is granted", async () => {
+		const fake = new FakeMediaDevices([
+			...devices,
+			{ kind: "audiooutput", label: "Speakers", deviceId: "spk-1" },
+		]);
+		const context = new MediaDeviceContext({ mediaDevices: fake });
+
+		await context.requestPermission("audio");
+
+		const status = context.listStatus("audiooutput");
+		assertEquals(
+			status.status === "listed" ? status.devices.map((d) => d.deviceId) : status,
+			["spk-1"],
+		);
 	});
 });

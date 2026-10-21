@@ -5,6 +5,56 @@ export interface MicrophoneProps {
 	constraints?: MediaTrackConstraints;
 	preferred?: string;
 	onTrackEnded?: (reason: string) => void;
+	/**
+	 * Called with the new default's deviceId when the system default
+	 * microphone moves to another device while the microphone follows the
+	 * default (no preferred device). A track already open keeps recording from
+	 * the device it was opened on: `switchDevice(undefined)` then
+	 * `getAudioTrack()` opens the new default.
+	 */
+	onDefaultChange?: (deviceId: string) => void;
+}
+
+/**
+ * Why the microphone could not be opened: the browser or the user refused it
+ * (`blocked`), there is no such microphone (`missing`), another application
+ * holds it or the system could not start it (`busy`), or anything else
+ * (`failed`).
+ */
+export type MicrophoneFailure = "blocked" | "missing" | "busy" | "failed";
+
+/**
+ * MicrophoneError is why getAudioTrack could not open the microphone. The
+ * error the browser gave, if any, is its `cause`.
+ */
+export class MicrophoneError extends Error {
+	override readonly name = "MicrophoneError";
+	readonly reason: MicrophoneFailure;
+
+	constructor(reason: MicrophoneFailure, message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.reason = reason;
+	}
+}
+
+/** The getUserMedia error names that say why the microphone did not open. */
+const FAILURE_BY_ERROR_NAME: ReadonlyMap<string, MicrophoneFailure> = new Map([
+	["NotAllowedError", "blocked"],
+	["SecurityError", "blocked"],
+	["NotFoundError", "missing"],
+	["OverconstrainedError", "missing"],
+	["NotReadableError", "busy"],
+	["TrackStartError", "busy"],
+]);
+
+/** microphoneErrorOf names why the microphone did not open. */
+function microphoneErrorOf(error: unknown): MicrophoneError {
+	if (error instanceof MicrophoneError) return error;
+	if (error instanceof Error) {
+		const reason = FAILURE_BY_ERROR_NAME.get(error.name) ?? "failed";
+		return new MicrophoneError(reason, error.message, { cause: error });
+	}
+	return new MicrophoneError("failed", "Failed to obtain microphone track", { cause: error });
 }
 
 /**
@@ -65,8 +115,19 @@ export class Microphone {
 	set onTrackEnded(value: ((reason: string) => void) | undefined) {
 		this.#device.onTrackEnded = value;
 	}
+	get onDefaultChange(): ((deviceId: string) => void) | undefined {
+		return this.#device.onDefaultChange;
+	}
+	set onDefaultChange(value: ((deviceId: string) => void) | undefined) {
+		this.#device.onDefaultChange = value;
+	}
 
-	async switchDevice(deviceId: string): Promise<void> {
+	/**
+	 * switchDevice records deviceId as the microphone to use — or, given
+	 * undefined, follows the system default again — and stops the live track.
+	 * The next getAudioTrack opens the device switched to.
+	 */
+	async switchDevice(deviceId: string | undefined): Promise<void> {
 		return this.#device.switchDevice(deviceId);
 	}
 
@@ -79,7 +140,9 @@ export class Microphone {
 	}
 
 	/**
-	 * Get audio track.
+	 * getAudioTrack hands out the live microphone track, opening one through
+	 * the context's media devices when there is none. A microphone that
+	 * cannot be opened rejects with a MicrophoneError saying why.
 	 */
 	async getAudioTrack(): Promise<MediaStreamTrack> {
 		if (!this.#device.enabled) {
@@ -106,18 +169,21 @@ export class Microphone {
 			},
 		};
 
-		if (!navigator?.mediaDevices?.getUserMedia) {
-			throw new Error("getUserMedia is not available in this environment");
+		const media = this.#device.context.mediaDevices;
+		if (media === undefined || typeof media.getUserMedia !== "function") {
+			throw new MicrophoneError(
+				"failed",
+				"getUserMedia is not available in this environment",
+			);
 		}
 
 		let stream: MediaStream | undefined;
 		try {
-			stream = await navigator.mediaDevices.getUserMedia(constraints);
+			stream = await media.getUserMedia(constraints);
 			const track = stream.getAudioTracks()[0];
 
 			if (!track) {
-				stream.getTracks().forEach((t) => t.stop());
-				throw new Error("Failed to obtain microphone track");
+				throw new MicrophoneError("failed", "Failed to obtain microphone track");
 			}
 
 			// Update activeDeviceId from actual settings
@@ -145,7 +211,7 @@ export class Microphone {
 					// Ignore errors when stopping track
 				}
 			});
-			throw error instanceof Error ? error : new Error("Failed to obtain microphone track");
+			throw microphoneErrorOf(error);
 		}
 	}
 }

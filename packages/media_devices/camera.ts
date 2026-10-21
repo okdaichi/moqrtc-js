@@ -80,7 +80,12 @@ export class Camera {
 		this.#device.onTrackEnded = value;
 	}
 
-	async switchDevice(deviceId: string): Promise<void> {
+	/**
+	 * switchDevice records deviceId as the camera to use — or, given
+	 * undefined, follows the default camera again — and stops the live track.
+	 * The next getVideoTrack opens the device switched to.
+	 */
+	async switchDevice(deviceId: string | undefined): Promise<void> {
 		return this.#device.switchDevice(deviceId);
 	}
 
@@ -120,13 +125,14 @@ export class Camera {
 			},
 		};
 
-		if (!navigator?.mediaDevices?.getUserMedia) {
+		const media = this.#device.context.mediaDevices;
+		if (media === undefined || typeof media.getUserMedia !== "function") {
 			throw new Error("getUserMedia is not available in this environment");
 		}
 
 		let stream: MediaStream | undefined;
 		try {
-			stream = await navigator.mediaDevices.getUserMedia(constraints);
+			stream = await media.getUserMedia(constraints);
 			const track = stream.getVideoTracks()[0];
 
 			if (!track) {

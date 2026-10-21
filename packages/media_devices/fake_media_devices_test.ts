@@ -106,8 +106,23 @@ export class FakeMediaDevices implements MediaDevices {
 	devices: MediaDeviceInfo[] = [];
 	permissions: { audio: boolean; video: boolean } = { audio: false, video: false };
 
+	/**
+	 * When set, getUserMedia waits for it before answering, as a permission
+	 * prompt does; a promise never settled is a prompt never answered.
+	 */
+	answer: Promise<void> | undefined;
+	/** When set, getUserMedia rejects with it, as the browser would. */
+	failure: Error | undefined;
+	/** Every track getUserMedia handed out, in order. */
+	granted: FakeMediaStreamTrack[] = [];
+
 	constructor(initialDevices: FakeDeviceInit[] = []) {
-		this.devices = initialDevices.map((d) => ({
+		this.setDevices(initialDevices);
+	}
+
+	/** setDevices replaces the devices listed, as plugging devices in and out does. */
+	setDevices(devices: FakeDeviceInit[]): void {
+		this.devices = devices.map((d) => ({
 			...d,
 			groupId: d.groupId ?? "group1",
 			toJSON: () => d,
@@ -125,7 +140,9 @@ export class FakeMediaDevices implements MediaDevices {
 	}
 
 	async getUserMedia(constraints?: MediaStreamConstraints): Promise<MediaStream> {
-		const tracks: MediaStreamTrack[] = [];
+		await this.answer;
+		if (this.failure !== undefined) throw this.failure;
+		const tracks: FakeMediaStreamTrack[] = [];
 		if (constraints?.audio) {
 			this.permissions.audio = true;
 			const device = this.devices.find((d) => d.kind === "audioinput") || this.devices[0];
@@ -138,7 +155,7 @@ export class FakeMediaDevices implements MediaDevices {
 						typeof constraints?.audio === "object" ? constraints.audio : undefined,
 					),
 				);
-			} else throw new Error("NotFoundError");
+			} else throw new DOMException("Requested device not found", "NotFoundError");
 		}
 		if (constraints?.video) {
 			this.permissions.video = true;
@@ -152,8 +169,9 @@ export class FakeMediaDevices implements MediaDevices {
 						typeof constraints?.video === "object" ? constraints.video : undefined,
 					),
 				);
-			} else throw new Error("NotFoundError");
+			} else throw new DOMException("Requested device not found", "NotFoundError");
 		}
+		this.granted.push(...tracks);
 		return new FakeMediaStream(tracks);
 	}
 
