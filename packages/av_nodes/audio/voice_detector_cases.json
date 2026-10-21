@@ -1,0 +1,94 @@
+{
+	"about": "Shared cases for any VoiceDetector port (TypeScript here, Go in foalk's mobile app). Default options. Each run feeds `levels` (dBFS; null is digital silence) one reading every `stepMs`, the first at `startMs`, continuing the same detector from run to run; `expect` checks heard at a reading index of the last run (negative counts from its end).",
+	"cases": [
+		{
+			"name": "a voice above a quiet room is heard",
+			"runs": [
+				{
+					"startMs": 0,
+					"stepMs": 100,
+					"levels": [-70, -70, -70, -70, -70, -70, -70, -70, -70, -70]
+				},
+				{ "startMs": 1000, "stepMs": 100, "levels": [-30, -30, -30, -30, -30] }
+			],
+			"expect": [{ "at": 0, "heard": true }, { "at": -1, "heard": true }]
+		},
+		{
+			"name": "a quiet room is never heard",
+			"runs": [{ "startMs": 0, "stepMs": 100, "repeat": { "level": -70, "count": 50 } }],
+			"expect": [{ "never": true }]
+		},
+		{
+			"name": "a steady fan already running is not heard",
+			"runs": [{ "startMs": 0, "stepMs": 100, "repeat": { "level": -35, "count": 100 } }],
+			"expect": [{ "never": true }]
+		},
+		{
+			"name": "a fan that starts mid-room stops counting as a voice",
+			"runs": [
+				{ "startMs": 0, "stepMs": 100, "repeat": { "level": -70, "count": 10 } },
+				{ "startMs": 1000, "stepMs": 100, "repeat": { "level": -35, "count": 100 } }
+			],
+			"expect": [{ "at": -1, "heard": false }]
+		},
+		{
+			"name": "a voice over a fan is still heard",
+			"runs": [
+				{ "startMs": 0, "stepMs": 100, "repeat": { "level": -40, "count": 30 } },
+				{ "startMs": 3000, "stepMs": 100, "repeat": { "level": -25, "count": 5 } }
+			],
+			"expect": [{ "at": -1, "heard": true }]
+		},
+		{
+			"name": "a quiet speaker in a quiet room is heard",
+			"runs": [
+				{ "startMs": 0, "stepMs": 100, "repeat": { "level": -75, "count": 10 } },
+				{ "startMs": 1000, "stepMs": 100, "repeat": { "level": -45, "count": 3 } }
+			],
+			"expect": [{ "at": -1, "heard": true }]
+		},
+		{
+			"name": "near-silence is never heard, however low the floor",
+			"runs": [
+				{ "startMs": 0, "stepMs": 100, "repeat": { "level": null, "count": 10 } },
+				{ "startMs": 1000, "stepMs": 100, "repeat": { "level": -60, "count": 10 } }
+			],
+			"expect": [{ "never": true }]
+		},
+		{
+			"name": "a voice hovering between the thresholds does not flicker",
+			"runs": [
+				{ "startMs": 0, "stepMs": 100, "repeat": { "level": -48, "count": 10 } },
+				{ "startMs": 1000, "stepMs": 100, "levels": [-30] },
+				{ "startMs": 1100, "stepMs": 100, "levels": [-41, -42, -40, -41, -42, -40] }
+			],
+			"expect": [{ "always": true }]
+		},
+		{
+			"name": "a short gap between words keeps the voice heard",
+			"runs": [
+				{ "startMs": 0, "stepMs": 100, "repeat": { "level": -70, "count": 10 } },
+				{ "startMs": 1000, "stepMs": 100, "repeat": { "level": -30, "count": 3 } },
+				{ "startMs": 1300, "stepMs": 100, "repeat": { "level": -70, "count": 3 } }
+			],
+			"expect": [{ "always": true }]
+		},
+		{
+			"name": "a voice that stops is no longer heard after the hold",
+			"runs": [
+				{ "startMs": 0, "stepMs": 100, "repeat": { "level": -70, "count": 10 } },
+				{ "startMs": 1000, "stepMs": 100, "repeat": { "level": -30, "count": 3 } },
+				{ "startMs": 1300, "stepMs": 100, "repeat": { "level": -70, "count": 6 } }
+			],
+			"expect": [{ "at": -1, "heard": false }]
+		},
+		{
+			"name": "talking without pause does not raise the floor to the voice",
+			"runs": [
+				{ "startMs": 0, "stepMs": 100, "repeat": { "level": -70, "count": 10 } },
+				{ "startMs": 1000, "stepMs": 100, "repeat": { "level": -30, "count": 50 } }
+			],
+			"expect": [{ "at": -1, "heard": true }]
+		}
+	]
+}

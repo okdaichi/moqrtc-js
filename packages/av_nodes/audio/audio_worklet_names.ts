@@ -10,3 +10,6 @@ export const PLAYOUT_PROCESSOR_NAME = "@okdaichi/av-nodes/playout@0.14.0";
 
 /** Name the capture processor is registered under. */
 export const CAPTURE_PROCESSOR_NAME = "@okdaichi/av-nodes/capture@0.14.0";
+
+/** Name the voice activity processor is registered under. */
+export const VOICE_ACTIVITY_PROCESSOR_NAME = "@okdaichi/av-nodes/voice-activity@0.14.0";

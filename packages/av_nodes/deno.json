@@ -52,7 +52,8 @@
 		"*_test.ts",
 		"mock_*.ts",
 		"audio/capture_worklet.ts",
-		"audio/playout_worklet.ts"
+		"audio/playout_worklet.ts",
+		"audio/voice_activity_worklet.ts"
 	],
 	"publish": {
 		"exclude": [
@@ -62,7 +63,8 @@
 			"mock_*.ts",
 			"scripts/",
 			"audio/capture_worklet.ts",
-			"audio/playout_worklet.ts"
+			"audio/playout_worklet.ts",
+			"audio/voice_activity_worklet.ts"
 		]
 	},
 	"imports": {

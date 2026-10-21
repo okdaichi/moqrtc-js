@@ -24,6 +24,7 @@ const namesFile = join(audioDir, "audio_worklet_names.ts");
 const WORKLET_FILES = [
 	join(audioDir, "capture_worklet.ts"),
 	join(audioDir, "playout_worklet.ts"),
+	join(audioDir, "voice_activity_worklet.ts"),
 ];
 
 interface WorkletInfo {
@@ -42,6 +43,8 @@ function getWorkletInfo(sourceFile: string): WorkletInfo {
 		exportName = "CaptureCode";
 	} else if (baseName.includes("playout")) {
 		exportName = "PlayoutCode";
+	} else if (baseName.includes("voice_activity")) {
+		exportName = "VoiceActivityCode";
 	} else {
 		// Fallback: convert capture_worklet -> captureWorkletCode
 		exportName = baseName
@@ -82,6 +85,11 @@ export const PLAYOUT_PROCESSOR_NAME = ${JSON.stringify(`@okdaichi/av-nodes/playo
 
 /** Name the capture processor is registered under. */
 export const CAPTURE_PROCESSOR_NAME = ${JSON.stringify(`@okdaichi/av-nodes/capture@${version}`)};
+
+/** Name the voice activity processor is registered under. */
+export const VOICE_ACTIVITY_PROCESSOR_NAME = ${
+		JSON.stringify(`@okdaichi/av-nodes/voice-activity@${version}`)
+	};
 `;
 
 	await Deno.writeTextFile(namesFile, tsContent);
