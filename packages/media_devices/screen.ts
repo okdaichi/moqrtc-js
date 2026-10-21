@@ -1,3 +1,5 @@
+import { stopTracks } from "./internal.ts";
+
 export interface ScreenProps {
 	enabled?: boolean;
 	constraints?: DisplayMediaStreamOptions;
@@ -20,20 +22,14 @@ export class Screen {
 		const stream = await navigator.mediaDevices.getDisplayMedia(this.constraints);
 		const video = stream.getVideoTracks()[0];
 		if (!video) {
-			stream.getTracks().forEach((t) => t.stop());
+			stopTracks(stream);
 			throw new Error("Failed to obtain display video track");
 		}
 		const audio = stream.getAudioTracks()[0];
 
 		// Stop any other tracks that may have been included in the stream
 		for (const t of stream.getTracks()) {
-			if (t !== video && t !== audio) {
-				try {
-					t.stop();
-				} catch {
-					// Ignore errors when stopping track
-				}
-			}
+			if (t !== video && t !== audio) t.stop();
 		}
 
 		return { video, audio };
@@ -73,15 +69,7 @@ export class Screen {
 		if (!this.#stream) return;
 		const tracks = this.#stream;
 		this.#stream = undefined;
-		try {
-			tracks.video?.stop();
-		} catch (_error) {
-			// Ignore errors when stopping video track
-		}
-		try {
-			tracks.audio?.stop();
-		} catch (_error) {
-			// Ignore errors when stopping audio track
-		}
+		tracks.video.stop();
+		tracks.audio?.stop();
 	}
 }

@@ -1,4 +1,5 @@
 import { Device, MediaDeviceContext } from "./device.ts";
+import { stopTracks } from "./internal.ts";
 
 export interface CameraProps {
 	enabled?: boolean;
@@ -80,7 +81,12 @@ export class Camera {
 		this.#device.onTrackEnded = value;
 	}
 
-	async switchDevice(deviceId: string): Promise<void> {
+	/**
+	 * switchDevice records deviceId as the camera to use — or, given
+	 * undefined, follows the default camera again — and stops the live track.
+	 * The next getVideoTrack opens the device switched to.
+	 */
+	async switchDevice(deviceId: string | undefined): Promise<void> {
 		return this.#device.switchDevice(deviceId);
 	}
 
@@ -102,64 +108,37 @@ export class Camera {
 
 		if (this.#device.stream) return this.#device.stream;
 
-		// Ensure permissions are granted
-		try {
-			await this.#device.context.requestPermission(this.#device.kind);
-		} catch {
-			// requestPermission is best-effort; continue to try
+		// A preferred camera is opened by its id; following the default names
+		// none, and the browser opens its default camera. A request that waits
+		// on an unanswered prompt rejects with a PermissionTimeoutError.
+		const context = this.#device.context;
+		const stream = await context.requestStream({ video: this.#device.trackConstraints() });
+
+		const track = stream.getVideoTracks()[0];
+		if (!track) {
+			stopTracks(stream);
+			throw new Error("Failed to obtain camera track");
 		}
 
-		const deviceIdConstraint: MediaTrackConstraints = this.#device.activeDeviceId
-			? { deviceId: { exact: this.#device.activeDeviceId } }
-			: {};
-
-		const constraints: MediaStreamConstraints = {
-			video: {
-				...deviceIdConstraint,
-				...(this.#device.constraints ?? {}),
-			},
-		};
-
-		if (!navigator?.mediaDevices?.getUserMedia) {
-			throw new Error("getUserMedia is not available in this environment");
+		// Update activeDeviceId from actual settings
+		const settings = track.getSettings();
+		if (settings?.deviceId) {
+			this.#device.activeDeviceId = settings.deviceId;
 		}
 
-		let stream: MediaStream | undefined;
-		try {
-			stream = await navigator.mediaDevices.getUserMedia(constraints);
-			const track = stream.getVideoTracks()[0];
+		// Set up track ended listener
+		track.addEventListener("ended", () => {
+			// A live track that already replaced this one stays.
+			if (this.#device.stream) return;
+			this.#device.stream = undefined;
+			this.#device.onTrackEnded?.("Device disconnected or track ended");
+		});
 
-			if (!track) {
-				stream.getTracks().forEach((t) => t.stop());
-				throw new Error("Failed to obtain camera track");
-			}
+		this.#device.stream = track;
 
-			// Update activeDeviceId from actual settings
-			const settings = track.getSettings();
-			if (settings?.deviceId) {
-				this.#device.activeDeviceId = settings.deviceId;
-			}
-
-			// Set up track ended listener
-			track.addEventListener("ended", () => {
-				// A live track that already replaced this one stays.
-				if (this.#device.stream) return;
-				this.#device.stream = undefined;
-				this.#device.onTrackEnded?.("Device disconnected or track ended");
-			});
-
-			this.#device.stream = track;
-			return track;
-		} catch (error) {
-			// Ensure any partial stream is stopped
-			stream?.getTracks().forEach((t) => {
-				try {
-					t.stop();
-				} catch {
-					// Ignore errors when stopping track
-				}
-			});
-			throw error instanceof Error ? error : new Error("Failed to obtain camera track");
-		}
+		// The first camera opened grants the permission the browser needs
+		// before it names devices.
+		if (!context.hasPermission("video")) void context.updateDevices();
+		return track;
 	}
 }

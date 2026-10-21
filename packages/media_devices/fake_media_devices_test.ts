@@ -1,4 +1,11 @@
-export class FakeMediaStreamTrack implements MediaStreamTrack {
+import type { Clock, Timeout } from "./device.ts";
+
+/**
+ * FakeMediaStreamTrack is a track a fake device handed out. Like a browser's,
+ * stopping it fires no event; end() ends it as a device going away does,
+ * firing "ended".
+ */
+export class FakeMediaStreamTrack extends EventTarget implements MediaStreamTrack {
 	id: string = crypto.randomUUID();
 	kind: string;
 	label: string;
@@ -14,6 +21,7 @@ export class FakeMediaStreamTrack implements MediaStreamTrack {
 	onunmute: ((this: MediaStreamTrack, ev: Event) => any) | null = null;
 
 	#constraints: MediaTrackConstraints = {};
+	readonly #stopped = Promise.withResolvers<void>();
 	#settings: MediaTrackSettings;
 
 	constructor(
@@ -22,6 +30,7 @@ export class FakeMediaStreamTrack implements MediaStreamTrack {
 		deviceId: string,
 		constraints?: MediaTrackConstraints,
 	) {
+		super();
 		this.#constraints = constraints || {};
 		this.kind = kind;
 		this.label = label;
@@ -33,6 +42,18 @@ export class FakeMediaStreamTrack implements MediaStreamTrack {
 	}
 	stop(): void {
 		this.readyState = "ended";
+		this.#stopped.resolve();
+	}
+
+	/** end ends the track as unplugging its device does: it fires "ended". */
+	end(): void {
+		this.readyState = "ended";
+		this.dispatchEvent(new Event("ended"));
+	}
+
+	/** Settles once the track is stopped. */
+	get stopped(): Promise<void> {
+		return this.#stopped.promise;
 	}
 	getCapabilities(): MediaTrackCapabilities {
 		return {};
@@ -45,11 +66,6 @@ export class FakeMediaStreamTrack implements MediaStreamTrack {
 	}
 	async applyConstraints(constraints?: MediaTrackConstraints): Promise<void> {
 		this.#constraints = constraints || {};
-	}
-	addEventListener() {}
-	removeEventListener() {}
-	dispatchEvent(): boolean {
-		return true;
 	}
 }
 
@@ -100,14 +116,44 @@ export interface FakeDeviceInit {
 	groupId?: string;
 }
 
+/** exactDeviceIdOf is the deviceId a constraint requires exactly, if any. */
+function exactDeviceIdOf(constraint: ConstrainDOMString | undefined): string | undefined {
+	if (typeof constraint !== "object" || Array.isArray(constraint)) return undefined;
+	const exact = constraint.exact;
+	return typeof exact === "string" ? exact : undefined;
+}
+
 export class FakeMediaDevices implements MediaDevices {
 	// deno-lint-ignore no-explicit-any
 	ondevicechange: ((this: MediaDevices, ev: Event) => any) | null = null;
 	devices: MediaDeviceInfo[] = [];
 	permissions: { audio: boolean; video: boolean } = { audio: false, video: false };
 
+	/**
+	 * When set, getUserMedia waits for it before answering, as a permission
+	 * prompt does; a promise never settled is a prompt never answered.
+	 */
+	answer: Promise<void> | undefined;
+	/** When set, getUserMedia rejects with it, as the browser would. */
+	failure: Error | undefined;
+	/** When set, getUserMedia throws it synchronously instead of rejecting. */
+	syncFailure: Error | undefined;
+	/** Every track getUserMedia handed out, in order. */
+	granted: FakeMediaStreamTrack[] = [];
+	readonly #firstGrant = Promise.withResolvers<FakeMediaStreamTrack>();
+
+	/** Settles with the first track getUserMedia hands out. */
+	get firstGrant(): Promise<FakeMediaStreamTrack> {
+		return this.#firstGrant.promise;
+	}
+
 	constructor(initialDevices: FakeDeviceInit[] = []) {
-		this.devices = initialDevices.map((d) => ({
+		this.setDevices(initialDevices);
+	}
+
+	/** setDevices replaces the devices listed, as plugging devices in and out does. */
+	setDevices(devices: FakeDeviceInit[]): void {
+		this.devices = devices.map((d) => ({
 			...d,
 			groupId: d.groupId ?? "group1",
 			toJSON: () => d,
@@ -124,37 +170,50 @@ export class FakeMediaDevices implements MediaDevices {
 		});
 	}
 
-	async getUserMedia(constraints?: MediaStreamConstraints): Promise<MediaStream> {
-		const tracks: MediaStreamTrack[] = [];
+	getUserMedia(constraints?: MediaStreamConstraints): Promise<MediaStream> {
+		if (this.syncFailure !== undefined) throw this.syncFailure;
+		return this.#grant(constraints);
+	}
+
+	async #grant(constraints?: MediaStreamConstraints): Promise<MediaStream> {
+		await this.answer;
+		if (this.failure !== undefined) throw this.failure;
+		const tracks: FakeMediaStreamTrack[] = [];
 		if (constraints?.audio) {
 			this.permissions.audio = true;
-			const device = this.devices.find((d) => d.kind === "audioinput") || this.devices[0];
-			if (device) {
-				tracks.push(
-					new FakeMediaStreamTrack(
-						"audio",
-						device.label,
-						device.deviceId,
-						typeof constraints?.audio === "object" ? constraints.audio : undefined,
-					),
-				);
-			} else throw new Error("NotFoundError");
+			tracks.push(this.#trackOf("audio", constraints.audio));
 		}
 		if (constraints?.video) {
 			this.permissions.video = true;
-			const device = this.devices.find((d) => d.kind === "videoinput") || this.devices[0];
-			if (device) {
-				tracks.push(
-					new FakeMediaStreamTrack(
-						"video",
-						device.label,
-						device.deviceId,
-						typeof constraints?.video === "object" ? constraints.video : undefined,
-					),
-				);
-			} else throw new Error("NotFoundError");
+			tracks.push(this.#trackOf("video", constraints.video));
 		}
+		this.granted.push(...tracks);
+		const first = tracks[0];
+		if (first !== undefined) this.#firstGrant.resolve(first);
 		return new FakeMediaStream(tracks);
+	}
+
+	/**
+	 * trackOf opens a device of kind as a browser does: the one an exact
+	 * deviceId names, or else the system default (the "default" alias, when
+	 * listed) or the first listed.
+	 */
+	#trackOf(
+		kind: "audio" | "video",
+		constraint: boolean | MediaTrackConstraints,
+	): FakeMediaStreamTrack {
+		const options = typeof constraint === "object" ? constraint : undefined;
+		const ofKind = this.devices.filter((d) => d.kind === `${kind}input`);
+		const exact = exactDeviceIdOf(options?.deviceId);
+		const device = exact === undefined
+			? ofKind.find((d) => d.deviceId === "default") ?? ofKind[0]
+			: ofKind.find((d) => d.deviceId === exact);
+		if (device === undefined) {
+			throw exact === undefined
+				? new DOMException("Requested device not found", "NotFoundError")
+				: new DOMException("No device matches the constraints", "OverconstrainedError");
+		}
+		return new FakeMediaStreamTrack(kind, device.label, device.deviceId, options);
 	}
 
 	getSupportedConstraints(): MediaTrackSupportedConstraints {
@@ -232,4 +291,27 @@ export function setupFakeMediaDevices(devices: FakeDeviceInit[]) {
 			restore();
 		},
 	};
+}
+
+/**
+ * FakeClock starts timeouts that fire only when the test says so, so a test
+ * decides when a permission prompt has waited too long.
+ */
+export class FakeClock implements Clock {
+	/** The durations of the timeouts started, in order. */
+	started: number[] = [];
+	#pending: Set<() => void> = new Set();
+
+	timeout(ms: number): Timeout {
+		this.started.push(ms);
+		const { promise, resolve } = Promise.withResolvers<void>();
+		this.#pending.add(resolve);
+		return { expired: promise, cancel: () => this.#pending.delete(resolve) };
+	}
+
+	/** fire expires every timeout running. */
+	fire(): void {
+		for (const resolve of this.#pending) resolve();
+		this.#pending.clear();
+	}
 }

@@ -1,13 +1,13 @@
 import { assertEquals, assertNotEquals, assertRejects } from "@std/assert";
 import { Camera } from "./camera.ts";
 import { MediaDeviceContext } from "./device.ts";
-import { setupFakeMediaDevices } from "./fake_media_devices_test.ts";
+import { FakeMediaDevices } from "./fake_media_devices_test.ts";
 
 Deno.test("Camera", async (t) => {
 	await t.step("constructor", async (t) => {
 		await t.step("creates camera with default props", () => {
-			using _env = setupFakeMediaDevices([]);
-			const ctx = new MediaDeviceContext();
+			const fake = new FakeMediaDevices([]);
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx);
 
 			assertEquals(camera.enabled, false);
@@ -16,8 +16,8 @@ Deno.test("Camera", async (t) => {
 		});
 
 		await t.step("creates camera with options", () => {
-			using _env = setupFakeMediaDevices([]);
-			const ctx = new MediaDeviceContext();
+			const fake = new FakeMediaDevices([]);
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx, {
 				enabled: true,
 				preferred: "camera-device-id",
@@ -32,10 +32,10 @@ Deno.test("Camera", async (t) => {
 
 	await t.step("getVideoTrack", async (t) => {
 		await t.step("gets video track when enabled", async () => {
-			using _env = setupFakeMediaDevices([
+			const fake = new FakeMediaDevices([
 				{ kind: "videoinput", label: "Camera 1", deviceId: "vid1" },
 			]);
-			const ctx = new MediaDeviceContext();
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx, { enabled: true });
 
 			const track = await camera.getVideoTrack();
@@ -44,24 +44,51 @@ Deno.test("Camera", async (t) => {
 		});
 
 		await t.step("gets video track with constraints", async () => {
-			using _env = setupFakeMediaDevices([
+			const fake = new FakeMediaDevices([
 				{ kind: "videoinput", label: "Camera 1", deviceId: "vid1" },
 			]);
-			const ctx = new MediaDeviceContext();
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx, { enabled: true, constraints: { width: 1080 } });
 
 			const track = await camera.getVideoTrack();
 			const settings = track.getSettings();
 			assertEquals(settings.deviceId, "vid1");
-			// The device is named once permission reveals it.
-			assertEquals(track.getConstraints(), { deviceId: { exact: "vid1" }, width: 1080 });
+			// Following the default camera names no device.
+			assertEquals(track.getConstraints(), { width: 1080 });
+		});
+
+		await t.step("opens a preferred camera by its id", async () => {
+			const fake = new FakeMediaDevices([
+				{ kind: "videoinput", label: "Camera 1", deviceId: "vid1" },
+				{ kind: "videoinput", label: "Camera 2", deviceId: "vid2" },
+			]);
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
+			const camera = new Camera(ctx, { enabled: true, preferred: "vid2" });
+
+			const track = await camera.getVideoTrack();
+
+			assertEquals(track.getSettings().deviceId, "vid2");
+		});
+
+		await t.step("opens the browser's default camera when none is preferred", async () => {
+			const fake = new FakeMediaDevices([
+				{ kind: "videoinput", label: "Built-in Camera", deviceId: "vid1" },
+				{ kind: "videoinput", label: "USB Camera", deviceId: "vid2" },
+			]);
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
+			await ctx.requestPermission("video");
+			const camera = new Camera(ctx, { enabled: true });
+
+			const track = await camera.getVideoTrack();
+
+			assertEquals(track.getConstraints().deviceId, undefined);
 		});
 
 		await t.step("returns cached track on subsequent calls", async () => {
-			using _env = setupFakeMediaDevices([
+			const fake = new FakeMediaDevices([
 				{ kind: "videoinput", label: "Camera 1", deviceId: "vid1" },
 			]);
-			const ctx = new MediaDeviceContext();
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx, { enabled: true });
 
 			const track1 = await camera.getVideoTrack();
@@ -71,8 +98,8 @@ Deno.test("Camera", async (t) => {
 		});
 
 		await t.step("throws when camera not enabled", async () => {
-			using _env = setupFakeMediaDevices([]);
-			const ctx = new MediaDeviceContext();
+			const fake = new FakeMediaDevices([]);
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx, { enabled: false });
 
 			await assertRejects(
@@ -83,8 +110,8 @@ Deno.test("Camera", async (t) => {
 		});
 
 		await t.step("throws when device fails to get track", async () => {
-			using _env = setupFakeMediaDevices([]); // No video devices available
-			const ctx = new MediaDeviceContext();
+			const fake = new FakeMediaDevices([]); // No video devices available
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx, { enabled: true });
 
 			await assertRejects(
@@ -95,10 +122,10 @@ Deno.test("Camera", async (t) => {
 
 	await t.step("close", async (t) => {
 		await t.step("stops track and closes device when track exists", async () => {
-			using _env = setupFakeMediaDevices([
+			const fake = new FakeMediaDevices([
 				{ kind: "videoinput", label: "Camera 1", deviceId: "vid1" },
 			]);
-			const ctx = new MediaDeviceContext();
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx, { enabled: true });
 
 			const track = await camera.getVideoTrack();
@@ -109,10 +136,10 @@ Deno.test("Camera", async (t) => {
 		});
 
 		await t.step("clears track reference after closing", async () => {
-			using _env = setupFakeMediaDevices([
+			const fake = new FakeMediaDevices([
 				{ kind: "videoinput", label: "Camera 1", deviceId: "vid1" },
 			]);
-			const ctx = new MediaDeviceContext();
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx, { enabled: true });
 
 			const track1 = await camera.getVideoTrack();
@@ -127,10 +154,10 @@ Deno.test("Camera", async (t) => {
 
 	await t.step("Integration scenarios", async (t) => {
 		await t.step("enable/disable workflow", async () => {
-			using _env = setupFakeMediaDevices([
+			const fake = new FakeMediaDevices([
 				{ kind: "videoinput", label: "Camera 1", deviceId: "vid1" },
 			]);
-			const ctx = new MediaDeviceContext();
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx, { enabled: false });
 
 			await assertRejects(
@@ -154,10 +181,10 @@ Deno.test("Camera", async (t) => {
 		});
 
 		await t.step("constraints updates", async () => {
-			using _env = setupFakeMediaDevices([
+			const fake = new FakeMediaDevices([
 				{ kind: "videoinput", label: "Camera 1", deviceId: "vid1" },
 			]);
-			const ctx = new MediaDeviceContext();
+			const ctx = new MediaDeviceContext({ mediaDevices: fake });
 			const camera = new Camera(ctx, { enabled: true });
 
 			const track = await camera.getVideoTrack();
