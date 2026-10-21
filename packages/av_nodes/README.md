@@ -84,6 +84,21 @@ audioSource.connect(audioEncodeNode);
 
 - `AudioEncodeNode` - Capture and encode audio using AudioWorklet + WebCodecs
 - `AudioDecodeNode` - Decode and play audio using AudioWorklet + WebCodecs
+- `VoiceActivityNode` - Tell whether the audio passing through carries a voice (AudioWorklet)
+
+```typescript
+const vad = new VoiceActivityNode(audioContext);
+microphone.connect(vad); // a tap: audio passes through unchanged
+vad.addEventListener("speakingchange", (e) => {
+	seat.classList.toggle("speaking", e.speaking);
+});
+// later
+vad.dispose();
+```
+
+Each voice is judged against its own noise floor, in the voice band only, with separate
+start and stop thresholds and a short hold. The thresholds can be tuned with
+`new VoiceActivityNode(context, { detector: { onDb, offDb, holdMs, floorRiseDbPerSec, minDb } })`.
 
 ## Development
 
