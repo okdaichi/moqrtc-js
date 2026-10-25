@@ -56,7 +56,6 @@ export class RoomElement extends HTMLElement {
 	// Public methods
 	async join(session: Session, local: LocalBroadcast): Promise<void> {
 		const roomId = this.getAttribute("room-id");
-		// const localName = this.getAttribute('local-name');
 		const description = this.getAttribute("description");
 
 		if (!roomId) {

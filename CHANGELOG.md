@@ -16,6 +16,9 @@ Minor release of `@okdaichi/media-devices` (`packages/media_devices`).
 - Volume fades take their time in milliseconds, mute without a RangeError, never start from a stale gain, and restore the volume asked for.
 - The browser's media devices and the clock can be supplied.
 
+### Changed
+- Remove commented out dead code `localName` in `src/elements/room.ts` to improve code health.
+
 ### Added
 
 - `MediaDeviceContext` takes options:
