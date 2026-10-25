@@ -42,6 +42,10 @@ Minor release of `@okdaichi/media-devices` (`packages/media_devices`).
   - `failed`: anything else.
 - `VolumeParam` and `VolumeGainNode`: the parts of an `AudioParam` and a `GainNode` a `VolumeController` drives.
 
+### Security
+
+- Fix XSS vulnerability in `RoomElement` caused by rendering unescaped state variables directly into `innerHTML` (now uses safe DOM manipulation APIs).
+
 ### Changed
 
 - `Microphone.getAudioTrack()` rejects with a `MicrophoneError` when the microphone cannot be opened. Its message is the browser's, but its `name` is `MicrophoneError`, so code that read the browser's error name (`NotAllowedError`, …) must read `reason`, or the name of `cause`, instead. A disabled or closed microphone rejects with a plain `Error`, because that is the caller's mistake and not a failure to open.
