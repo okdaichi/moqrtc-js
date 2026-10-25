@@ -17,6 +17,7 @@ Minor release of `@okdaichi/media-devices` (`packages/media_devices`).
 - The browser's media devices and the clock can be supplied.
 
 ### Added
+- Add missing test for `RoomElement.onjoin` error handling.
 
 - `MediaDeviceContext` takes options:
   - `mediaDevices`: a `MediaDeviceAccess`, the part of `navigator.mediaDevices` the package uses. It defaults to the browser's; `null` means there are none.
