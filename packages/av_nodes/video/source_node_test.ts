@@ -83,6 +83,57 @@ Deno.test("VideoSourceNode", async (t) => {
 		await done;
 	});
 
+	await t.step("should pass only the frames the context's pacing admits", async () => {
+		context = new VideoContext({ frameRate: 30 });
+		// The pacing's arithmetic is VideoContext's (context_test.ts); here it
+		// answers from a script, so the step tests what the source does with it.
+		const answers = [true, false, false, true, false];
+		const asked: number[] = [];
+		context._admitFrame = () => {
+			asked.push(asked.length);
+			return answers[asked.length - 1] ?? false;
+		};
+		const sent = Array.from({ length: 5 }, () => new FakeVideoFrame());
+		const closed = new Set<VideoFrame>();
+		for (const frame of sent) frame.close = () => closed.add(frame);
+		stream = new ReadableStream({
+			start(controller) {
+				for (const frame of sent) controller.enqueue(frame);
+				controller.close();
+			},
+		});
+		sourceNode = new VideoSourceNode(context, stream);
+
+		// Retiming builds a VideoFrame from each passed frame; a fake stands in.
+		const g = globalThis as unknown as Record<string, unknown>;
+		const original = g.VideoFrame;
+		const retimed: FakeVideoFrame[] = [];
+		g.VideoFrame = class {
+			constructor(_source: VideoFrame, init: { timestamp: number }) {
+				const frame = new FakeVideoFrame(640, 480, init.timestamp);
+				retimed.push(frame);
+				return frame;
+			}
+		};
+		try {
+			const output = new FakeVideoNode();
+			sourceNode.connect(output);
+
+			await sourceNode.start().done;
+
+			// Every frame is offered to the pacing; the admitted two pass on.
+			assertEquals(asked.length, sent.length);
+			assertEquals(output.processedFrames.length, 2);
+			assertEquals(retimed.length, 2);
+			// Every frame read is closed, passed or not.
+			assertEquals(closed.size, sent.length);
+		} finally {
+			if (original === undefined) delete g.VideoFrame;
+			else g.VideoFrame = original;
+			sourceNode.dispose();
+		}
+	});
+
 	await t.step("should dispose and unregister", () => {
 		// Setup
 		context = new VideoContext();

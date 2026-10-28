@@ -55,19 +55,19 @@ export class VideoSourceNode extends VideoNode {
 				this.#reader = this.#stream.getReader();
 
 				while (this.#running && this.context.state === "running") {
-					// Use context's frame pacing for consistent timing
-					const timestamp = await this.context._waitNextFrame();
-
-					// Check if still running after await
-					if (!this.#running || !this.#reader) break;
-
+					// Frames are read as they arrive; the context's pacing decides
+					// which pass (see VideoContext._admitFrame).
 					const { done, value: frame } = await this.#reader.read();
 					if (done) break;
 
 					try {
+						// Stopped while waiting, or ahead of the frame rate: dropped
+						// (the finally closes it).
+						if (!this.#running || !this.context._admitFrame()) continue;
+
 						// Create new frame with context's timestamp (single source of truth)
 						const retimedFrame = new VideoFrame(frame, {
-							timestamp, // Use context's μs timestamp
+							timestamp: this.context.currentTimestamp, // context's μs timestamp
 						});
 
 						// Pass retimedFrame to outputs (they will clone if needed)
@@ -160,10 +160,17 @@ export class MediaStreamVideoSourceNode extends VideoSourceNode {
 					]);
 				},
 				async pull(controller) {
-					// Frame pacing is owned by VideoSourceNode.start(), which awaits
-					// context._waitNextFrame() before each read(). Pacing again here
-					// doubles the interval (a 30fps context delivered ~15fps), so
-					// just enqueue at the current context timestamp.
+					// VideoSourceNode.start() reads frames as they come, so this
+					// stream paces itself: one frame per frame the video presents,
+					// or per frame interval where requestVideoFrameCallback is
+					// missing. The context's pacing still caps the rate.
+					await new Promise<void>((resolve) => {
+						if (typeof video.requestVideoFrameCallback === "function") {
+							video.requestVideoFrameCallback(() => resolve());
+						} else {
+							setTimeout(resolve, 1000 / context.frameRate);
+						}
+					});
 					controller.enqueue(
 						new VideoFrame(video, {
 							timestamp: context.currentTimestamp, // μs from context

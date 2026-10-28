@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `@okdaichi/av-nodes`: `VideoDestinationNode` keeps up to two frames waiting for a repaint and draws one per repaint, instead of only the newest. Decoded frames often arrive in pairs within one repaint, and the first of each pair was dropped (about one frame in eight in a 30 fps loopback); past two, the oldest waiting frame is still dropped.
+- `@okdaichi/av-nodes`: `VideoSourceNode` reads frames as they arrive and lets `VideoContext` decide which pass, instead of sleeping until the next frame time and then reading. A timer wakes a few ms late, and a source running ahead of it queues frames, so the frame read could be hundreds of ms old (up to about 460 ms measured in Chrome on a 30 fps stream); now a frame is at most a frame interval old. The pacing allows half a frame of slack, so a 30 fps source whose frames come a few ms early or late keeps its rate, and still averages `frameRate`, so a faster source is thinned to it. The `MediaStreamTrackProcessor` fallback paces itself with `requestVideoFrameCallback` (or a frame-interval timer without it).
+
+### Changed
+
+- `@okdaichi/av-nodes`: the internal `VideoContext._waitNextFrame()` is replaced by `VideoContext._admitFrame(now?)`.
+
 ## [0.3.0] - 2026-10-22
 
 Minor release of `@okdaichi/media-devices` (`packages/media_devices`).

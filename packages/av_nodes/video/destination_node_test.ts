@@ -152,17 +152,15 @@ Deno.test(
 		});
 
 		await t.step(
-			"should close pending frame when replaced before rAF runs",
+			"should keep two pending frames and close the oldest past that",
 			() => {
 				context = new VideoContext();
 				canvas = new FakeHTMLCanvasElement();
 
-				// Mock global functions so rAF callback never runs (we only test pending replacement)
-
+				// rAF never runs: this step only tests the pending queue.
 				let nextId = 1;
 				const restoreRequestAF = overrideRequestAnimationFrame(
 					(cb: FrameRequestCallback) => {
-						// Intentionally do not invoke cb
 						void cb;
 						return nextId++;
 					},
@@ -170,36 +168,84 @@ Deno.test(
 				const restoreCancelAF = overrideCancelAnimationFrame(() => {});
 
 				try {
-					const destinationNode = new VideoDestinationNode(
-						context,
-						canvas,
-					);
+					const destinationNode = new VideoDestinationNode(context, canvas);
 
-					let closed = 0;
-					const frame1 = new FakeVideoFrame(640, 480);
-					frame1.clone = () => {
-						const f = new FakeVideoFrame(640, 480);
-						f.close = () => {
-							closed++;
+					const closed: number[] = [];
+					const frameWithClone = (id: number) => {
+						const frame = new FakeVideoFrame(640, 480);
+						frame.clone = () => {
+							const f = new FakeVideoFrame(640, 480);
+							f.close = () => {
+								closed.push(id);
+							};
+							return f;
 						};
-						return f;
+						return frame;
 					};
 
-					const frame2 = new FakeVideoFrame(640, 480);
-					frame2.clone = () => new FakeVideoFrame(640, 480);
+					destinationNode.process(frameWithClone(1));
+					destinationNode.process(frameWithClone(2));
+					// Two may wait for the next repaint.
+					assertEquals(closed, []);
 
-					destinationNode.process(frame1);
-					// Second process call replaces the pending frame; the previous pending clone MUST be closed
-					destinationNode.process(frame2);
+					destinationNode.process(frameWithClone(3));
+					// A third drops the oldest.
+					assertEquals(closed, [1]);
 
-					assertEquals(closed, 1);
+					destinationNode.dispose();
+					assertEquals(closed.sort(), [1, 2, 3]);
 				} finally {
-					// Restore globals
 					restoreCancelAF();
 					restoreRequestAF();
 				}
 			},
 		);
+
+		await t.step("should draw one pending frame per repaint", () => {
+			context = new VideoContext();
+
+			const callbacks: FrameRequestCallback[] = [];
+			const restoreRequestAF = overrideRequestAnimationFrame(
+				(cb: FrameRequestCallback) => {
+					callbacks.push(cb);
+					return callbacks.length;
+				},
+			);
+			const restoreCancelAF = overrideCancelAnimationFrame(() => {});
+
+			try {
+				// A canvas that records which frame each draw used.
+				const drawn: number[] = [];
+				const recording = {
+					width: 640,
+					height: 480,
+					getContext: () =>
+						({
+							clearRect: () => {},
+							drawImage: (image: FakeVideoFrame) => drawn.push(image.timestamp),
+						}) as unknown as CanvasRenderingContext2D,
+				};
+				const destinationNode = new VideoDestinationNode(context, recording);
+
+				// Two frames arrive within one repaint.
+				destinationNode.process(new FakeVideoFrame(640, 480, 1));
+				destinationNode.process(new FakeVideoFrame(640, 480, 2));
+				assertEquals(callbacks.length, 1); // one rAF at a time
+
+				callbacks[0]!(0);
+				assertEquals(drawn, [1]);
+				assertEquals(callbacks.length, 2); // the second gets its own repaint
+
+				callbacks[1]!(16);
+				assertEquals(drawn, [1, 2]);
+				assertEquals(callbacks.length, 2); // nothing left to schedule
+
+				destinationNode.dispose();
+			} finally {
+				restoreCancelAF();
+				restoreRequestAF();
+			}
+		});
 
 		await t.step("should handle frames with zero dimensions", () => {
 			context = new VideoContext();
