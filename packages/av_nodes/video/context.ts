@@ -17,7 +17,7 @@ export class VideoContext {
 	#currentTime: number = 0;
 	#pausedTime: number = 0;
 	#suspendTime: number = 0; // performance.now() when suspended
-	#nextFrameTime: number = 0; // For frame pacing
+	#nextFrameTime: number = Number.NEGATIVE_INFINITY; // For frame pacing (ms)
 	#onstatechange?: VideoContextStateChangeCallback;
 
 	constructor(options?: { frameRate?: number; canvas?: CanvasLike }) {
@@ -75,31 +75,22 @@ export class VideoContext {
 	}
 
 	/**
-	 * Wait for next frame timing (frame pacing)
-	 * This ensures consistent frame rate regardless of source
-	 * Similar to sample-accurate clock in AudioContext
+	 * Frame pacing: whether a frame read at `now` (ms, performance.now()) should
+	 * pass, holding the stream to `frameRate`.
+	 *
+	 * Sources are read as their frames arrive, not on a timer: a timer wakes a
+	 * few ms late, and a source that runs ahead of it queues frames, so the
+	 * frame a timer reads can be hundreds of ms old. Half a frame of slack lets
+	 * a jittery source keep its own rate; over time it averages `frameRate`, so
+	 * a faster source is thinned to it.
 	 * @internal
 	 */
-	async _waitNextFrame(): Promise<number> {
-		if (this.#state !== "running") {
-			return this.currentTimestamp;
-		}
-
+	_admitFrame(now: number = performance.now()): boolean {
+		if (this.#state !== "running") return false;
 		const intervalMs = 1000 / this.frameRate;
-
-		// Initialize next frame time on first call
-		if (this.#nextFrameTime === 0) {
-			this.#nextFrameTime = performance.now();
-		}
-
-		this.#nextFrameTime += intervalMs;
-
-		const delay = this.#nextFrameTime - performance.now();
-		if (delay > 0) {
-			await new Promise((resolve) => setTimeout(resolve, delay));
-		}
-
-		return this.currentTimestamp;
+		if (now + intervalMs / 2 < this.#nextFrameTime) return false;
+		this.#nextFrameTime = Math.max(this.#nextFrameTime, now - intervalMs / 2) + intervalMs;
+		return true;
 	}
 
 	#setState(newState: VideoContextState): void {
@@ -121,7 +112,7 @@ export class VideoContext {
 				1000;
 			this.#pausedTime += suspendedDuration;
 			// Reset frame timing for fresh start
-			this.#nextFrameTime = 0;
+			this.#nextFrameTime = Number.NEGATIVE_INFINITY;
 		}
 		this.#setState("running");
 		return Promise.resolve();
@@ -134,7 +125,7 @@ export class VideoContext {
 			this.#currentTime = this.currentTime;
 			this.#suspendTime = performance.now();
 			// Reset frame timing for next resume
-			this.#nextFrameTime = 0;
+			this.#nextFrameTime = Number.NEGATIVE_INFINITY;
 		}
 		this.#setState("suspended");
 		return Promise.resolve();
@@ -145,7 +136,7 @@ export class VideoContext {
 		this.#setState("closed");
 
 		// Reset frame timing
-		this.#nextFrameTime = 0;
+		this.#nextFrameTime = Number.NEGATIVE_INFINITY;
 
 		// Dispose all registered nodes
 		for (const node of this.#nodes) {

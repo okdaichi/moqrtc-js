@@ -1,6 +1,13 @@
 import type { VideoContext } from "./context.ts";
 import { VideoNode } from "./video_node.ts";
 
+/**
+ * Frames waiting for a repaint. Decoded frames often arrive in pairs within
+ * one repaint; keeping two lets each be drawn, one per repaint, without a
+ * backlog building up behind them.
+ */
+const MAX_PENDING_FRAMES = 2;
+
 export interface CanvasLike {
 	width: number;
 	height: number;
@@ -11,7 +18,7 @@ export class VideoDestinationNode extends VideoNode {
 	readonly canvas: CanvasLike;
 	readonly context: VideoContext;
 	#animateId?: number;
-	#pendingFrame?: VideoFrame;
+	#pendingFrames: VideoFrame[] = [];
 	#isVisible: boolean = true;
 	#renderFunction: VideoRenderFunction;
 	#delayFunc?: () => Promise<void>;
@@ -58,21 +65,20 @@ export class VideoDestinationNode extends VideoNode {
 		}
 
 		// Ownership: Caller owns input, so we clone for our use
-		const clonedFrame = input.clone();
+		this.#pendingFrames.push(input.clone());
 
-		// Replace any pending frame (not yet rendered) with the newest one.
-		// Close the replaced pending frame to avoid leaking VideoFrames.
-		const pendingFrame = this.#pendingFrame;
-		this.#pendingFrame = clonedFrame;
-		if (pendingFrame) {
-			try {
-				pendingFrame.close();
-			} catch (e) {
-				console.error("[VideoDestinationNode] frame close error:", e);
-			}
+		// Past the limit the oldest waiting frame is dropped: showing the newest
+		// matters more than showing every one.
+		if (this.#pendingFrames.length > MAX_PENDING_FRAMES) {
+			this.#closeFrame(this.#pendingFrames.shift());
 		}
 
-		// Only schedule ONE rAF at a time; it will render the latest pending frame.
+		this.#scheduleRender();
+	}
+
+	// Draws one pending frame per repaint, and schedules the next repaint while
+	// frames remain. Only one rAF is scheduled at a time.
+	#scheduleRender(): void {
 		if (this.#animateId) return;
 
 		this.#animateId = requestAnimationFrame(() => {
@@ -84,36 +90,37 @@ export class VideoDestinationNode extends VideoNode {
 				this.#timeoutId = undefined;
 			}
 
-			const frame = this.#pendingFrame;
-			this.#pendingFrame = undefined;
-			void this.#renderVideoFrame(frame);
+			void this.#renderVideoFrame(this.#pendingFrames.shift());
+			if (this.#pendingFrames.length > 0) this.#scheduleRender();
 		});
 
-		// Fallback: force cleanup after 1 second if rAF doesn't fire (e.g., tab backgrounded)
+		// Fallback: drop pending frames after 1 second if rAF doesn't fire
+		// (e.g., tab backgrounded)
 		this.#timeoutId = setTimeout(() => {
 			if (this.#animateId) {
 				cancelAnimationFrame(this.#animateId);
 				this.#animateId = undefined;
 			}
-
-			const frame = this.#pendingFrame;
-			this.#pendingFrame = undefined;
-			if (frame) {
-				try {
-					frame.close();
-				} catch (e) {
-					console.error(
-						"[VideoDestinationNode] timeout cleanup error:",
-						e,
-					);
-				}
-			}
-
+			this.#closePendingFrames();
 			this.#timeoutId = undefined;
 		}, 1000);
 
-		// We don't need to close the clonedFrame here, as it is either assigned
-		// to #pendingFrame (to be closed later) or closed in #renderVideoFrame.
+		// Pending frames are closed when drawn (#renderVideoFrame), dropped, or
+		// disposed.
+	}
+
+	#closeFrame(frame: VideoFrame | undefined): void {
+		if (!frame) return;
+		try {
+			frame.close();
+		} catch (e) {
+			console.error("[VideoDestinationNode] frame close error:", e);
+		}
+	}
+
+	#closePendingFrames(): void {
+		for (const frame of this.#pendingFrames) this.#closeFrame(frame);
+		this.#pendingFrames = [];
 	}
 
 	async #renderVideoFrame(frame?: VideoFrame): Promise<void> {
@@ -188,15 +195,7 @@ export class VideoDestinationNode extends VideoNode {
 			clearTimeout(this.#timeoutId);
 			this.#timeoutId = undefined;
 		}
-		if (this.#pendingFrame) {
-			try {
-				this.#pendingFrame.close();
-			} catch (e) {
-				console.error("[VideoDestinationNode] frame close error:", e);
-			} finally {
-				this.#pendingFrame = undefined;
-			}
-		}
+		this.#closePendingFrames();
 		this.context._unregister(this);
 		super.dispose();
 	}
