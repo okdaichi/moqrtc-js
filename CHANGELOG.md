@@ -5,7 +5,9 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.15.1] - 2026-10-28
+
+Patch release of `@okdaichi/av-nodes` (`packages/av_nodes`). Video plays more smoothly and reads fresher frames: `VideoDestinationNode` draws every frame of a pair that arrives within one repaint, and `VideoSourceNode` reads frames as they arrive instead of on a timer, so a frame is no longer read hundreds of ms after it was captured.
 
 ### Fixed
 
