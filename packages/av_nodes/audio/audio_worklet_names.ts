@@ -6,10 +6,10 @@
 // processors.
 
 /** Name the playout processor is registered under. */
-export const PLAYOUT_PROCESSOR_NAME = "@okdaichi/av-nodes/playout@0.15.0";
+export const PLAYOUT_PROCESSOR_NAME = "@okdaichi/av-nodes/playout@0.15.1";
 
 /** Name the capture processor is registered under. */
-export const CAPTURE_PROCESSOR_NAME = "@okdaichi/av-nodes/capture@0.15.0";
+export const CAPTURE_PROCESSOR_NAME = "@okdaichi/av-nodes/capture@0.15.1";
 
 /** Name the voice activity (VAD) processor is registered under. */
-export const VAD_PROCESSOR_NAME = "@okdaichi/av-nodes/vad@0.15.0";
+export const VAD_PROCESSOR_NAME = "@okdaichi/av-nodes/vad@0.15.1";
